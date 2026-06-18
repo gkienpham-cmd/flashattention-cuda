@@ -21,16 +21,16 @@ scale from drifting between kernel, test, bench, and roofline tool.
 (`roofline/archs.py`) are the only places hardware leaks in; everything above the dispatch
 layer is arch-agnostic.
 
-**Build/profile environment (and a constraint that shapes the workflow):** dev runs on **free
-Colab T4** for compile + correctness + timing (`notebooks/colab_bootstrap.ipynb`: clone → clean
-stale JIT cache → `pip install ninja` → build → pytest → bench). But **Colab blocks Nsight
-Compute** — profiling needs GPU performance-counter access the container doesn't grant — so the
-per-step loop's *measured-vs-predicted* ncu check (mem throughput, MMA/MUFU util) cannot run
-there. Decision: free Colab for the build/test/bench half; a **dedicated T4 (rented, e.g.
-vast.ai, ~$0.15/hr)** for the profiling half when a step's roofline honesty needs ncu. This is
-also why the plan rents A100/H100 per-step (Phase 2/3) rather than buying a Colab Pro
-subscription. Repo: `github.com/gkienpham-cmd/flashattention-cuda` (public, so Colab `git clone`
-needs no token).
+**Build/profile environment:** dev runs on **free Colab T4** for compile + correctness + timing
+(`notebooks/colab_bootstrap.ipynb`: clone → clean stale JIT cache → `pip install ninja` → build →
+pytest → bench). ncu **did run** on the current Colab runtime (it connected and wrote a
+`.ncu-rep`), so Colab profiling is not universally blocked — but it's runtime-dependent and not
+guaranteed, and `profiling/capture.sh` currently profiles the wrong kernels (it caught the
+`torch.randn` RNG kernel, not qk/softmax/pv — needs a `--kernel-name` filter / launch skip). So
+for a *reliable* ncu reading a **dedicated rented T4 (vast.ai ~$0.15/hr)** is still the safer bet;
+free Colab covers build/test/bench. This is also why the plan rents A100/H100 per-step (Phase
+2/3) rather than buying Colab Pro. Repo: `github.com/gkienpham-cmd/flashattention-cuda` (public,
+so Colab `git clone` needs no token).
 
 ---
 
@@ -74,6 +74,20 @@ naive so every later optimization has a measured "before."
 **What changes on another arch:** an A100 (1.5 TB/s, 2 TB/s) raises the HBM roof ~5–6× but the
 *shape* of the wall is identical — naive attention is memory-bound on every GPU; that
 architecture-independence is the whole reason FlashAttention exists.
+
+**MEASURED (Colab T4, 2026-06-18) — and the L2 plot twist:** 9/9 correctness tests pass vs SDPA
+(atol/rtol 1e-4). Bench is ~0.03–0.06× SDPA (≈20–30× slower) across the sweep — the intended
+"before." But the honesty check surfaced something: measured p50 lands *below* the cache-free
+roofline lower bound at mid-N (2048×64: 85.6 ms measured vs 109 ms predicted = 0.78×; 2048×128:
+0.77×), then *converges* to it at N=8192 (64: 1.01×; 128: 0.90×). You can't beat a true HBM
+floor — so the floor's assumption is wrong: the model counts every redundant operand read as HBM
+traffic, but the T4's **4 MB L2 absorbs most of them** while the working set fits. At N=8192 a
+single head's K (2 MB) + head-interleaving overflows L2, the hit rate collapses, and measured
+meets the cache-free floor. Takeaway: the AI≈0.25 cache-free roofline is the **worst case**,
+realized exactly when L2 can't help (large N). This sharpens Step 2's thesis — explicit
+shared-memory tiling makes reuse *guaranteed and N-independent*, so **its biggest win is predicted
+at N=8192**, where L2 currently fails. (Model refinement worth considering later: an L2 hit-rate
+term so the predicted floor tracks the measured mid-N speedup; logged, not yet built.)
 
 ---
 
