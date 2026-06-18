@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# CUDA / cpp_extension JIT build artifacts (compiled per-session on Colab; never committed)
+build/
+*.so
+*.o
+*.ninja*
+.cache/
+torch_extensions/
+
+# Bench outputs that are machine-specific (the curated rows live in docs/results.md by hand)
+bench/raw/
+*.nsys-rep
+*.ncu-rep

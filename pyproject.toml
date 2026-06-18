@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fa_kernels"
+version = "0.1.0"
+description = "FlashAttention from scratch: a roofline-driven optimization journey across four GPU eras."
+readme = "README.md"
+requires-python = ">=3.9"
+# NOTE: torch is intentionally NOT pinned here. On Colab/rented boxes the CUDA-matched
+# torch is preinstalled; pinning it would fight the environment. We depend on it at runtime.
+dependencies = []
+
+[project.optional-dependencies]
+# Installed in the dev/bench environment only.
+dev = ["pytest>=7", "numpy"]
+
+[tool.setuptools.packages.find]
+# Only the importable Python package ships; kernels/ are JIT-compiled, not packaged (yet).
+include = ["fa_kernels*", "roofline*"]
