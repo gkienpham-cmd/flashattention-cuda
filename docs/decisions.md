@@ -21,6 +21,17 @@ scale from drifting between kernel, test, bench, and roofline tool.
 (`roofline/archs.py`) are the only places hardware leaks in; everything above the dispatch
 layer is arch-agnostic.
 
+**Build/profile environment (and a constraint that shapes the workflow):** dev runs on **free
+Colab T4** for compile + correctness + timing (`notebooks/colab_bootstrap.ipynb`: clone → clean
+stale JIT cache → `pip install ninja` → build → pytest → bench). But **Colab blocks Nsight
+Compute** — profiling needs GPU performance-counter access the container doesn't grant — so the
+per-step loop's *measured-vs-predicted* ncu check (mem throughput, MMA/MUFU util) cannot run
+there. Decision: free Colab for the build/test/bench half; a **dedicated T4 (rented, e.g.
+vast.ai, ~$0.15/hr)** for the profiling half when a step's roofline honesty needs ncu. This is
+also why the plan rents A100/H100 per-step (Phase 2/3) rather than buying a Colab Pro
+subscription. Repo: `github.com/gkienpham-cmd/flashattention-cuda` (public, so Colab `git clone`
+needs no token).
+
 ---
 
 ## Step 1 — Naive attention (the bandwidth wall)
