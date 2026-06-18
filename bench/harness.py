@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import statistics
+import subprocess
 
 import torch
 
@@ -50,17 +51,44 @@ def _dtype(precision: str):
     return {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}[precision]
 
 
+def _sm_clock_mhz() -> tuple[int, int]:
+    """Current and max SM clock (MHz) from nvidia-smi.
+
+    torch.cuda.clock_rate() returns 0 on the Colab torch build, which silently dropped the
+    throttling signal (it logged clock~0MHz). nvidia-smi reports it reliably, so we shell out.
+    The current-vs-max gap is the whole point: on the free-tier T4 it idles far below the
+    1590 MHz max, so every bench row should carry both numbers to be reproducible.
+    """
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=clocks.current.sm,clocks.max.sm",
+             "--format=csv,noheader,nounits"], text=True).splitlines()[0]
+        cur, mx = (int(x) for x in out.split(","))
+        return cur, mx
+    except Exception:
+        return -1, -1
+
+
+def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
+    """The (tile_m, tile_n) the roofline model should use for this backend+head dim.
+
+    v1 is naive: 1x1, i.e. each operand re-read per output element. v2 launches the smem tile
+    chosen per head dim in tiled_attention.cu (64x64 at d=64, 32x32 at d=128); feeding the same
+    tile here makes the printed roofline the tiled prediction (AI ~6-8), not the naive 0.2.
+    """
+    if backend == "v2_tiled":
+        return (64, 64) if d == 64 else (32, 32)
+    return (1, 1)
+
+
 def run(backend: str, precision: str, B: int, H: int, causal: bool) -> None:
     dev = torch.device("cuda")
     cap = torch.cuda.get_device_capability()
     sm = f"sm_{cap[0]}{cap[1]}"
     name = torch.cuda.get_device_name()
-    # Current SM clock (MHz) — captures throttling on the free tier at the moment of the run.
-    try:
-        clock = torch.cuda.clock_rate() // 1000  # kHz -> MHz (torch>=2.3); best-effort
-    except Exception:
-        clock = -1
-    print(f"# device: {name} ({sm})  clock~{clock}MHz  backend={backend}  precision={precision}  causal={causal}")
+    # Current/max SM clock (MHz) — captures throttling on the free tier at the moment of the run.
+    clk_cur, clk_max = _sm_clock_mhz()
+    print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  precision={precision}  causal={causal}")
     print(f"# {'shape':>16} | {'ours p50/p99 ms':>18} | {'sdpa p50/p99 ms':>18} | "
           f"{'speedup':>8} | {'tok/s(ours)':>12} | roofline")
 
@@ -84,8 +112,14 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool) -> None:
 
             roof = ""
             if arch is not None:
+                # v1 and v2 both materialize S in HBM; they differ only in operand reuse, which
+                # the model reads from the tile. v1 = naive 1x1 (re-read per output element);
+                # v2 = the smem tile it actually launches (64x64 @ d=64, 32x32 @ d=128), so the
+                # predicted AI reflects the ~30x traffic cut the row should show off.
+                tile_m, tile_n = _roofline_tile(backend, d)
                 est = estimate(arch, B=B, H=H, N_q=N, N_k=N, d=d, precision=precision,
-                               materialize_s=(backend == "v1_naive"))
+                               materialize_s=backend in ("v1_naive", "v2_tiled"),
+                               tile_m=tile_m, tile_n=tile_n)
                 roof = f"{est.limiter.upper()} (~{est.seconds*1e3:.2f}ms)"
 
             print(f"  {f'{B}x{H}x{N}x{d}':>16} | {o_p50:7.3f}/{o_p99:7.3f} | "

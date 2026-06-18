@@ -9,7 +9,8 @@
 // speedup by killing this round-trip. We measure that, we don't assert it.
 //
 // Precision: FP32 in, FP32 accumulate, FP32 out (the "B1" baseline). Intentionally simple so
-// it is an exact-ish correctness anchor before FP16+FP32-accum enters at v2.
+// it is an exact-ish correctness anchor. FP16+FP32-accum is its own later step; the FP16-fundamentals
+// versions through v2 (tiling) stay FP32 so each step isolates one variable.
 //
 // Layout: q,k,v are [B, H, N, d] row-major (the project-wide convention). For causal masking
 // we assume self-attention with N_q == N_k aligned at the end, masking key j > query i.

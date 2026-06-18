@@ -19,6 +19,7 @@ _KERNELS_DIR = os.path.join(_REPO_ROOT, "kernels")
 # Per-version source manifest. Add a line here when a new kernel version lands.
 _SOURCES = {
     "v1_naive": ["naive_attention.cu", "binding.cpp"],
+    "v2_tiled": ["tiled_attention.cu", "binding.cpp"],
 }
 
 
