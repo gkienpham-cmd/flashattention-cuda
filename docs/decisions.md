@@ -123,9 +123,41 @@ d=64's (8.0). Head dim eats the shared-memory budget that buys reuse.
 isolates the operand-reuse lesson from the S-elimination lesson (Step 3). Tile sizes adapt to d
 to fit the 64 KB smem. Online softmax and fusion are deliberately deferred.
 
-**Gate:** the v2 kernel is not written until Step 1 is green + benched on the T4 (per the
-per-step loop). This entry records the prediction; the measured row + ncu `dram__bytes_read`
-check land in `results.md` when the kernel ships.
+**Gate (cleared 2026-06-19):** Step 1 went green + benched + quiz-passed, so v2 shipped:
+`kernels/v2_tiled/tiled_attention.cu`, FP32, three-pass, S still materialized. Tiles are picked
+per head dim (64x64 @ d=64, 32x32 @ d=128) to fit the T4's 48 KB static smem; correctness is
+**26/26 vs SDPA** at atol/rtol 1e-4, incl. non-tile-multiple shapes for the boundary guard.
+
+**MEASURED (Colab T4, 2026-06-19) — prediction held on the limiter, missed on the location:**
+v2 is **1.3–3.2× faster than v1** (clock-matched at SM ~300 MHz), and the **predicted limiter
+(HBM) held at every shape** — tiling did not cross the ridge, exactly as predicted. It's still
+0.04–0.11× SDPA (fused FlashAttention), because the S round-trip survives; that's v3's job.
+
+But the Step 1 corollary — *"biggest win at N=8192, where L2 fails"* — was **wrong**. The measured
+v2/v1 win *peaks at mid-N* (2048×128 = 3.20×) and *shrinks* at N=8192 (2.02–2.84×). The honest
+post-mortem, separating two effects:
+- **Magnitude (why ~3×, not the predicted ~30×):** the roofline says traffic drops ~30×, but
+  *neither kernel sits on its roofline*. v1 runs faster than its cache-free floor (L2 help), and
+  v2 runs 6–21× *above* its own floor (scalar loads, low occupancy from the 32 KB tile, PV-pass
+  `__syncthreads` overhead). Those compress 30× → ~3×. The S round-trip caps the *roofline* win
+  (AI 8, ~32×), not the realized one — so S is not why the win is small.
+- **Shape (why it peaks at mid-N, not 8192):** operand and S traffic both scale as N², so the
+  composition is N-independent and cannot drive a trend. The trend is purely off-roofline — v2's
+  distance-from-floor is worst at the extremes (N=512 = 21× above, overhead-bound; N=8192 = 15×,
+  load/sync-bound) and best at mid-N. The Step 1 corollary tracked only v1's L2 cliff and missed
+  that **v2's own efficiency curve dominates where the win lands.**
+- **The one predictable part:** d=128 beats d=64 at every N because the operand term tiling cuts
+  is a larger traffic share there (operand:S ≈ 4:1 vs 1:1 at d=64).
+
+**Lesson:** the roofline bounds *traffic*, not a kernel's distance from that bound, and realized
+speedup is the ratio of two such distances — so a traffic-only model can call the limiter right
+(it did: HBM) yet miss the magnitude and the location of the win. Full table + the pending ncu
+`dram__bytes_read` read in [results.md](results.md#step-2--shared-memory-tiling-fp32-three-pass-s-still-materialized).
+
+**Next (Step 3 — online softmax):** the surviving S round-trip is now the named target. Replace
+the three-pass materialize-S structure with running max/sum so S never touches HBM — the model
+predicts AI jumps to ~512 and the limiter finally crosses to MMA. Step 2's remaining gates before
+it ships: read the v1-vs-v2 `dram__bytes_read` in Nsight, and pass the Step 2 quiz.
 
 **What changes on another arch:** more shared memory (A100 164 KB, H100 228 KB vs T4 64 KB)
 allows larger tiles → higher reuse → higher tiled AI, and async copy (Phase 2) hides the load

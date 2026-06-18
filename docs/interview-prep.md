@@ -63,10 +63,12 @@ ridge point = peak_compute (FLOP/s) / peak_bandwidth (bytes/s)   [FLOP/byte]
 T4 ridge points: FP32 CUDA-core **25.3**, FP16 tensor-core **203**, INT8 tensor-core **406**.
 
 For naive attention, the N-by-N terms cancel top and bottom, so **AI scales with d** (head dim),
-not sequence length. At d=64 that lands around 14-16 FLOP/byte — under the 25.3 ridge — so v1 is
-pinned to the bandwidth roof. Every Phase-1 optimization is a campaign to raise AI (shrink the
-denominator) until we hit the compute roof, then a campaign to raise the roof itself (tensor
-cores, then low precision).
+not sequence length. Counting the *redundant* operand re-reads (each Q/K row re-fetched per output
+element — see C3), v1 lands at **~0.25 FLOP/byte** at every d — far under the 25.3 ridge, so v1 is
+pinned to the bandwidth roof. (An earlier read-once cut of the model said "~14-16"; that was the
+bug C3 dissects — it described a *tiled* kernel, not the naive one.) Every Phase-1 optimization is
+a campaign to raise AI (shrink the denominator) until we hit the compute roof, then a campaign to
+raise the roof itself (tensor cores, then low precision).
 
 **Say-this:** "Arithmetic intensity is FLOPs per byte moved across HBM. Compare it to the ridge
 point — peak compute over peak bandwidth. Below the ridge you're memory-bound; the whole project
@@ -197,3 +199,66 @@ which is exactly the cost you're trying to optimize. Pressure-test the denominat
 a ~30x bandwidth win. But it stays HBM-bound: tiling removes redundant operand reads, not the S
 round-trip, so you don't cross the ridge until online softmax kills S. And watch the model itself
 — the naive '0.25' only shows up once you stop assuming operands are read once."
+
+---
+
+## C4 — Prediction vs measured: why the tiling win was 3x, not 30x, and peaked in the wrong place
+
+**Q: You predicted tiling cuts traffic ~30x. You measured ~2-3x, peaking at mid-N. Reconcile that.**
+
+This is the Step 2 honesty payoff: the roofline called the **limiter** right and the **magnitude
+and location** wrong — and the gap is itself the lesson.
+
+### What was predicted vs what happened (T4, FP32, clock-matched ~300 MHz)
+
+```
+              predicted (roofline)      measured v2/v1
+d=64          ~30x traffic cut, HBM     1.3x (N=512) .. 2.8x (N=2048) .. 2.0x (N=8192)
+d=128         ~30x traffic cut, HBM     2.9x (N=512) .. 3.2x (N=2048) .. 2.8x (N=8192)
+```
+
+Limiter: predicted HBM, measured HBM at every shape. ✅ That part held.
+
+### Why ~3x and not ~30x: neither kernel sits on its roofline
+
+The roofline is a *lower bound on time* = a bound on traffic. Realized speedup is the ratio of two
+*actual* runtimes, and both kernels miss their bound in opposite directions:
+
+```
+v1 runs FASTER than its cache-free floor  -> the L2 catches redundant reads (the Step 1 finding)
+v2 runs 6-21x ABOVE its own floor         -> scalar loads, low occupancy (32 KB tile), PV __syncthreads
+```
+
+A model that bounds traffic cannot see either gap — L2 isn't in it, and kernel inefficiency isn't
+in it. So 30x (the ratio of *floors*) compresses to ~3x (the ratio of *realized* times). **The S
+round-trip is a red herring for the magnitude**: it caps the *roofline* win (AI 8 ≈ 32x), not the
+realized one.
+
+### Why mid-N, not N=8192 (the failed corollary)
+
+Operand traffic and the S round-trip *both* scale as N^2, so the traffic *composition* is
+N-independent — S cannot produce an N-trend. The trend is entirely off-roofline: v2's
+distance-from-its-floor is a U in N (worst at the extremes, best in the middle):
+
+```
+N=512 :  21x above floor   work too small to hide launch/sync overhead
+N=2048:  6-9x above floor   the sweet spot -> biggest v2/v1
+N=8192:  15x above floor    un-vectorized loads + 128-chunk PV syncs scale badly
+```
+
+Step 1 predicted "biggest win at 8192" by tracking only *v1*'s L2 cliff. It missed that the win is
+a *ratio*, and *v2*'s own efficiency curve dominates where that ratio peaks.
+
+### The one part that was predictable: d=128 > d=64
+
+At every N, d=128 wins more. The operand term tiling actually removes is a bigger share of traffic
+at d=128 (operand:S ≈ 16:4 = 4:1) than at d=64 (≈ 4:4 = 1:1), so tiling has more to cut. This
+*is* visible in a traffic model — and it shows up cleanly in the data.
+
+**Say-this:** "The roofline nailed the limiter — still HBM — but predicted ~30x and I measured ~3x,
+peaking at mid-N not the longest sequence. Because realized speedup is the ratio of two runtimes,
+and neither is on its roofline: v1 is faster than its floor (L2 absorbs the redundant reads) and
+v2 is well above its floor (scalar loads, low occupancy, sync overhead). A traffic-bound model is
+blind to both, so it gets the limiter right and the magnitude and location wrong. The only N-trend
+it *could* call — d=128 beating d=64, because the operand term it cuts is a larger traffic share —
+it did call."
