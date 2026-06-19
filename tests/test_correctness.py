@@ -75,7 +75,7 @@ def test_explicit_scale(backend):
 # naive O(N^2 d) v1 at N=16384 would be punishingly slow for no extra coverage.
 @requires_cuda()
 @pytest.mark.parametrize("causal", [False, True])
-def test_online_long_n_stability(causal):
+def test_v3_online_long_n_stability(causal):
     torch.manual_seed(2)
     B, H, N, d = 1, 2, 16384, 64
     q = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
