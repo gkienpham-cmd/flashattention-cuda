@@ -31,7 +31,7 @@ SHAPES = [
     (1, 2, 100, 128),   # 100 % 32 != 0  -> partial QK/PV tile at d=128
 ]
 
-BACKENDS = ["v1_naive", "v2_tiled", "v3_online"]
+BACKENDS = ["v1_naive", "v2_tiled", "v3_online", "v4_fused"]
 
 ATOL, RTOL = 1e-4, 1e-4
 
@@ -83,5 +83,26 @@ def test_v3_online_long_n_stability(causal):
     v = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
 
     out = attention(q, k, v, causal=causal, backend="v3_online")
+    ref = sdpa_reference(q, k, v, causal=causal)
+    torch.testing.assert_close(out, ref, atol=ATOL, rtol=RTOL)
+
+
+# v4-specific stress case: single-pass online softmax accumulates the O-RESCALE across the whole
+# key axis (v3 dodged this by going two-pass — its pass 2 used the final (m, l), so O needed no
+# correction). If v4 applies alpha=exp(m_old-m_new) to the running l but not to the partial O, or
+# applies it AFTER the p*V add instead of before, the output drifts — and at N=16384 (the most
+# rescales) is exactly where that drift becomes visible. d=128 also exercises the 4-elems-per-lane
+# register slice. Restricted to v4_fused for the same reasons as the v3 case above.
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("causal", [False, True])
+def test_v4_fused_long_n_stability(causal, d):
+    torch.manual_seed(3)
+    B, H, N = 1, 2, 16384
+    q = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+
+    out = attention(q, k, v, causal=causal, backend="v4_fused")
     ref = sdpa_reference(q, k, v, causal=causal)
     torch.testing.assert_close(out, ref, atol=ATOL, rtol=RTOL)
