@@ -377,3 +377,45 @@ optimized a resource that wasn't the constraint. The CUPTI trace put 88% of the 
 measured was 151× above the MMA floor, so the real limiter is occupancy and memory latency from a
 one-thread-per-row schedule — which the roofline can't see. The fix isn't more bandwidth saving;
 it's v4's fused single-pass with proper warp-level parallelism."
+
+## C7 — Fusing the schedule: I beat the tiled kernel, and learned what "compute-bound" really costs
+
+Step 4 fused v3's S-elimination with v2's parallelism: one warp per query row, staged K/V,
+register-resident O, single pass with the O-rescale. It beats v2 ~2× and v3 ~8× — the first time
+S-off-HBM is *also* a wall-clock win. And it's still ~6× slower than SDPA. Both halves are the lesson.
+
+### 1. The fix that worked: thread → warp
+
+v3 mapped one *thread* to a query row — 31/32 lanes idle, uncoalesced per-row K/V reads, 151× off the
+MMA floor, 88.6% of time stuck in pass 2. v4 maps one *warp* to a row: 32 lanes cooperate on the dot
+product, the block stages each K/V tile into smem once, O lives in registers. CUPTI shows a single
+kernel at 100% of CUDA time — the pass2/occupancy wall is structurally gone (no passes left).
+Distance to floor: **151× → ~18×.** That ~8.5× is pure scheduling.
+
+### 2. The O-rescale, finally paid
+
+Single-pass means O accumulates while the running max is still moving, so every max climb rescales the
+partial O by `exp(m_old−m_new)` *before* adding `p·V`. v3 dodged this by going two-pass (final `m,l`
+→ no rescale). The N=16384 stability test (d=64 *and* d=128) is what proves the rescale is right
+across the whole key axis — apply it to `l` but not `O`, or after the add instead of before, and only
+long-N drifts.
+
+### 3. Why it's *still* 18× off the floor: GEMV, not GEMM
+
+The 17 ms floor assumes the 8.1 TFLOPS FP32 FMA peak. v4 scores one key at a time per warp: a 5-step
+`__shfl` butterfly reduction + 2 FMAs. ~70% of the instruction stream is reduction, not math — it
+can't saturate the FMA pipes. The win came from fixing *occupancy*; the remaining gap is *FMA
+utilization*, a different axis. Roofline missed the magnitude a 4th time (17 vs 292 ms) for the same
+reason it always does: flops/bytes can't see reduction overhead.
+
+### The meta-lesson
+
+"Compute-bound" on the roofline doesn't mean "near peak FLOPs." A kernel can be compute-bound *and*
+18× slow if the compute is shaped wrong (GEMV reductions instead of GEMM FMAs). Fixing the schedule
+(v3→v4) and fixing the math-shape (v4→v5 tensor cores) are two separate optimizations; you need both.
+
+**Say-this:** "v4 fused single-pass with one warp per row, staged K/V, register-O and the O-rescale.
+It beats v2 ~2× and v3 ~8× — S off HBM finally wins in wall-clock — and CUPTI shows one kernel, so
+v3's occupancy wall is gone: 151× → 18× off the floor. But it's still ~6× slower than SDPA, because
+scoring one key per warp via shuffle reductions is GEMV-shaped — ~70% reduction overhead, never near
+FP32 FMA peak. Step 5's tensor cores fix the shape *and* raise the ceiling."

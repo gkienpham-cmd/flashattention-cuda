@@ -234,3 +234,45 @@ MMA-vs-MUFU pipe-util read waits for a bare-metal/dedicated box. The counter-fre
 **Next (Step 4 — fused FA-1):** single pass, O-rescale, one warp per query row, staged K/V,
 register-resident accumulator. Keeps S off HBM (v3's win) *and* schedules like v2's GEMMs — the
 first version where "S never touches HBM" should actually beat v2 in wall-clock.
+
+## Step 4 — Fused FlashAttention-1 (the thesis lands: S-off-HBM finally beats tiling)
+
+**Bottleneck going in:** v3 proved S-elimination but was occupancy/latency-bound — 151× off the MMA
+floor, 88.6% of time in pass 2, one-thread-per-row leaving 192/256 lanes idle. Named target: keep S
+off HBM but schedule like v2's GEMMs.
+
+**Options considered:**
+1. **Single-pass FA-1, warp-per-row, register-O, staged K/V (chosen).**
+2. **Two-pass but better-scheduled** — rejected: doesn't repair the fundamental one-thread-per-row
+   waste and proves nothing new.
+3. **Block-per-row with register-tiled score *tiles* (GEMM-shaped scoring)** — deferred: closer to
+   canonical FA and likely faster, but it couples the O-rescale into a tiled matmul in the same step.
+   We took warp-per-row first to land the O-rescale correctly with one isolated structural change.
+
+**Choice — warp-per-row single-pass, and why:** the smallest step from v3 that fixes the schedule.
+One warp (32 lanes) per row restores parallelism (v3 wasted 31/32), staged K/V gives coalesced reuse,
+register-O keeps the accumulator off-chip, and the O-rescale finally gets implemented (v3's deferred
+piece). One isolated variable: thread→warp granularity.
+
+**Measured (T4 sm_75, 2026-06-20) — thesis confirmed, new limiter exposed:**
+- **Correct:** 17/17, incl. N=16384 O-rescale stability at d=64 *and* d=128, causal both ways.
+- **v4 beats v2 (1.7–2.6×) and v3 (7.5–15×).** S-off-HBM is now also a wall-clock win — the goal
+  since Step 3. The 2× over v2 is purely schedule (identical FP32 math).
+- **S still gone:** +16.8 MB at 8192×64 (< v3's +17.3; no per-row HBM scratch).
+- **Schedule fixed:** CUPTI shows a single fused kernel at 100% of CUDA time — the pass2/occupancy
+  wall is structurally gone. Distance to floor 151× → ~18×.
+- **New limiter = FMA under-utilization (GEMV-shaped scoring).** ~18× off the FP32 floor because each
+  per-key score is a 5-step `__shfl` reduction + 2 FMAs — reduction overhead dominates, never near
+  the 8.1 TFLOPS FMA peak. Roofline missed the *magnitude* (4th miss), same flops/bytes blind spot.
+
+**What changes on another arch:** the warp-shuffle GEMV is arch-independently FMA-inefficient — a
+bigger register file won't change the *shape* of the computation. The real fix is GEMM-shaped MMA
+(tensor cores, or register-blocked score tiles). On A100/H100 the absolute numbers improve but the
+~18×-off-floor shape persists until the scoring becomes a real matmul.
+
+**ncu deferred:** containerized rentals block counters (`ERR_NVGPUCTRPERM`); the memory + CUPTI +
+roofline-distance evidence already names the limiter.
+
+**Next (Step 5 — tensor cores):** FP16-in/FP32-accum WMMA. Raises the ceiling 8→65 TFLOPS *and*
+forces GEMM-shaped MMA tiles — directly attacking v4's FMA-efficiency gap. Expect the limiter to
+finally approach a real (tensor-core) MMA bound instead of a reduction-overhead wall.

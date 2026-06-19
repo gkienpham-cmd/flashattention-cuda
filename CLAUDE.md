@@ -61,7 +61,7 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 - **Conventions:** tensors are `[B, H, N, d]` row-major. FP16 phases use FP16-in/FP32-accum; v1 and
   v2 are FP32 throughout. Hardware leaks in only at the build `-gencode` and `roofline/archs.py`.
 
-## Status (2026-06-19)
+## Status (2026-06-20)
 
 - **Step 1 (v1 naive)** — DONE: tests green, benched, quiz passed. Key finding: naive beats its
   cache-free roofline floor at mid-N (L2 absorbs redundant operand reads), converges to it at
@@ -87,14 +87,28 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   blind to the schedule. **ncu pipe-util read deferred to bare-metal** (`ERR_NVGPUCTRPERM` blocks
   counters on all containerized rentals — vast.ai/RunPod/Lambda; confirmed across hosts +
   `--cap-add` attempts). See `docs/results.md`/`decisions.md` Step 3, `interview-prep.md` C6.
+- **Step 4 (v4 fused, `kernels/v4_fused/`)** — DONE (2026-06-20): both gates cleared (quiz passed +
+  counter-free measurement). FP32, **single-pass** FA-1 — **one warp per query row**, staged K/V in
+  smem, **register-resident O** with the **O-rescale** (`O = α·O + p·V`, α=exp(m_old−m_new) applied
+  before the add — the piece v3 deferred). **17/17 correctness** vs SDPA (incl. N=16384 O-rescale
+  stability at d=64 *and* d=128). **The thesis landed: v4 beats v2 1.7–2.6× and v3 7.5–15×** — the
+  first version where S-off-HBM is *also* a wall-clock win. **S still gone:** +16.8 MB @ 8192×64 (<
+  v3's +17.3, no HBM scratch). **Schedule fixed:** CUPTI shows a single fused kernel at 100% CUDA time
+  (v3's 88.6%-pass2 wall gone); distance to floor **151×→~18×**. **But still ~6× slower than SDPA /
+  18× off the FP32 MMA floor** — new limiter = **FMA under-utilization**: warp-per-row scoring is
+  GEMV-shaped (per-key `__shfl` reduction ≫ FMAs), never near the 8.1 TFLOPS peak. Roofline missed
+  *magnitude* a 4th time, same blind spot. ncu still deferred. See `docs/results.md`/`decisions.md`
+  Step 4, `interview-prep.md` C7.
 
 ## Next steps
 
-1. **Step 4 — fused FlashAttention-1 (`kernels/v4_*`):** single pass with correct **O-rescaling**
-   (the piece v3 deferred), **one warp per query row** (not one thread), **staged K/V** in smem,
-   register-resident O accumulator. Goal: keep v3's S-off-HBM property *and* schedule like v2's GEMMs
-   — the first version where "S never touches HBM" should actually beat v2 in wall-clock. v3's
-   measured limiter (occupancy/latency, pass2-dominated) is the explicit target. Full per-step loop.
+1. **Step 5 — tensor cores (`kernels/v5_*`):** FP16-in / FP32-accum on the Turing WMMA units. Raises
+   the ceiling 8→65 TFLOPS *and* forces **GEMM-shaped MMA tiles**, directly attacking v4's measured
+   FMA-efficiency gap (the GEMV-shaped shuffle scoring that leaves it 18× off the floor). Goal: the
+   first version that approaches a *real* (tensor-core) MMA bound rather than a reduction-overhead
+   wall. Mind the FP16 tolerance change (v1–v4 were FP32 throughout; FP16-in needs a looser atol).
+   Full per-step loop. **Note:** re-running the whole v1→v4 curve on a bigger GPU (A100/H100) is a
+   deliberate later pass — kept on T4 through Step 4 for apples-to-apples with the v2/v3 baselines.
 2. **GPU host:** free Colab T4 exhausted → rent on **vast.ai** (T4, ~$0.10–0.20/hr; cu124 torch +
    `python`→python3 symlink needed on the CUDA devel image). **Counter-free profiling is the norm
    now:** `torch.cuda.max_memory_allocated()` for footprint, `torch.profiler`/CUPTI trace for

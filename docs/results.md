@@ -226,3 +226,72 @@ tenant isolation — confirmed across multiple hosts and `--cap-add=SYS_ADMIN` a
 counter-free path (CUDA-event timing + memory measurement + execution-path decomposition via CUPTI
 trace + roofline) already settles the story; the formal pipe-util read is a one-cell follow-up on a
 dedicated/bare-metal GPU (Qubrid/Lambda dedicated/CoreWeave), exactly as Step 1 deferred its ncu.
+
+## Step 4 — Fused FlashAttention-1 (FP32, single-pass, S off HBM, warp-per-row)
+
+`kernels/v4_fused/` — one fused kernel. One warp owns a query row; the block stages each K/V block
+into smem once (reused by all 8 warps); each score is a 32-lane `__shfl` butterfly dot product; the
+online update keeps a running `(m, l)` and a **register-resident O accumulator**, rescaling O by
+`exp(m_old−m_new)` on every max climb — the O-rescale v3 deferred. S never materializes and there is
+no per-row HBM scratch at all. One isolated change vs v3: thread→warp granularity (+ the rescale).
+
+**Roofline prediction (T4 sm_75, B=1 H=8, fp32, `materialize_S=False`, tile 1×1)** — identical floor
+to v3; the deliverable is the *distance*, not a new prediction:
+
+| shape (BxHxNxd) | intensity (FLOP/B) | ridge | predicted limiter | predicted lower bound |
+|---|---|---|---|---|
+| 1x8x512x64   | 128.0  | 25.3 | **MMA** | 0.066 ms |
+| 1x8x2048x64  | 512.0  | 25.3 | **MMA** | 1.060 ms |
+| 1x8x8192x64  | 2048.0 | 25.3 | **MMA** | 16.968 ms |
+| 1x8x8192x128 | 2048.0 | 25.3 | **MMA** | 33.936 ms |
+
+> Single-pass computes QK *once* (v3's two-pass did it twice), so the modeled MMA is now exactly
+> right rather than under-counted. The model still says MMA-bound everywhere; Steps 2–3 already
+> taught us it's blind to the schedule. The question is *how far* v4 lands from the floor now that
+> the schedule is fixed.
+
+**Measured (vast.ai rented T4 sm_75, torch 2.6.0+cu124, FP32 — 2026-06-20):**
+Correctness: **17/17 pass vs SDPA** (atol/rtol 1e-4) — all shapes × causal × partial-tile boundaries,
+the explicit-scale case, plus the N=16384 O-rescale stability at d=64 *and* d=128, causal both ways.
+
+| shape | v4 p50/p99 ms | v2 p50 ms | v3 p50 ms | SDPA p50 ms | v4÷SDPA | v4÷v2 | v4÷v3 | v4 ÷ floor |
+|---|---|---|---|---|---|---|---|---|
+| 1x8x512x64   | 1.68/1.69     | 3.55   | 12.56  | 0.317 | 0.19× | **2.12×** | 7.49×  | 25.4× |
+| 1x8x512x128  | 2.19/2.20     | 3.72   | 27.59  | 0.392 | 0.18× | 1.70× | 12.59× | 16.5× |
+| 1x8x2048x64  | 18.57/18.91   | 34.20  | 172.6  | 3.03  | 0.16× | **1.84×** | 9.30×  | 17.5× |
+| 1x8x2048x128 | 25.45/26.08   | 59.45  | 382.9  | 5.65  | 0.22× | 2.34× | 15.05× | 12.0× |
+| 1x8x8192x64  | 299.6/303.9   | 652.8  | 2568   | 47.01 | 0.16× | **2.18×** | 8.57×  | 17.7× |
+| 1x8x8192x128 | 432.5/439.7   | 1118   | 5924   | 99.03 | 0.23× | 2.59× | 13.70× | 12.7× |
+
+(`v4÷v2 > 1` means v4 is **faster** than v2. Causal runs ≈ 0.6–0.8× the non-causal time — the
+early-out mask path — e.g. 8192×64 drops 299.6 → 204.2 ms.)
+
+**Reading it — the thesis is confirmed, with an honest ceiling:**
+- ✅ **v4 beats v2 (1.7–2.6×) and crushes v3 (7.5–15×).** This is the first version where "S never
+  touches HBM" is *also* a wall-clock win — the goal set since Step 3. The 2× over v2 comes purely
+  from the schedule (same FP32 math, S off-chip in both the relevant sense), not from saved bytes.
+- ✅ **S still gone — +16.8 MB at 8192×64** (vs v2's +2164 MB), even less than v3's +17.3 MB because
+  the fused loop keeps `(m, l)` in registers — no HBM scratch at all.
+- ✅ **Schedule fixed — one kernel, no pass2 wall.** CUPTI trace: a single `fused_attention_kernel`
+  at **100% of CUDA time**, 292 ms/call (matches the 299.6 ms p50). v3's 88.6%-pass2 occupancy wall
+  is structurally gone — there are no passes. Distance to floor went **151× (v3) → ~18× (v4)**, so
+  thread→warp closed ~8.5× of the gap.
+- ⚠️ **But still ~6× slower than SDPA and ~18× above the FP32 MMA floor.** v4 doesn't reach the floor
+  because the warp-per-row scoring is **GEMV-shaped**: each score is a 5-step `__shfl` reduction + 2
+  FMAs, so reduction overhead — not FMA throughput — dominates. It never approaches the 8.1 TFLOPS
+  FP32 peak the floor assumes. Fixing *occupancy* (v3→v4) and fixing *FMA utilization* (the next step)
+  are different axes.
+- **Roofline mispredicted a 4th time — in magnitude (17 ms predicted, 292 ms measured).** The limiter
+  has moved every step (HBM → MMA → occupancy → FMA-efficiency) but the model's blind spot is
+  constant: flops/bytes can't see reduction overhead or FMA-pipe utilization, so it always assumes an
+  efficient kernel.
+
+**Lesson:** v4 delivers the Step-4 thesis — keep S off HBM *and* schedule like a GEMM, and you finally
+beat tiling (2× over v2). "Compute-bound on the roofline" turned out **not** to mean "near peak
+FLOPs": a kernel can be compute-bound *and* 18× slow if the compute is shaped wrong (GEMV reductions
+instead of GEMM FMAs). That remaining gap is the explicit target of Step 5 (tensor cores), which both
+raises the ceiling 8→65 TFLOPS *and* forces GEMM-shaped MMA tiles.
+
+**ncu:** still deferred — containerized rentals block hardware counters (`ERR_NVGPUCTRPERM`). The
+counter-free evidence (memory proof + CUPTI single-kernel trace + roofline distance) already names
+the limiter as FMA under-utilization; the pipe-util read is a bare-metal follow-up.
