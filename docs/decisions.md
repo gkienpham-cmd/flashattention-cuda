@@ -185,3 +185,51 @@ crossing-to-MMA but verify it against ncu before believing it. **Step 2 gates: b
 allows larger tiles → higher reuse → higher tiled AI, and async copy (Phase 2) hides the load
 latency. The *ridge* also moves, so where "tiled" lands relative to it is arch-specific — but on
 every arch, tiling-without-fusion stays bandwidth-bound because S still round-trips.
+
+---
+
+## Step 3 — Online softmax (the S-elimination is real; the speedup isn't, yet)
+
+**Bottleneck going in:** the Step-2 ncu read proved S is ~99% of DRAM traffic. So the named target
+was: delete S from HBM via online (streaming) softmax — running `(m, l)` per query row, scores
+computed on-chip and discarded.
+
+**Options considered:**
+1. **Single-pass FlashAttention-1** (the canonical fused kernel): one sweep maintaining `m, l` *and*
+   a running O accumulator that must be rescaled by `exp(m_old−m_new)` on every max update.
+2. **Two-pass online softmax** (chosen): pass 1 streams K → final `(m, l)`; pass 2 re-streams K/V,
+   recomputes scores, forms `O = (exp(s−m)/l)·V` with no O-rescale (m,l are final).
+
+**Choice — two-pass, and why:** it isolates *one variable*. The O-rescale (coupling the softmax
+denominator into the matmul accumulation) is the single fiddliest, most bug-prone part of FA;
+deferring it to v4 lets v3 prove the S-elimination mechanism in isolation, exactly as v2 isolated
+operand-reuse while keeping S materialized. Cost: QK computed twice + scores recomputed in pass 2.
+Same reasoning extended to operand handling: v3 reads K/V unstaged from global (L2-resident per
+Step 2) rather than re-staging them — so the *only* thing v3 changes vs v2 is removing S.
+
+**Measured (T4 sm_75, 2026-06-19) — the prediction missed a third time, for a third reason:**
+- **The mechanism works:** 13/13 correctness; peak memory at 8192×64 is **+17 MB (v3) vs +2164 MB
+  (v2)** — S provably never materializes (125× less, no profiler needed).
+- **The speedup is negative:** v3 is **3–7× slower than v2** and ~50–100× slower than SDPA. Deleting
+  ~99% of DRAM traffic bought nothing, because Step 2 already proved nothing was bandwidth-bound. We
+  optimized a resource that was never the constraint.
+- **Real limiter = occupancy/latency, not MMA or MUFU.** Measured 2556 ms at 8192×64 is **151× above
+  the 17 ms MMA floor**, so it's nowhere near compute-saturated. The torch profiler (CUPTI trace, no
+  counters) shows **pass2 = 88.6%** of time: one-thread-per-row leaves 192/256 threads idle, and
+  pass 2's unstaged per-row K/V global reads dominate. The roofline mispredicts *again* because it
+  assumes an efficient schedule — the inefficiency is the term it can't model (the Step-2 L2 lesson
+  in a new disguise).
+
+**What changes on another arch:** nothing rescues v3's *scheduling* — one-thread-per-row is
+arch-independently bad. On A100/H100 the larger register file + smem would let v4 stage K/V and keep
+a register-resident O accumulator with the single-pass rescale, and async copy hides the load
+latency — that's where the S-off-HBM property finally converts to wall-clock. The S-elimination
+itself is arch-independent and permanent.
+
+**ncu deferred:** all containerized rentals block hardware counters (`ERR_NVGPUCTRPERM`); the
+MMA-vs-MUFU pipe-util read waits for a bare-metal/dedicated box. The counter-free evidence
+(memory + CUPTI trace + roofline distance) already names the limiter as occupancy/latency.
+
+**Next (Step 4 — fused FA-1):** single pass, O-rescale, one warp per query row, staged K/V,
+register-resident accumulator. Keeps S off HBM (v3's win) *and* schedules like v2's GEMMs — the
+first version where "S never touches HBM" should actually beat v2 in wall-clock.

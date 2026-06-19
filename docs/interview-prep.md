@@ -330,3 +330,50 @@ softmax pass re-reads a dozen times — byte-identical in both kernels. Nothing 
 (≤35% throughput). The lesson: a traffic model is blind to the cache that serves the traffic, so
 verify the limiter with the throughput counter — and the data makes online softmax, which deletes
 that S, the only thing that matters next."
+
+---
+
+## C6 — Online softmax: I deleted 99% of DRAM traffic and the kernel got *slower*
+
+Step 3 fused the softmax so the N×N score matrix S never touches HBM (running max/sum, two passes:
+pass 1 → final `(m, l)`; pass 2 recomputes scores and forms O with no rescale). It is correct, it
+provably removes S — and it is **3–7× slower than v2.** That contradiction is the whole lesson.
+
+### 1. The S-elimination is real — measured without a profiler
+
+Counters were blocked on every cloud rental (`ERR_NVGPUCTRPERM` — containers don't get
+`CAP_SYS_ADMIN`), so I proved it with `torch.cuda.max_memory_allocated()` instead: at 8192×64, v2
+allocates **+2164 MB** (the 2147 MB S matrix), v3 allocates **+17 MB** (just O + the `m,l` stats).
+**125× less memory — that *is* S, gone.** A memory measurement substitutes for a traffic counter
+when the algorithm's footprint is the thing in question.
+
+### 2. Deleting it bought nothing — because S was never the *bottleneck*, only the *traffic*
+
+Step 2 (C5) already showed the T4 is never HBM-bandwidth-bound (≤35% DRAM throughput; L2 owns the
+operands). S was 99% of *DRAM traffic* — but DRAM traffic wasn't the constraint. **Removing the
+biggest line item from a budget you weren't over doesn't make you faster.** This is the trap of
+optimizing what you can *measure* (bytes) instead of what actually *binds* (here, the schedule).
+
+### 3. The real limiter: occupancy/latency — and the roofline missed it a *third* time
+
+Measured 2556 ms at 8192×64 vs a **17 ms MMA roofline floor → 151× above it.** Not compute-bound,
+not bandwidth-bound (memory proof), not MUFU. The CUPTI trace (nsys-free, no counters) localizes it:
+**pass2 = 88.6%** of runtime. The kernel is one-thread-per-row, so 192 of 256 threads sit idle, and
+pass 2 re-reads K and V unstaged from global per key. That's an **occupancy + memory-latency** wall.
+The roofline keeps mispredicting (HBM in C5, MMA here) for the same root cause: **it assumes an
+efficient kernel and is blind to the schedule**, which on a real GPU is the dominant term.
+
+### The meta-lesson
+
+A correct algorithmic win (fuse softmax, kill S) can be a wall-clock *loss* if it's paid for with a
+worse schedule on a machine that wasn't bound by the thing you fixed. v3's value is that it
+*isolates and proves the mechanism* FlashAttention is built on; the speedup waits for v4 (single-pass
++ O-rescale + one-warp-per-row + staged operands), which keeps S off HBM *and* schedules like a GEMM.
+
+**Say-this:** "Online softmax deleted 99% of DRAM traffic — I proved S is gone with peak-memory:
+125× less than the tiled kernel, no profiler needed because counters are blocked on cloud rentals.
+But it ran 3–7× *slower* than v2, because Step 2 had already shown nothing was bandwidth-bound — I
+optimized a resource that wasn't the constraint. The CUPTI trace put 88% of the time in pass 2, and
+measured was 151× above the MMA floor, so the real limiter is occupancy and memory latency from a
+one-thread-per-row schedule — which the roofline can't see. The fix isn't more bandwidth saving;
+it's v4's fused single-pass with proper warp-level parallelism."

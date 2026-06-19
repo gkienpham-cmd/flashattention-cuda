@@ -177,6 +177,52 @@ the one isolated variable is S-elimination.
 > prediction is most confident about — that S-driven DRAM is *gone* — is the one Step 2 makes us
 > trust, because S genuinely leaves HBM here rather than merely being L2-cached.
 
-**Measured (vast.ai rented T4 sm_75 — _pending the run_):** correctness vs SDPA, bench vs v2/SDPA
-across the sweep, and the mandatory ncu read (confirm S DRAM traffic is gone vs the Step-2 table
-above; read `sm__throughput` + MUFU/`exp2` pipe util to name the real limiter). Table to follow.
+**Measured (vast.ai rented T4 sm_75, driver 560.35.03, torch 2.6.0+cu124, FP32 — 2026-06-19):**
+Correctness: **13/13 core pass vs SDPA** (atol/rtol 1e-4), all shapes × causal × the partial-tile
+boundaries; long-N (N=16384) rescale-stability case included.
+
+| shape | v3 p50/p99 ms | v2 p50 ms | SDPA p50 ms | v3÷SDPA | v3÷v2 | roofline |
+|---|---|---|---|---|---|---|
+| 1x8x512x64    | 12.51/21.30     | 5.45   | 0.198  | 0.02× | **0.44×** | MMA (~0.07ms) |
+| 1x8x512x128   | 27.36/27.80     | 3.74   | 0.327  | 0.01× | 0.14× | MMA (~0.13ms) |
+| 1x8x2048x64   | 172.7/173.1     | 32.21  | 3.05   | 0.02× | 0.19× | MMA (~1.06ms) |
+| 1x8x2048x128  | 379.7/381.0     | 55.51  | 5.60   | 0.01× | 0.15× | MMA (~2.12ms) |
+| 1x8x8192x64   | 2556.9/2561.6   | 780.7  | 51.56  | 0.02× | 0.31× | MMA (~16.97ms) |
+| 1x8x8192x128  | 5661.7/5673.2   | 1049.3 | 102.66 | 0.02× | 0.19× | MMA (~33.94ms) |
+
+(`v3÷v2 < 1` means v3 is **slower** than v2. Causal roughly halves v3's time, as expected.)
+
+**The headline miss — v3 is 3–7× SLOWER than v2, and the roofline floor is off by 150×:**
+- **S is gone — proven without a profiler.** Peak CUDA memory at 8192×64: v2 allocates **+2164 MB**
+  (the 2147 MB S matrix + O), v3 allocates **+17 MB** (just O + the `m,l` stats). v3 uses **125×
+  less** memory — a direct, counter-free measurement that S never materializes. Gate-6's "is S gone"
+  is settled structurally and numerically.
+- **But deleting S bought nothing, because nothing was DRAM-bound.** Step 2 already proved the T4 is
+  never HBM-bandwidth-limited (≤35% DRAM throughput; L2 owns the operands). v3 removed ~99% of *DRAM
+  traffic* that *wasn't the bottleneck* — so wall-clock didn't improve; it got **worse**, because
+  v3's deliberately-simple scheduling is far less efficient than v2's tiled GEMMs.
+- **Where the time goes (torch profiler, CUPTI trace — no counters needed):** at 8192×64,
+  **pass2_output = 88.6%** (2273 ms/call) vs **pass1_stats = 11.4%** (292 ms/call), a 7.8× split.
+  Pass 2 carries the PV accumulation *and* re-reads K and V unstaged from global per key, with only
+  64 of 256 threads active (one-thread-per-row). The 2565 ms/iter the profiler sums matches the
+  2556 ms bench — internally consistent.
+- **The roofline was wrong about the limiter — again, and for a new reason.** Measured 2556 ms at
+  8192×64 is **151× above** the 17 ms MMA floor, so the kernel is nowhere near compute-saturated.
+  It isn't HBM-bound (memory proof) and isn't MMA-bound (151× off) and isn't MUFU-bound — it's
+  **occupancy/latency-bound**: low active-thread count + uncoalesced per-row global K/V reads in
+  pass 2. The roofline keeps mispredicting because it assumes an *efficient* kernel; v3's scheduling
+  is the dominant term it can't see (the Step-2 L2 lesson, in a new disguise).
+
+**Lesson:** v3 *isolates and proves the S-elimination mechanism* (correct output + 125× less memory),
+which is the algorithmic foundation FlashAttention is built on — but on a machine that was never
+bandwidth-bound, removing DRAM traffic while regressing the schedule is a **net wall-clock loss**.
+The speedup is deferred to v4 (single-pass fusion with O-rescale + proper parallelization: one warp
+per query row, staged K/V, register-resident O accumulator), which keeps S off HBM *and* schedules
+like v2's GEMMs.
+
+**ncu (MMA-vs-MUFU pipe-util read):** *deferred to a bare-metal box.* Every containerized rental
+(vast.ai, RunPod, Lambda containers) blocks GPU hardware-counter access (`ERR_NVGPUCTRPERM`) for
+tenant isolation — confirmed across multiple hosts and `--cap-add=SYS_ADMIN` attempts. The
+counter-free path (CUDA-event timing + memory measurement + execution-path decomposition via CUPTI
+trace + roofline) already settles the story; the formal pipe-util read is a one-cell follow-up on a
+dedicated/bare-metal GPU (Qubrid/Lambda dedicated/CoreWeave), exactly as Step 1 deferred its ncu.
