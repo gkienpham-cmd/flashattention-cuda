@@ -268,8 +268,14 @@ early-out mask path — e.g. 8192×64 drops 299.6 → 204.2 ms.)
 
 **Reading it — the thesis is confirmed, with an honest ceiling:**
 - ✅ **v4 beats v2 (1.7–2.6×) and crushes v3 (7.5–15×).** This is the first version where "S never
-  touches HBM" is *also* a wall-clock win — the goal set since Step 3. The 2× over v2 comes purely
-  from the schedule (same FP32 math, S off-chip in both the relevant sense), not from saved bytes.
+  touches HBM" is *also* a wall-clock win — the goal set since Step 3. **The v2 win is two things at
+  once:** (a) *fusion* — v4 eliminates v2's **2 GB** S DRAM round-trip (v2 writes S then re-reads it
+  ~12× across the softmax/PV sweeps; S is far too big for the 4 MB L2) and collapses three kernels
+  into one; (b) a *tight single-kernel schedule*. The clean three-way contrast proves you need
+  **both**: v3 had (a) without (b) — S gone but one-thread-per-row — and was *slower* than v2; v2 has
+  (b) without (a) — good tiled GEMMs but the S round-trip — and is slower than v4. So S-elimination
+  is **necessary but not sufficient**; splitting the 2× cleanly between saved-S and schedule needs
+  ncu (deferred).
 - ✅ **S still gone — +16.8 MB at 8192×64** (vs v2's +2164 MB), even less than v3's +17.3 MB because
   the fused loop keeps `(m, l)` in registers — no HBM scratch at all.
 - ✅ **Schedule fixed — one kernel, no pass2 wall.** CUPTI trace: a single `fused_attention_kernel`

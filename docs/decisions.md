@@ -257,7 +257,10 @@ piece). One isolated variable: thread→warp granularity.
 **Measured (T4 sm_75, 2026-06-20) — thesis confirmed, new limiter exposed:**
 - **Correct:** 17/17, incl. N=16384 O-rescale stability at d=64 *and* d=128, causal both ways.
 - **v4 beats v2 (1.7–2.6×) and v3 (7.5–15×).** S-off-HBM is now also a wall-clock win — the goal
-  since Step 3. The 2× over v2 is purely schedule (identical FP32 math).
+  since Step 3. The v2 win is **two things at once**: fusion (v2's 2 GB S DRAM round-trip, re-read
+  ~12×, eliminated; 3 kernels → 1) *and* a tight single-kernel schedule. Three-way contrast proves
+  you need both — v3 had S-off-HBM without the schedule and was *slower* than v2; v2 has the schedule
+  without S-off-HBM and is slower than v4. Clean split needs ncu (deferred).
 - **S still gone:** +16.8 MB at 8192×64 (< v3's +17.3; no per-row HBM scratch).
 - **Schedule fixed:** CUPTI shows a single fused kernel at 100% of CUDA time — the pass2/occupancy
   wall is structurally gone. Distance to floor 151× → ~18×.
