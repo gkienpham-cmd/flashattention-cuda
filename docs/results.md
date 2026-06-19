@@ -76,8 +76,13 @@ below is **clock-matched** — both the v1 and v2 columns are from runs at SM cl
 | 1x8x8192x64  | 808.1 / 915.8   | 0.06× | 2.02× | 15.0× |
 | 1x8x8192x128 | 1087.0 / 1134.5 | 0.10× | 2.84× | 8.1× |
 
-**Reading it — two confirmations and one honest miss:**
-- ✅ **Limiter stays HBM** at every shape, exactly as predicted — tiling does not cross the ridge.
+**Reading it — one confirmation, one corrected prediction, two honest misses** (the bench view;
+the ncu block below revises the limiter further):
+- ⚠️ **Limiter: predicted HBM, but ncu says *not bandwidth-saturated*** (see the measured block
+  below). AI is below the 25.3 ridge, so not compute-bound (✅) — but DRAM throughput never exceeds
+  ~35%, so the kernels aren't on the HBM roof either. "Below the ridge" held; "bandwidth-bound" did
+  not. The real per-pass limiters are L2 bandwidth/latency (qk), the multi-pass S re-reads
+  (softmax), and compute (pv, ~80% SM).
 - ✅ **Still far slower than SDPA** (0.04–0.11×), because SDPA is fused FlashAttention and we still
   round-trip S through HBM. This is the gap v3 attacks.
 - ❌ **The "biggest win at N=8192" sub-prediction did NOT hold.** The win *peaks at mid-N*
@@ -103,12 +108,38 @@ but the L2-driven corollary about *where* the win lands was wrong — a clean re
 roofline bounds traffic, not a kernel's distance from that bound**, and realized speedup is the
 ratio of two such distances.
 
-**ncu:** `profiling/capture.sh v2_tiled` now correctly profiles `qk_tiled_kernel<64,64,64>` /
-`softmax_kernel` / `pv_tiled_kernel<64,64,64>` (confirmed in the run log), wrote
-`profiling/raw/v2_tiled.ncu-rep`. **TODO (UI read):** open both reports and record `dram__bytes_read`
-for v1 vs v2 — the operand-reuse win should show as a large drop in the QK/PV passes' DRAM reads,
-and the S-round-trip cap should show as a *floor* on total DRAM traffic that tiling can't push below.
+**ncu — measured `dram__bytes_read.sum` per pass (Colab T4 sm_75, 2026-06-19), two shapes:**
 
-How to fill the ncu row: open `profiling/raw/{v1_naive,v2_tiled}.ncu-rep` in Nsight Compute,
-read `dram__bytes_read.sum` per pass per `GUIDE.md`, and note whether the measured traffic-ratio
-matches the predicted ~30× operand cut net of the S floor.
+| shape · ver | qk | softmax (S) | pv | **total reads** | v1/v2 |
+|---|---|---|---|---|---|
+| N=512 · v1  | 3.68 MB | 49.83 MB | 18.36 MB | **71.9 MB** | — |
+| N=512 · v2  | 3.11 MB | 49.91 MB | 13.49 MB | **66.5 MB** | 1.08× |
+| N=8192 · v1 | 0.074 GB | 26.33 GB | 4.39 GB | **30.80 GB** | — |
+| N=8192 · v2 | 1.433 GB | 25.53 GB | 3.26 GB | **30.22 GB** | 1.02× |
+
+SoL context: DRAM throughput peaks at ~35% (softmax @ N=8192), ≤15% at N=512 — never bandwidth-
+saturated. SM throughput: pv ~80% (compute-bound), qk ~6% (latency-bound). v2 occupancy halves on
+qk/pv (97→49%) — the 32 KB tile cost, measured.
+
+**The ncu read overturns the predicted traffic story — the deepest honest miss yet:**
+- **Tiling did NOT cut DRAM traffic — at either shape (1.08× / 1.02×).** The predicted ~30× operand
+  cut never appears: the T4's 4 MB L2 *already* serves the redundant Q/K reads, so v1's qk pass
+  reads just **74 MB at N=8192** (not the ~hundreds of GB the cache-free model charges). L2 had
+  already done tiling's job, leaving v2 nothing to cut — and on qk v2 reads **19× *more*** than v1
+  (1.43 vs 0.07 GB), because its tiled access + halved occupancy gets *worse* L2 reuse than v1's
+  plain streaming.
+- **~99% of all DRAM reads are the S matrix.** At N=8192 the softmax pass alone re-reads S ~12× =
+  26.3 GB, pv reads it again (~4 GB), and Q/K/V operands are <1% (S-share ≈ 80% at N=512 → 99% at
+  N=8192). S is byte-identical in v1 and v2 (26.33 vs 25.53 GB) — tiling the matmul operands does
+  nothing to the score matrix. The model had it backwards: **S isn't a floor *under* the operand
+  mountain — S *is* the mountain; the operands are the rounding error.**
+- **Nothing is HBM-bandwidth-bound** (≤35% DRAM throughput): bound by L2 bandwidth/latency (qk),
+  the multi-pass S re-reads (softmax), and compute (pv). The roofline's "HBM limiter" was a
+  prediction the hardware never honored.
+- **So v2's 1.3–3.2× speedup is a compute/scheduling win, not a bandwidth win** — DRAM traffic is
+  flat; the tiled matmuls just execute more efficiently. (`dram__bytes_read` is reads only; the S
+  *writes* aren't counted, so S's true dominance is even larger.)
+
+**This sharpens Step 3 instead of weakening it:** online softmax deletes the materialized S — i.e.
+~99% of measured DRAM traffic. The ncu read promotes "kill the S round-trip" from a footnote to the
+whole game. Reports: `profiling/raw/{v1_naive,v2_tiled,v1_n8192_d64,v2_n8192_d64}.ncu-rep`.

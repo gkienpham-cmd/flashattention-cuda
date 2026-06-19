@@ -66,23 +66,27 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 - **Step 1 (v1 naive)** — DONE: tests green, benched, quiz passed. Key finding: naive beats its
   cache-free roofline floor at mid-N (L2 absorbs redundant operand reads), converges to it at
   N=8192 (L2 overflow). AI ≈ 0.25, HBM-bound at all d.
-- **Step 2 (v2 tiled, `kernels/v2_tiled/`)** — IN PROGRESS: FP32, three-pass, S still materialized;
-  tiles 64×64 @ d=64 / 32×32 @ d=128. **26/26 correctness** vs SDPA incl. boundary shapes; benched
-  at **1.3–3.2× over v1**, limiter still HBM (as predicted). Honest miss: predicted ~30× / biggest
-  at N=8192; measured ~3× / peaks at mid-N — because realized speedup is the ratio of two
-  *off-roofline* runtimes (v1 helped by L2, v2 above its own floor). See `docs/results.md` Step 2
-  and `interview-prep.md` C4.
-- **Step 2 remaining gates:** read v1-vs-v2 `dram__bytes_read` in Nsight (UI; `.ncu-rep` is binary),
-  then the Step 2 quiz. Only then is Step 2 done.
+- **Step 2 (v2 tiled, `kernels/v2_tiled/`)** — DONE (2026-06-19): both gates cleared (quiz passed +
+  ncu read). FP32, three-pass, S still materialized; tiles 64×64 @ d=64 / 32×32 @ d=128. **26/26
+  correctness** vs SDPA; benched **1.3–3.2× over v1**. **The ncu read flipped the story:** tiling
+  cut ~0% DRAM traffic (1.08× @ N=512, 1.02× @ N=8192) because the T4's 4 MB L2 already owns the
+  operands at every N (v1's qk reads 74 MB at N=8192, not the predicted ~hundreds of GB). **S is
+  ~99% of DRAM** (softmax re-reads it ~12×), byte-identical v1↔v2, and **nothing saturates HBM**
+  (≤35% DRAM throughput). So v2's speedup is a *compute/scheduling* win, not bandwidth. The roofline
+  got magnitude, location, AND limiter wrong — all because it can't model L2. See `docs/results.md`
+  Step 2 (measured DRAM table), `decisions.md` Step 2, `interview-prep.md` C5.
 
 ## Next steps
 
-1. Open `profiling/raw/{v1_naive,v2_tiled}.ncu-rep` in Nsight; record `dram__bytes_read.sum` per
-   pass — expect a large QK/PV operand-read drop, with total DRAM floored by the S round-trip.
-2. Step 2 quiz (close the gate; mark `ROADMAP.md` Step 2 `[x]`).
-3. **Step 3 — online softmax (`kernels/v3_*`):** running max/sum so S never touches HBM. Predicted
-   AI ~512, limiter finally crosses to MMA. This is the step that removes the surviving S
-   round-trip Step 2 left standing.
+1. **Step 3 — online softmax (`kernels/v3_*`):** running max/sum so S never touches HBM. Since the
+   ncu read proved S is ~99% of measured DRAM traffic, this deletes essentially all of it. Predicted
+   AI ~512, limiter predicted to cross to MMA — but **verify that crossing against ncu**, because the
+   v1/v2 "HBM-bound" prediction was wrong (L2). Follow the full per-step loop (roofline-first →
+   build → correctness → bench → results/decisions → quiz).
+2. Profiling tooling now supports single-shape capture: `bench.harness --seq N --dim d` (added
+   2026-06-19) lets ncu target one shape's qk/softmax/pv passes; fast metric-only capture via
+   `ncu --metrics dram__bytes_read.sum,... --csv` (no `--set full`). `.ncu-rep` is binary — read on
+   Colab via `ncu -i <file> --page raw --csv`, not on the Mac.
 
 ## Git
 

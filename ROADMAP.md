@@ -15,7 +15,7 @@ Status: `[ ]` not started · `[~]` in progress · `[x]` done (tests green + quiz
 
 ## Phase 1 — FP16 fundamentals · bottleneck: **HBM bandwidth**
 - `[x]` **1. Naive** — materialize `S=QK^T`, softmax, `PV`. Baseline; exposes the bandwidth wall. **[BUILD]**
-- `[~]` **2. Tiling w/ shared memory** — stage Q/K/V tiles, cut global traffic. **[BUILD]**
+- `[x]` **2. Tiling w/ shared memory** — stage Q/K/V tiles, cut global traffic. **[BUILD]** · *Measured: tiling cut ~0% DRAM (L2 already owned the operands); S = ~99% of traffic. Quiz + ncu gates cleared.*
 - `[ ]` **3. Online softmax** — running max/sum, never materialize S. **[BUILD]**
 - `[ ]` **4. Fused FlashAttention-1** — one kernel, correct output rescaling. **[BUILD]**
 - `[ ]` **5. FlashAttention-2 partitioning** — parallelize over seq-len, better warp work split. **[BUILD]**

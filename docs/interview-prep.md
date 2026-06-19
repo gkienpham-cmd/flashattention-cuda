@@ -262,3 +262,71 @@ v2 is well above its floor (scalar loads, low occupancy, sync overhead). A traff
 blind to both, so it gets the limiter right and the magnitude and location wrong. The only N-trend
 it *could* call — d=128 beating d=64, because the operand term it cuts is a larger traffic share —
 it did call."
+
+> **Update after the ncu read (C5).** The claim above that "the roofline nailed the limiter — still
+> HBM" was itself wrong — the bench only showed v2 was *below the ridge*, not that it was
+> *bandwidth-bound*. The DRAM counters (C5) show it never was. Keep C4's speedup reasoning; read C5
+> for what the hardware actually did to the traffic.
+
+---
+
+## C5 — The ncu read: tiling didn't cut DRAM at all, and the score matrix is 99% of it
+
+**Q: You finally read `dram__bytes_read` for v1 vs v2. Did the predicted ~30x traffic cut show up?**
+
+No — and the *way* it failed is the best lesson in the project so far. Measured total DRAM reads:
+
+```
+            qk        softmax(S)   pv        total     v1/v2
+N=512  v1   3.68 MB   49.83 MB     18.36 MB  71.9 MB
+N=512  v2   3.11 MB   49.91 MB     13.49 MB  66.5 MB   1.08x
+N=8192 v1   0.074 GB  26.33 GB     4.39 GB   30.80 GB
+N=8192 v2   1.433 GB  25.53 GB     3.26 GB   30.22 GB  1.02x
+```
+
+Tiling cut **~0%** of DRAM traffic, at both shapes. Three things the traffic-only roofline could
+not see:
+
+### 1. The L2 owns the operands — at every N
+
+The cache-free model charges every redundant Q/K re-read to HBM: ~558 GB of operand traffic for v1
+at N=8192. Measured, v1's qk pass reads **74 MB**. The T4's 4 MB L2 catches the structured reuse
+(a Q row is shared by all 256 threads in a block; K rows stay warm while streamed past many
+blocks), so the operand mountain is a *cache illusion*. Tiling's whole job — make operands read
+~once — L2 had already done. That's why v2 is no better, and on qk **19x worse** (1.43 vs 0.07 GB):
+its tiled access pattern plus halved occupancy gets *less* L2 reuse than v1's plain streaming.
+
+### 2. The score matrix S is ~99% of DRAM, not a floor under the operands
+
+```
+N=8192, v1:  softmax re-reads S ~12x = 26.3 GB  +  pv reads S again ~4 GB  =  ~30 of 30.8 GB
+             Q/K/V operands  <1%
+```
+
+S is byte-identical in v1 and v2 (26.33 vs 25.53 GB) because tiling the *matmul operands* never
+touches the *score matrix*. The model named the right villain — only online softmax removes S — but
+mis-sized it ~100x: S isn't the floor, **S is the entire mountain.**
+
+### 3. Nothing was HBM-bandwidth-bound
+
+DRAM throughput tops out at ~35% (softmax), ≤15% at N=512. pv is compute-bound (~80% SM), qk is
+latency-bound (~6% SM). "Below the ridge" (not compute-bound) was true; "bandwidth-bound" was the
+model's guess and the hardware never honored it. **v2's speedup is therefore a compute/scheduling
+win, not a bandwidth win** — DRAM traffic is flat.
+
+### The meta-lesson (one level deeper than C3/C4)
+
+C3 fixed the model to *count* redundant reads; C4 noted neither kernel sits on its roofline. C5 is
+the punchline: **a traffic-bound roofline is blind to the cache that serves the traffic.** On a real
+GPU the L2 silently converts "O(N²·d) redundant reads" into "read once," so an operand-traffic
+optimization (tiling) buys nothing in bytes — the win, where there is one, is in *instructions and
+scheduling*. Always confirm the predicted limiter with the DRAM-throughput counter before you
+believe it.
+
+**Say-this:** "I read the DRAM counters and tiling cut zero traffic — 1.02x at N=8192. The L2
+already served the redundant operand reads the roofline charged to HBM, so v1's qk pass reads 74 MB,
+not hundreds of GB; tiling had nothing to cut. And 99% of DRAM is the materialized S matrix the
+softmax pass re-reads a dozen times — byte-identical in both kernels. Nothing saturated HBM
+(≤35% throughput). The lesson: a traffic model is blind to the cache that serves the traffic, so
+verify the limiter with the throughput counter — and the data makes online softmax, which deletes
+that S, the only thing that matters next."

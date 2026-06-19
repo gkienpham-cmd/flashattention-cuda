@@ -128,10 +128,27 @@ to fit the 64 KB smem. Online softmax and fusion are deliberately deferred.
 per head dim (64x64 @ d=64, 32x32 @ d=128) to fit the T4's 48 KB static smem; correctness is
 **26/26 vs SDPA** at atol/rtol 1e-4, incl. non-tile-multiple shapes for the boundary guard.
 
-**MEASURED (Colab T4, 2026-06-19) — prediction held on the limiter, missed on the location:**
-v2 is **1.3–3.2× faster than v1** (clock-matched at SM ~300 MHz), and the **predicted limiter
-(HBM) held at every shape** — tiling did not cross the ridge, exactly as predicted. It's still
-0.04–0.11× SDPA (fused FlashAttention), because the S round-trip survives; that's v3's job.
+**MEASURED (Colab T4, 2026-06-19) — bench:** v2 is **1.3–3.2× faster than v1** (clock-matched at
+SM ~300 MHz), below the ridge (not compute-bound), as predicted. Still 0.04–0.11× SDPA (fused
+FlashAttention), because the S round-trip survives; that's v3's job.
+
+**MEASURED (Colab T4, 2026-06-19) — ncu `dram__bytes_read`, two shapes — the *traffic* prediction
+was wrong, and instructively so.** We predicted tiling cuts DRAM traffic ~30× and stays HBM-bound.
+Measured total DRAM reads: N=512 → v1 71.9 MB / v2 66.5 MB (1.08×); N=8192 → v1 30.80 GB / v2
+30.22 GB (1.02×). **Tiling cut essentially zero DRAM traffic at either shape, and nothing saturates
+HBM** (DRAM throughput ≤35%). Two facts the traffic model couldn't see:
+- **L2 owns the operands at *every* N.** v1's qk pass reads 74 MB at N=8192 — the 4 MB L2 serves the
+  redundant Q/K reads the cache-free model charged hundreds of GB for. Tiling had nothing left to
+  cut; on qk, v2 reads *19× more* than v1 (worse L2 reuse from the tiled pattern + halved occupancy).
+- **S is ~99% of DRAM, not a floor under an operand mountain.** The softmax pass re-reads the
+  materialized S ~12× (26.3 GB at N=8192); operands are <1%; and S is byte-identical v1↔v2. The
+  model named the right villain (S round-trip) but mis-sized it by ~100×: it *is* the traffic.
+
+So v2's speedup is a **compute/scheduling win, not a bandwidth win** — DRAM is flat. The headline
+lesson stands and hardens: *a traffic-bound roofline is blind to the cache that serves the traffic
+and to the kernel inefficiency that spends the time* — here it got the magnitude, the location,
+**and** the limiter wrong, all because it can't model the T4's L2. The one thing it nailed
+structurally — only online softmax removes S — is now the empirically dominant ~99% of traffic.
 
 But the Step 1 corollary — *"biggest win at N=8192, where L2 fails"* — was **wrong**. The measured
 v2/v1 win *peaks at mid-N* (2048×128 = 3.20×) and *shrinks* at N=8192 (2.02–2.84×). The honest
@@ -149,15 +166,20 @@ post-mortem, separating two effects:
 - **The one predictable part:** d=128 beats d=64 at every N because the operand term tiling cuts
   is a larger traffic share there (operand:S ≈ 4:1 vs 1:1 at d=64).
 
-**Lesson:** the roofline bounds *traffic*, not a kernel's distance from that bound, and realized
-speedup is the ratio of two such distances — so a traffic-only model can call the limiter right
-(it did: HBM) yet miss the magnitude and the location of the win. Full table + the pending ncu
-`dram__bytes_read` read in [results.md](results.md#step-2--shared-memory-tiling-fp32-three-pass-s-still-materialized).
+**Lesson (bench view; revised by the ncu read below):** the roofline bounds *traffic*, not a
+kernel's distance from that bound, and realized speedup is the ratio of two such distances — so it
+missed the magnitude and location of the win. From the bench alone it *looked* like the limiter
+prediction (HBM) survived; the `dram__bytes_read` read then showed even that was wrong (≤35% DRAM
+throughput — never bandwidth-bound). Full measured-DRAM table in
+[results.md](results.md#step-2--shared-memory-tiling-fp32-three-pass-s-still-materialized).
 
-**Next (Step 3 — online softmax):** the surviving S round-trip is now the named target. Replace
-the three-pass materialize-S structure with running max/sum so S never touches HBM — the model
-predicts AI jumps to ~512 and the limiter finally crosses to MMA. Step 2's remaining gates before
-it ships: read the v1-vs-v2 `dram__bytes_read` in Nsight, and pass the Step 2 quiz.
+**Next (Step 3 — online softmax):** the S round-trip is no longer a "named target" — the ncu read
+proved it's **~99% of measured DRAM traffic**, so removing it is the entire bandwidth story.
+Replace the three-pass materialize-S structure with running max/sum so S never touches HBM — the
+model predicts AI jumps to ~512 and the limiter crosses to MMA. *Caveat carried forward from this
+step:* the model also predicted v1/v2 were HBM-bound and they weren't (L2), so we predict Step 3's
+crossing-to-MMA but verify it against ncu before believing it. **Step 2 gates: both cleared
+(2026-06-19)** — quiz passed, and the v1-vs-v2 `dram__bytes_read` read is done (above).
 
 **What changes on another arch:** more shared memory (A100 164 KB, H100 228 KB vs T4 64 KB)
 allows larger tiles → higher reuse → higher tiled AI, and async copy (Phase 2) hides the load

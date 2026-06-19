@@ -81,7 +81,11 @@ def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
     return (1, 1)
 
 
-def run(backend: str, precision: str, B: int, H: int, causal: bool) -> None:
+def run(backend: str, precision: str, B: int, H: int, causal: bool,
+        seq_lens: list[int] | None = None, head_dims: list[int] | None = None) -> None:
+    # Default to the full sweep; --seq/--dim narrow it so ncu can profile one shape's 3 passes.
+    seq_lens = seq_lens or SEQ_LENS
+    head_dims = head_dims or HEAD_DIMS
     dev = torch.device("cuda")
     cap = torch.cuda.get_device_capability()
     sm = f"sm_{cap[0]}{cap[1]}"
@@ -95,8 +99,8 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool) -> None:
     arch = get_arch(sm) if sm in {"sm_75"} else None
     dt = _dtype(precision)
 
-    for N in SEQ_LENS:
-        for d in HEAD_DIMS:
+    for N in seq_lens:
+        for d in head_dims:
             q = torch.randn(B, H, N, d, device=dev, dtype=dt)
             k = torch.randn(B, H, N, d, device=dev, dtype=dt)
             v = torch.randn(B, H, N, d, device=dev, dtype=dt)
@@ -133,10 +137,15 @@ def main() -> None:
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--heads", type=int, default=8)
     p.add_argument("--causal", action="store_true")
+    p.add_argument("--seq", type=int, nargs="+", default=None,
+                   help="override seq lengths to run (e.g. --seq 8192); default is the full sweep. "
+                        "Use to profile one shape's qk/softmax/pv passes under ncu.")
+    p.add_argument("--dim", type=int, nargs="+", default=None,
+                   help="override head dims to run (e.g. --dim 64); default is the full sweep.")
     a = p.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("no CUDA device; run this on the GPU (Colab T4 / rented box)")
-    run(a.backend, a.precision, a.batch, a.heads, a.causal)
+    run(a.backend, a.precision, a.batch, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim)
 
 
 if __name__ == "__main__":
