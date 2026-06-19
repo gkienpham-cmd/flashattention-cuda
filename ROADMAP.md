@@ -16,7 +16,7 @@ Status: `[ ]` not started · `[~]` in progress · `[x]` done (tests green + quiz
 ## Phase 1 — FP16 fundamentals · bottleneck: **HBM bandwidth**
 - `[x]` **1. Naive** — materialize `S=QK^T`, softmax, `PV`. Baseline; exposes the bandwidth wall. **[BUILD]**
 - `[x]` **2. Tiling w/ shared memory** — stage Q/K/V tiles, cut global traffic. **[BUILD]** · *Measured: tiling cut ~0% DRAM (L2 already owned the operands); S = ~99% of traffic. Quiz + ncu gates cleared.*
-- `[ ]` **3. Online softmax** — running max/sum, never materialize S. **[BUILD]**
+- `[~]` **3. Online softmax** — running max/sum, never materialize S. **[BUILD]** · *Quiz passed + kernel written (`kernels/v3_online/`, two-pass); roofline predicts MMA-bound (AI N/4, but don't trust the crossing). Pending: correctness/bench/ncu on rented T4.*
 - `[ ]` **4. Fused FlashAttention-1** — one kernel, correct output rescaling. **[BUILD]**
 - `[ ]` **5. FlashAttention-2 partitioning** — parallelize over seq-len, better warp work split. **[BUILD]**
 - `[ ]` **6. Tensor cores** — WMMA / `mma.sync` `m16n8k8` FP16, tuned for sm_75. **[BUILD]** (Turing has TCs)

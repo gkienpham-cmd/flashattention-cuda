@@ -17,6 +17,7 @@ from bindings.load import build_kernel
 _MIN_CAPABILITY = {
     "v1_naive": (7, 0),   # any CUDA GPU; pure FP32 CUDA-core math
     "v2_tiled": (7, 0),   # same FP32 math; shared-memory tiling needs no extra capability
+    "v3_online": (7, 0),  # same FP32 math; online softmax needs no extra capability
 }
 
 

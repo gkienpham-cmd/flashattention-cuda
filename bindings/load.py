@@ -20,6 +20,7 @@ _KERNELS_DIR = os.path.join(_REPO_ROOT, "kernels")
 _SOURCES = {
     "v1_naive": ["naive_attention.cu", "binding.cpp"],
     "v2_tiled": ["tiled_attention.cu", "binding.cpp"],
+    "v3_online": ["online_attention.cu", "binding.cpp"],
 }
 
 

@@ -75,6 +75,8 @@ def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
     v1 is naive: 1x1, i.e. each operand re-read per output element. v2 launches the smem tile
     chosen per head dim in tiled_attention.cu (64x64 at d=64, 32x32 at d=128); feeding the same
     tile here makes the printed roofline the tiled prediction (AI ~6-8), not the naive 0.2.
+    v3 fuses softmax (materialize_s=False below), so the tile is irrelevant to its HBM traffic and
+    this returns the 1x1 default — operand reuse is no longer a traffic factor once S is gone.
     """
     if backend == "v2_tiled":
         return (64, 64) if d == 64 else (32, 32)
@@ -119,7 +121,11 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
                 # v1 and v2 both materialize S in HBM; they differ only in operand reuse, which
                 # the model reads from the tile. v1 = naive 1x1 (re-read per output element);
                 # v2 = the smem tile it actually launches (64x64 @ d=64, 32x32 @ d=128), so the
-                # predicted AI reflects the ~30x traffic cut the row should show off.
+                # predicted AI reflects the ~30x traffic cut the row should show off. v3 fuses
+                # softmax (materialize_s=False): S leaves HBM entirely, so the model drops to the
+                # read-once ideal (AI ~1000+). NOTE the model counts ONE exp per score, but v3's
+                # two-pass recomputes scores -> it does ~2x the exp work, so the printed MUFU bound
+                # is optimistic; the ncu read is what settles MMA-vs-MUFU (the Step-2 discipline).
                 tile_m, tile_n = _roofline_tile(backend, d)
                 est = estimate(arch, B=B, H=H, N_q=N, N_k=N, d=d, precision=precision,
                                materialize_s=backend in ("v1_naive", "v2_tiled"),

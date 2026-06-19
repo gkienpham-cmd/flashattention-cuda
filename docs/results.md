@@ -143,3 +143,40 @@ qk/pv (97→49%) — the 32 KB tile cost, measured.
 **This sharpens Step 3 instead of weakening it:** online softmax deletes the materialized S — i.e.
 ~99% of measured DRAM traffic. The ncu read promotes "kill the S round-trip" from a footnote to the
 whole game. Reports: `profiling/raw/{v1_naive,v2_tiled,v1_n8192_d64,v2_n8192_d64}.ncu-rep`.
+
+---
+
+## Step 3 — Online softmax (FP32, two-pass, S never materialized)
+
+`kernels/v3_online/` — two passes that stream the key axis keeping a running `(m, l)` per query
+row, so the score matrix S is computed on-chip and discarded. Pass 1 produces the final `(m, l)`
+(running-max rescale on the scalar `l`); pass 2 recomputes scores and forms `O = (exp(s−m)/l)·V`
+with no O-rescale. The only HBM scratch is `(m, l)` — 2 floats/query row. Deliberately keeps v2's
+operand handling *out* of scope (pass 2 reads K/V from global, L2-resident per the Step-2 read) so
+the one isolated variable is S-elimination.
+
+**Roofline prediction (T4 sm_75, B=1 H=8, fp32, `materialize_S=False`, read-once, tile 1×1):**
+
+| shape (BxHxNxd) | intensity (FLOP/B) | ridge | predicted limiter | predicted lower bound |
+|---|---|---|---|---|
+| 1x8x512x64   | 128.0  | 25.3 | **MMA** | 0.066 ms |
+| 1x8x512x128  | 128.0  | 25.3 | **MMA** | 0.133 ms |
+| 1x8x2048x64  | 512.0  | 25.3 | **MMA** | 1.060 ms |
+| 1x8x2048x128 | 512.0  | 25.3 | **MMA** | 2.121 ms |
+| 1x8x8192x64  | 2048.0 | 25.3 | **MMA** | 16.968 ms |
+| 1x8x8192x128 | 2048.0 | 25.3 | **MMA** | 33.936 ms |
+
+> AI = N/4 (HBM bytes collapse to Q/K/V-once + O-write, ~16·B·H·N·d), so it climbs with N and sits
+> 5–80× above the FP32 ridge → model says **MMA-bound at every shape**, HBM util ~5%, MUFU ~3%.
+>
+> **Do NOT trust this crossing yet (the Step-2 discipline).** The model is blind to L2 and **under-
+> counts this kernel two ways**: (1) two-pass computes scores *twice*, so real MMA is ~1.5× the
+> modeled QK+PV (QK twice + PV once vs once+once); (2) it counts *one* `exp` per score, but two-pass
+> does ~2× the `exp` work — so the modeled MUFU 3% is optimistic and `exp2`/MUFU is the **dark-horse
+> limiter**. Both pushes are off-roofline; ncu (gate 6) is what settles MMA-vs-MUFU. The number the
+> prediction is most confident about — that S-driven DRAM is *gone* — is the one Step 2 makes us
+> trust, because S genuinely leaves HBM here rather than merely being L2-cached.
+
+**Measured (vast.ai rented T4 sm_75 — _pending the run_):** correctness vs SDPA, bench vs v2/SDPA
+across the sweep, and the mandatory ncu read (confirm S DRAM traffic is gone vs the Step-2 table
+above; read `sm__throughput` + MUFU/`exp2` pipe util to name the real limiter). Table to follow.
