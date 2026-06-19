@@ -32,6 +32,14 @@ free Colab covers build/test/bench. This is also why the plan rents A100/H100 pe
 2/3) rather than buying Colab Pro. Repo: `github.com/gkienpham-cmd/flashattention-cuda` (public,
 so Colab `git clone` needs no token).
 
+**Roofline tooling fix (2026-06-20).** `roofline/model.py` was selecting the FP16 tensor-core peak
+for *every* non-FP32 precision, so `--precision int8` predicted against 65 TFLOPS instead of the
+T4's 130 INT8 TOPS — a 2× too-slow MMA bound, with `arch.int8_tc_ops` dead and the ridge stuck at
+203 instead of 406. The MMA peak and the ridge are now both precision-selected (T4: fp32 25.3 /
+fp16 203 / int8 406 FLOP·byte⁻¹), matching the ridge points already cited in `interview-prep.md`.
+No measured row changes (v1–v4 are FP32) — this just unblocks an honest INT8 prediction for the
+Phase-3 precision work (ROADMAP #9). Same `p99`→`max` relabel landed in `bench/harness.py`/results.
+
 ---
 
 ## Step 1 — Naive attention (the bandwidth wall)

@@ -7,6 +7,10 @@ honesty of the prediction is itself a deliverable.
 Every row records GPU / arch / clock so it's reproducible; the free-tier T4 throttles, so clocks
 are captured at run time.
 
+> **Tail-latency column.** The second number in each `p50/max ms` pair is the **max** (worst of 50
+> timed iters), not a percentile. It was labeled `p99` through Step 4, but at iters=50 the p99 index
+> rounds to the last (max) sample — same number, now named honestly (`bench/harness.py`).
+
 ---
 
 ## Step 1 — Naive attention (FP32, three-pass)
@@ -29,7 +33,7 @@ are captured at run time.
 **Measured (Colab T4, sm_75, torch 2.11/cu128, FP32, causal=False — 2026-06-18):**
 Correctness: **9/9 pass vs SDPA** (atol/rtol 1e-4).
 
-| shape | ours p50/p99 ms | SDPA p50/p99 ms | speedup vs SDPA | tok/s (ours) | measured ÷ cache-free LB |
+| shape | ours p50/max ms | SDPA p50/max ms | speedup vs SDPA | tok/s (ours) | measured ÷ cache-free LB |
 |---|---|---|---|---|---|
 | 1x8x512x64    | 6.77 / 14.17    | 0.20 / 5.10  | 0.03× | 6.06e5 | 0.99× (at floor) |
 | 1x8x512x128   | 10.08 / 10.18   | 0.33 / 0.37  | 0.03× | 4.06e5 | 0.74× (L2 helps) |
@@ -67,7 +71,7 @@ Correctness: **26/26 pass vs SDPA** (atol/rtol 1e-4; v1+v2 × 6 shapes × {causa
 scale), including N=130@d64 and N=100@d128 to exercise the partial-tile boundary guard. v2/v1
 below is **clock-matched** — both the v1 and v2 columns are from runs at SM clock **~300 MHz**.
 
-| shape | v2 p50/p99 ms | v2 vs SDPA | **v2/v1 (@300 MHz)** | v2 measured ÷ tiled LB |
+| shape | v2 p50/max ms | v2 vs SDPA | **v2/v1 (@300 MHz)** | v2 measured ÷ tiled LB |
 |---|---|---|---|---|
 | 1x8x512x64   | 4.52 / 4.56     | 0.04× | 1.33× | 21.5× (overhead-bound, tiny work) |
 | 1x8x512x128  | 3.49 / 3.56     | 0.09× | 2.95× | 6.6× |
@@ -181,7 +185,7 @@ the one isolated variable is S-elimination.
 Correctness: **15/15 pass vs SDPA** (atol/rtol 1e-4) — all shapes × causal × the partial-tile
 boundaries, plus the N=16384 rescale-stability case (causal both ways).
 
-| shape | v3 p50/p99 ms | v2 p50 ms | SDPA p50 ms | v3÷SDPA | v3÷v2 | roofline |
+| shape | v3 p50/max ms | v2 p50 ms | SDPA p50 ms | v3÷SDPA | v3÷v2 | roofline |
 |---|---|---|---|---|---|---|
 | 1x8x512x64    | 12.51/21.30     | 5.45   | 0.198  | 0.02× | **0.44×** | MMA (~0.07ms) |
 | 1x8x512x128   | 27.36/27.80     | 3.74   | 0.327  | 0.01× | 0.14× | MMA (~0.13ms) |
@@ -254,7 +258,7 @@ to v3; the deliverable is the *distance*, not a new prediction:
 Correctness: **17/17 pass vs SDPA** (atol/rtol 1e-4) — all shapes × causal × partial-tile boundaries,
 the explicit-scale case, plus the N=16384 O-rescale stability at d=64 *and* d=128, causal both ways.
 
-| shape | v4 p50/p99 ms | v2 p50 ms | v3 p50 ms | SDPA p50 ms | v4÷SDPA | v4÷v2 | v4÷v3 | v4 ÷ floor |
+| shape | v4 p50/max ms | v2 p50 ms | v3 p50 ms | SDPA p50 ms | v4÷SDPA | v4÷v2 | v4÷v3 | v4 ÷ floor |
 |---|---|---|---|---|---|---|---|---|
 | 1x8x512x64   | 1.68/1.69     | 3.55   | 12.56  | 0.317 | 0.19× | **2.12×** | 7.49×  | 25.4× |
 | 1x8x512x128  | 2.19/2.20     | 3.72   | 27.59  | 0.392 | 0.18× | 1.70× | 12.59× | 16.5× |

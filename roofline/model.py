@@ -56,10 +56,16 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
     # --- compute: two matmuls, each 2*M*N*K FLOPs ---
     mma_flops = 2.0 * bh * N_q * N_k * d   # QK^T
     mma_flops += 2.0 * bh * N_q * N_k * d  # PV
-    peak = arch.fp16_tc_flops if use_tensor_core else arch.fp32_cuda_flops
-    # v1 is FP32 CUDA-core; later FP16 versions use the tensor-core peak.
+    # MMA peak is precision-specific: fp32 on CUDA cores (8.1 TFLOPS), int8 on its own tensor-core
+    # peak (130 TOPS, 2x fp16 on Turing), fp16/bf16 on the fp16 tensor-core peak (65 TFLOPS) — or the
+    # CUDA-core peak if tensor cores are disabled. (Previously every non-fp32 precision took the fp16
+    # peak, which made the int8 MMA bound 2x too slow and left arch.int8_tc_ops dead.)
     if precision == "fp32":
         peak = arch.fp32_cuda_flops
+    elif precision == "int8":
+        peak = arch.int8_tc_ops
+    else:  # fp16 / bf16
+        peak = arch.fp16_tc_flops if use_tensor_core else arch.fp32_cuda_flops
     t_mma = mma_flops / peak
 
     # --- HBM traffic ---
@@ -98,7 +104,10 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
     times = {"mma": t_mma, "hbm": t_hbm, "mufu": t_mufu}
     limiter = max(times, key=times.get)
     ai = mma_flops / hbm_bytes
-    ridge = arch.ridge_fp32_cuda() if precision == "fp32" else arch.ridge_fp16_tc()
+    # Ridge = the active compute peak / HBM bandwidth, so it tracks whichever `peak` was selected
+    # above (T4: fp32 -> 25.3, fp16 -> 203, int8 -> 406 FLOP/byte). Tying it to `peak` keeps the
+    # ridge consistent with the MMA bound for every precision (incl. int8 and --no-tensor-core).
+    ridge = peak / (arch.hbm_bw_gbps * 1e9)
 
     return RooflineEstimate(limiter=limiter, seconds=times[limiter],
                             t_mma=t_mma, t_hbm=t_hbm, t_mufu=t_mufu,

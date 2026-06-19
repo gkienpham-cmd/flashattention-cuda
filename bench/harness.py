@@ -1,6 +1,6 @@
 """Benchmark harness: our kernel vs torch SDPA across the seq x head-dim sweep.
 
-Reports, per shape: p50 and p99 latency (ms), tokens/s, and the speedup vs SDPA. It also asks
+Reports, per shape: p50 and max latency (ms), tokens/s, and the speedup vs SDPA. It also asks
 the roofline tool for the predicted limiter so each printed row carries prediction-vs-reality
 side by side (the honesty check from the per-step loop). Records GPU/arch/clocks so a results.md
 row is reproducible; the free-tier T4 thermally throttles, so we note clocks at run time.
@@ -29,7 +29,12 @@ HEAD_DIMS = [64, 128]
 
 
 def _time_ms(fn, *, warmup: int = 10, iters: int = 50) -> tuple[float, float]:
-    """Return (p50, p99) latency in ms using CUDA events. Synchronizes around each timed call."""
+    """Return (p50, max) latency in ms using CUDA events. Synchronizes around each timed call.
+
+    The tail number is the max (worst) of `iters` samples, not a true p99: at the default iters=50
+    a 99th-percentile index rounds to the last element anyway, so we report it honestly as the max.
+    Bump iters into the hundreds if a real percentile is ever wanted.
+    """
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
@@ -43,8 +48,8 @@ def _time_ms(fn, *, warmup: int = 10, iters: int = 50) -> tuple[float, float]:
         samples.append(start.elapsed_time(end))  # ms
     samples.sort()
     p50 = statistics.median(samples)
-    p99 = samples[min(len(samples) - 1, int(0.99 * len(samples)))]
-    return p50, p99
+    p_max = samples[-1]
+    return p50, p_max
 
 
 def _dtype(precision: str):
@@ -95,7 +100,7 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
     # Current/max SM clock (MHz) — captures throttling on the free tier at the moment of the run.
     clk_cur, clk_max = _sm_clock_mhz()
     print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  precision={precision}  causal={causal}")
-    print(f"# {'shape':>16} | {'ours p50/p99 ms':>18} | {'sdpa p50/p99 ms':>18} | "
+    print(f"# {'shape':>16} | {'ours p50/max ms':>18} | {'sdpa p50/max ms':>18} | "
           f"{'speedup':>8} | {'tok/s(ours)':>12} | roofline")
 
     arch = get_arch(sm) if sm in {"sm_75"} else None
@@ -110,8 +115,8 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
             ours = lambda: attention(q, k, v, causal=causal, backend=backend)
             base = lambda: sdpa_reference(q, k, v, causal=causal)
 
-            o_p50, o_p99 = _time_ms(ours)
-            s_p50, s_p99 = _time_ms(base)
+            o_p50, o_max = _time_ms(ours)
+            s_p50, s_max = _time_ms(base)
             speedup = s_p50 / o_p50
             tokens = B * H * N
             toks_s = tokens / (o_p50 / 1e3)
@@ -132,8 +137,8 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
                                tile_m=tile_m, tile_n=tile_n)
                 roof = f"{est.limiter.upper()} (~{est.seconds*1e3:.2f}ms)"
 
-            print(f"  {f'{B}x{H}x{N}x{d}':>16} | {o_p50:7.3f}/{o_p99:7.3f} | "
-                  f"{s_p50:7.3f}/{s_p99:7.3f} | {speedup:7.2f}x | {toks_s:12.3e} | {roof}")
+            print(f"  {f'{B}x{H}x{N}x{d}':>16} | {o_p50:7.3f}/{o_max:7.3f} | "
+                  f"{s_p50:7.3f}/{s_max:7.3f} | {speedup:7.2f}x | {toks_s:12.3e} | {roof}")
 
 
 def main() -> None:

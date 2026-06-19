@@ -59,7 +59,9 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 - `docs/` — `decisions.md` (what we chose + why + measured), `results.md` (the curve),
   `interview-prep.md` (C-chains: reasoning to recite; add a C-entry per step), `writeup.md` (essay).
 - **Conventions:** tensors are `[B, H, N, d]` row-major. FP16 phases use FP16-in/FP32-accum; v1 and
-  v2 are FP32 throughout. Hardware leaks in only at the build `-gencode` and `roofline/archs.py`.
+  v2 are FP32 throughout. All four kernels take an optional `causal` flag (lower-triangular mask —
+  keys `j > i` excluded; tested both ways vs SDPA). Hardware leaks in only at the build `-gencode`
+  and `roofline/archs.py`.
 
 ## Status (2026-06-20)
 
