@@ -208,7 +208,8 @@ Same reasoning extended to operand handling: v3 reads K/V unstaged from global (
 Step 2) rather than re-staging them — so the *only* thing v3 changes vs v2 is removing S.
 
 **Measured (T4 sm_75, 2026-06-19) — the prediction missed a third time, for a third reason:**
-- **The mechanism works:** 13/13 correctness; peak memory at 8192×64 is **+17 MB (v3) vs +2164 MB
+- **The mechanism works:** 15/15 correctness (incl. N=16384 rescale stability); peak memory at
+  8192×64 is **+17 MB (v3) vs +2164 MB
   (v2)** — S provably never materializes (125× less, no profiler needed).
 - **The speedup is negative:** v3 is **3–7× slower than v2** and ~50–100× slower than SDPA. Deleting
   ~99% of DRAM traffic bought nothing, because Step 2 already proved nothing was bandwidth-bound. We

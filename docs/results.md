@@ -178,8 +178,8 @@ the one isolated variable is S-elimination.
 > trust, because S genuinely leaves HBM here rather than merely being L2-cached.
 
 **Measured (vast.ai rented T4 sm_75, driver 560.35.03, torch 2.6.0+cu124, FP32 — 2026-06-19):**
-Correctness: **13/13 core pass vs SDPA** (atol/rtol 1e-4), all shapes × causal × the partial-tile
-boundaries; long-N (N=16384) rescale-stability case included.
+Correctness: **15/15 pass vs SDPA** (atol/rtol 1e-4) — all shapes × causal × the partial-tile
+boundaries, plus the N=16384 rescale-stability case (causal both ways).
 
 | shape | v3 p50/p99 ms | v2 p50 ms | SDPA p50 ms | v3÷SDPA | v3÷v2 | roofline |
 |---|---|---|---|---|---|---|

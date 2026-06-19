@@ -75,18 +75,32 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (≤35% DRAM throughput). So v2's speedup is a *compute/scheduling* win, not bandwidth. The roofline
   got magnitude, location, AND limiter wrong — all because it can't model L2. See `docs/results.md`
   Step 2 (measured DRAM table), `decisions.md` Step 2, `interview-prep.md` C5.
+- **Step 3 (v3 online, `kernels/v3_online/`)** — DONE (2026-06-19): both gates cleared (quiz passed +
+  counter-free measurement). FP32, **two-pass** online softmax (pass 1 → final `(m,l)` with the
+  running-max rescale; pass 2 recomputes scores + forms O, no O-rescale); S never materialized.
+  **15/15 correctness** vs SDPA (incl. N=16384 rescale-stability). **S-elimination proven without a
+  profiler:** peak CUDA mem at 8192×64 is **+17 MB (v3) vs +2164 MB (v2)** = the 2147 MB S matrix
+  gone (125× less). **But v3 is 3–7× SLOWER than v2** — deleting ~99% of DRAM traffic bought nothing
+  because Step 2 proved nothing was bandwidth-bound. Real limiter = **occupancy/latency** (measured
+  151× above the 17 ms MMA floor; torch CUPTI trace puts pass2_output at 88.6% — one-thread-per-row +
+  unstaged per-row K/V reads). Roofline mispredicted a 3rd time (HBM→MMA→neither), same root cause:
+  blind to the schedule. **ncu pipe-util read deferred to bare-metal** (`ERR_NVGPUCTRPERM` blocks
+  counters on all containerized rentals — vast.ai/RunPod/Lambda; confirmed across hosts +
+  `--cap-add` attempts). See `docs/results.md`/`decisions.md` Step 3, `interview-prep.md` C6.
 
 ## Next steps
 
-1. **Step 3 — online softmax (`kernels/v3_*`):** running max/sum so S never touches HBM. Since the
-   ncu read proved S is ~99% of measured DRAM traffic, this deletes essentially all of it. Predicted
-   AI ~512, limiter predicted to cross to MMA — but **verify that crossing against ncu**, because the
-   v1/v2 "HBM-bound" prediction was wrong (L2). Follow the full per-step loop (roofline-first →
-   build → correctness → bench → results/decisions → quiz).
-2. Profiling tooling now supports single-shape capture: `bench.harness --seq N --dim d` (added
-   2026-06-19) lets ncu target one shape's qk/softmax/pv passes; fast metric-only capture via
-   `ncu --metrics dram__bytes_read.sum,... --csv` (no `--set full`). `.ncu-rep` is binary — read on
-   Colab via `ncu -i <file> --page raw --csv`, not on the Mac.
+1. **Step 4 — fused FlashAttention-1 (`kernels/v4_*`):** single pass with correct **O-rescaling**
+   (the piece v3 deferred), **one warp per query row** (not one thread), **staged K/V** in smem,
+   register-resident O accumulator. Goal: keep v3's S-off-HBM property *and* schedule like v2's GEMMs
+   — the first version where "S never touches HBM" should actually beat v2 in wall-clock. v3's
+   measured limiter (occupancy/latency, pass2-dominated) is the explicit target. Full per-step loop.
+2. **GPU host:** free Colab T4 exhausted → rent on **vast.ai** (T4, ~$0.10–0.20/hr; cu124 torch +
+   `python`→python3 symlink needed on the CUDA devel image). **Counter-free profiling is the norm
+   now:** `torch.cuda.max_memory_allocated()` for footprint, `torch.profiler`/CUPTI trace for
+   per-kernel timing — both work without the blocked hardware counters. ncu pipe-util only on a
+   bare-metal/dedicated box (Qubrid/Lambda-dedicated/CoreWeave). `.ncu-rep` is binary — read via
+   `ncu -i <file> --page raw --csv`, not on the Mac.
 
 ## Git
 
