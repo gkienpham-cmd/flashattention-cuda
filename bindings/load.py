@@ -22,6 +22,7 @@ _SOURCES = {
     "v2_tiled": ["tiled_attention.cu", "binding.cpp"],
     "v3_online": ["online_attention.cu", "binding.cpp"],
     "v4_fused": ["fused_attention.cu", "binding.cpp"],
+    "v5_wmma": ["wmma_attention.cu", "binding.cpp"],
 }
 
 

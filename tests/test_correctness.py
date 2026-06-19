@@ -31,9 +31,28 @@ SHAPES = [
     (1, 2, 100, 128),   # 100 % 32 != 0  -> partial QK/PV tile at d=128
 ]
 
-BACKENDS = ["v1_naive", "v2_tiled", "v3_online", "v4_fused"]
+BACKENDS = ["v1_naive", "v2_tiled", "v3_online", "v4_fused", "v5_wmma"]
 
+# Default FP32 tolerance (v1-v4: FP32 in / FP32 accumulate / FP32 out).
 ATOL, RTOL = 1e-4, 1e-4
+
+# Per-backend tolerance. v5_wmma is the first version that is NOT bit-comparable to the FP32 SDPA
+# reference: it casts the inputs to FP16 (so ~2^-11 relative error enters before the math), runs the
+# matmuls on tensor cores, and only accumulates in FP32. The tight 1e-4 cannot hold — 2e-2 is the
+# usual FP16-attention band. Per the per-step loop, a miss is a finding to investigate, not a knob to
+# keep widening. v1-v4 keep the strict FP32 tolerance.
+_TOL = {
+    "v1_naive": (ATOL, RTOL),
+    "v2_tiled": (ATOL, RTOL),
+    "v3_online": (ATOL, RTOL),
+    "v4_fused": (ATOL, RTOL),
+    "v5_wmma": (2e-2, 2e-2),
+}
+
+
+def tol_for(backend: str):
+    """(atol, rtol) for a backend — loosened only for the FP16-in v5 path."""
+    return _TOL[backend]
 
 
 @requires_cuda()
@@ -49,7 +68,8 @@ def test_matches_sdpa(backend, B, H, N, d, causal):
     out = attention(q, k, v, causal=causal, backend=backend)
     ref = sdpa_reference(q, k, v, causal=causal)  # scale=None -> 1/sqrt(d), matches our default
 
-    torch.testing.assert_close(out, ref, atol=ATOL, rtol=RTOL)
+    atol, rtol = tol_for(backend)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
 
 
 @requires_cuda()
@@ -65,7 +85,8 @@ def test_explicit_scale(backend):
 
     out = attention(q, k, v, scale=scale, backend=backend)
     ref = sdpa_reference(q, k, v, scale=scale)
-    torch.testing.assert_close(out, ref, atol=ATOL, rtol=RTOL)
+    atol, rtol = tol_for(backend)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
 
 
 # v3-specific: the running-max rescale accumulates across the WHOLE key axis, so a long N is the
@@ -106,3 +127,24 @@ def test_v4_fused_long_n_stability(causal, d):
     out = attention(q, k, v, causal=causal, backend="v4_fused")
     ref = sdpa_reference(q, k, v, causal=causal)
     torch.testing.assert_close(out, ref, atol=ATOL, rtol=RTOL)
+
+
+# v5-specific stress case: same single-pass O-rescale as v4, but now the running max/denom and the
+# FP32 oRun accumulator are driven by FP16 tensor-core matmuls. N=16384 is the most rescales and the
+# longest FP32 accumulation — exactly where an O-rescale ordering bug (alpha applied to l but not the
+# smem O, or after the P@V add) or FP16 drift would show. d=128 also exercises the BM=32/2-warp tile
+# config (vs d=64's BM=64/4-warp). Looser FP16 tolerance via tol_for("v5_wmma").
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("causal", [False, True])
+def test_v5_wmma_fp16_stability(causal, d):
+    torch.manual_seed(4)
+    B, H, N = 1, 2, 16384
+    q = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+
+    out = attention(q, k, v, causal=causal, backend="v5_wmma")
+    ref = sdpa_reference(q, k, v, causal=causal)
+    atol, rtol = tol_for("v5_wmma")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)

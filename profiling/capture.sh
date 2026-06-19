@@ -14,12 +14,13 @@ mkdir -p profiling/raw
 # --kernel-name filters to the attention passes ONLY. Without it, --launch-count 3 caught the
 # first 3 launches of the run — torch.randn's RNG kernel that builds the bench inputs — not our
 # attention kernels. The regex matches v1/v2's qk_kernel/softmax_kernel/pv_kernel (+ the v2 tiled
-# variants qk_tiled_kernel, ...) AND v3's online-softmax passes (pass1_stats/pass2_output), so it
-# survives the version bump; it never matches the RNG/elementwise kernels. With the filter,
-# --launch-count 3 = the first few passes of the first profiled iteration (warmup is steady-state).
+# variants qk_tiled_kernel, ...), v3's online-softmax passes (pass1_stats/pass2_output), v4's
+# fused_attention_kernel, and v5's wmma_attention_kernel, so it survives the version bump; it never
+# matches the RNG/elementwise kernels. With the filter, --launch-count 3 = the first few passes of
+# the first profiled iteration (warmup is steady-state).
 ncu --set full --launch-count 3 \
     --kernel-name-base demangled \
-    --kernel-name 'regex:(qk|softmax|pv|pass1_stats|pass2_output)' \
+    --kernel-name 'regex:(qk|softmax|pv|pass1_stats|pass2_output|fused|wmma)' \
     -o "profiling/raw/${BACKEND}" \
     python -m bench.harness --backend "${BACKEND}" --precision fp32 "${@:2}"
 

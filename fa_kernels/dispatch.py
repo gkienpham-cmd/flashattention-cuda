@@ -19,6 +19,7 @@ _MIN_CAPABILITY = {
     "v2_tiled": (7, 0),   # same FP32 math; shared-memory tiling needs no extra capability
     "v3_online": (7, 0),  # same FP32 math; online softmax needs no extra capability
     "v4_fused": (7, 0),   # same FP32 math; warp-per-row + shuffle reductions need no extra capability
+    "v5_wmma": (7, 5),    # first cap bump: FP16-in/FP32-accum on Turing WMMA tensor cores (sm_75+)
 }
 
 
