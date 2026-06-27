@@ -290,11 +290,11 @@ finally approach a real (tensor-core) MMA bound instead of a reduction-overhead 
 
 ---
 
-## Step 6 — Split-KV decode (v6) — SCAFFOLD STUB
+## Step 6 — Split-KV decode (v6)
 
-*Status: scaffolded (kernel + wiring + tests); measured close-out + quiz pending on Colab. This opens
-the decode arc v6→v11 (`docs/b300-decode-research.md`): the long-term goal is a B300 low-precision
-decode kernel that beats FA4 (a BF16 prefill/training kernel) in the regime it never targets.*
+*Measured 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124). 25/25 correctness. This opens the
+decode arc v6→v11 (`docs/b300-decode-research.md`): the long-term goal is a B300 low-precision decode
+kernel that beats FA4 (a BF16 prefill/training kernel) in the regime it never targets.*
 
 **Bottleneck (predicted): decode occupancy.** At `N_q = 1` the prefill grid
 `(ceil_div(N_q, rows), B·H)` collapses to `(1, B·H)` — a handful of blocks that starve the 40 SMs
@@ -320,5 +320,34 @@ tensor cores: at `N_q = 1` the matmuls are M=1 (GEMV), so WMMA would idle on a 1
 v9), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
 2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v8/v9.
 
-**Measured:** TODO on Colab (correctness count, decode bench, % HBM BW, vs-naive speedup). **Quiz:**
-pending. **Next (v7):** paged KV gather — block-table indirection, correctness with non-contiguous KV.
+**Measured (decode B=1 H=8 N_q=1, non-causal = the real decode workload):**
+- **Correct:** 25/25 vs SDPA (square SHAPES via the `num_splits→1` reduction + decode `N_q=1` shapes,
+  causal both ways, non-multiple `N_k`).
+- **v6 beats the naive `N_q=1` loop (v5 @ N_q=1) 5.7–8.2×**, growing with `N_k` (6.0× @2048 → 8.2×
+  @16384, d=64). The split-KV thesis lands: 8–10 splits × BH=8 = 64–80 blocks fill the SMs the
+  single-block loop starved.
+- **v6 beats torch SDPA 1.5–3.3× (non-causal)** — SDPA isn't tuned for `N_q=1` on Turing. Bigger edge at
+  d=64 (GEMV scoring cheaper) than d=128.
+- **But %HBM is only ~9–15% (≈7–9× above the HBM floor).** Roofline got the *location* (HBM) right but
+  not the magnitude — same flops/bytes blind spot, 5th miss. The actual limiter is still
+  **occupancy/launch + reduction latency**: BH=8 gives only ~2 blocks/SM, plus a two-kernel launch and
+  an under-occupied merge. Split-KV moved decode from "can't fill the SMs at all" to "fills them
+  partially" — it did **not** reach the bandwidth wall.
+- **Causal rows are a degenerate-shape artifact:** at `N_q=1` with `q` at row 0, causal masks every key
+  but key 0 → 1 effective key. SDPA short-circuits it; v6 doesn't, so causal `vs sdpa` (0.03–0.28×) and
+  `%HBM` are meaningless (correctness still matches — it's in the 25/25). Realistic causal decode needs
+  the query at position `N_k−1`; the non-causal rows already measure that. Filed as a harness fix.
+
+**What changes on B300 (research §3):** 160 SMs ⇒ more splits (retune `choose_splits` `num_sm` 40→160);
+**HBM bandwidth is FLAT vs B200** ⇒ the real decode wins are **precision** (NVFP4 KV ≈ 3.5× fewer bytes,
+v9), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
+2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v8/v9.
+
+**What this measurement reorders:** because v6 reaches only ~12% of HBM, the next lever is *more
+occupancy* (bigger batch / GQA M-packing to grow the grid — research §4's `AI = 2G/b`), not fewer bytes.
+Low-precision KV (FP8/NVFP4) only pays once the kernel is actually bandwidth-bound; chasing it before
+fixing occupancy would optimize a wall we're 8× away from. So: **v7 paged KV** (the import surface the
+mini-vLLM needs) + the harness causal-decode offset, then occupancy/GQA, then bytes at v8/v9 on B300.
+
+**Quiz:** passed 2026-06-27 (Gate 2). **Next (v7):** paged KV gather — block-table indirection,
+correctness with non-contiguous KV; plus the `--decode` causal query-offset fix.

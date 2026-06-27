@@ -422,10 +422,9 @@ FP32 FMA peak. Step 5's tensor cores fix the shape *and* raise the ceiling."
 
 ---
 
-## C8 — Decode ≠ prefill: split-KV (the v6 keystone) — SCAFFOLD STUB
+## C8 — Decode ≠ prefill: split-KV (the v6 keystone)
 
-*(fill the measured numbers at the Step-6 close-out; the design + B300 arc are in
-`docs/b300-decode-research.md`)*
+*(measured 2026-06-27, T4 sm_75; design + B300 arc in `docs/b300-decode-research.md`)*
 
 ### Why prefill kernels die at decode
 v1–v5 parallelize over query rows: grid `(ceil_div(N_q, rows), B·H)`. At decode `N_q = 1` that is
@@ -446,13 +445,27 @@ log-sum-exp algebra online softmax already uses across keys:
 without changing the result. (On B300 the merge fuses on-chip via a 2-CTA cluster + DSMEM; on T4 it's a
 second kernel.)
 
+### What the T4 measured (the honest ceiling)
+v6 **beat the naive `N_q=1` loop 5.7–8.2×** and **torch SDPA 1.5–3.3×** (non-causal) — the split-KV win
+is real. But it reached **only ~9–15% of HBM bandwidth (≈7–9× above the roofline floor)**. So even after
+split-KV the limiter is *still* occupancy/launch, not bandwidth: at BH=8 the grid is only 64–80 blocks on
+40 SMs (~2/SM), plus a two-kernel launch and an under-occupied merge. The lesson repeats v3/v4: the
+roofline named the *location* (HBM) but not the magnitude, because it can't see the schedule. **Practical
+consequence:** the next lever is *more occupancy* (bigger batch / GQA M-packing → `AI = 2G/b`), not fewer
+bytes — FP8/NVFP4 KV only pays once you're actually bandwidth-bound, and we're 8× short of that wall.
+
+*(Gotcha worth stating: causal decode with the query at row 0 degenerates to 1 key — SDPA short-circuits
+it, a split-KV kernel doesn't. Realistic causal decode puts the query at `N_k−1`, which equals the
+non-causal full-cache scan. Don't quote causal-decode-at-row-0 speedups.)*
+
 ### Forward pointer (v8/v9): asymmetric precision
 The two matmuls have **opposite FP4 tolerance**: `P·V` is a convex combination (`P ∈ [0,1]`, sums to 1)
 → FP4 error *averages out*, **safe**; `Q·Kᵀ` feeds `exp` → error amplifies (`δ → e^δ`) and logits carry
 outliers → keep **MXFP8 + outlier residual**. That asymmetry is the v9 headline.
 
-**Say-this (TODO — add measured % HBM BW + vs-naive at close-out):** "Decode is `N_q = 1`, so prefill
-kernels under-occupy the SMs and the matmuls go GEMV — even tensor cores idle. v6 splits the KV axis so
-each block owns a chunk and emits a partial `(O, m, ℓ)`; a merge recombines them with the same LSE
-algebra as online softmax. Decode AI is `2/b`, memory-bound and N-independent, so the win is occupancy
-+ fewer KV bytes, not FLOPs — which is exactly why the B300 headline (v9) is FP4 KV, not a better GEMM."
+**Say-this:** "Decode is `N_q = 1`, so prefill kernels under-occupy the SMs and the matmuls go GEMV —
+even tensor cores idle. v6 splits the KV axis so each block owns a chunk and emits a partial `(O, m, ℓ)`;
+a merge recombines them with the same LSE algebra as online softmax. On the T4 it beat a naive `N_q=1`
+loop ~6–8× and SDPA ~1.5–3×, but only hit ~12% of HBM — so it's still occupancy-bound, not bandwidth-
+bound. That's the tell: decode AI is `2/b`, memory-bound and N-independent, so the next win is occupancy
+(GQA `2G/b`) then fewer KV bytes — which is why the B300 headline (v9) is FP4 KV, not a better GEMM."

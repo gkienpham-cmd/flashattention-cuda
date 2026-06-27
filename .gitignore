@@ -30,3 +30,8 @@ bench/raw/
 
 # Redundant raw Colab exports — the curated run-of-record notebooks live in notebooks/
 /step5-output.ipynb
+/v6 outputs.ipynb
+/v6_decode_gate_outputs.ipynb
+
+# Screenshots dropped at the repo root
+/Screenshot*.png

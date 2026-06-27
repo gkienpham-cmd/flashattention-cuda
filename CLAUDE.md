@@ -63,7 +63,7 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   keys `j > i` excluded; tested both ways vs SDPA). Hardware leaks in only at the build `-gencode`
   and `roofline/archs.py`.
 
-## Status (2026-06-20)
+## Status (2026-06-27)
 
 - **Step 1 (v1 naive)** — DONE: tests green, benched, quiz passed. Key finding: naive beats its
   cache-free roofline floor at mid-N (L2 absorbs redundant operand reads), converges to it at
@@ -101,22 +101,43 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   GEMV-shaped (per-key `__shfl` reduction ≫ FMAs), never near the 8.1 TFLOPS peak. Roofline missed
   *magnitude* a 4th time, same blind spot. ncu still deferred. See `docs/results.md`/`decisions.md`
   Step 4, `interview-prep.md` C7.
+- **Step 5 (v5 WMMA, `kernels/v5_wmma/`)** — kernel + wiring landed (commit `ad021b7`) and tests are
+  green (in `BACKENDS`, tol 2e-2 FP16-in; rebuilt + passed during the Step-6 run); run-of-record in
+  `notebooks/step5_run_of_record.ipynb`. **OUTSTANDING BACKFILL:** the prose close-out (`results.md`/
+  `decisions.md` Step 5 + this status line + `interview-prep.md`) was deferred — pull the measured
+  speedups from the run-of-record notebook before calling Step 5 fully documented.
+- **Step 6 (v6 split-KV decode, `kernels/v6_splitkv/`)** — DONE (2026-06-27): both gates cleared (quiz
+  passed + counter-free decode bench, vast.ai T4). FP16-in/FP32-accum, **two kernels** behind one
+  `forward` — a split-KV partial (each block does v4-style online softmax over one KV chunk → writes
+  the *unnormalized* `(O,m,l)`) and an LSE merge across splits; `choose_splits` fills ~2× the SMs, and
+  **prefill `N_q=N_k` → 1 split → reduces to plain attention** (why the square-shape tests pass). No
+  tensor cores (decode matmuls are M=1 GEMV). **25/25 correctness** vs SDPA (square SHAPES + decode
+  `N_q=1`, causal both ways, non-multiple `N_k`). **The split-KV thesis lands: v6 beats the naive
+  `N_q=1` loop (v5@N_q=1) 5.7–8.2× and torch SDPA 1.5–3.3× (non-causal), the win growing with `N_k`.**
+  **But only ~9–15% of HBM BW (≈7–9× above the decode floor):** roofline got the *location* right
+  (HBM, `AI=2/b=1.0`, N-independent) but **magnitude wrong a 5th time** — real limiter is still
+  **occupancy/launch** (BH=8 → ~2 blocks/SM + a 2-kernel launch + a tiny under-occupied merge), not
+  bandwidth. So the measurement **reorders the roadmap: next lever is occupancy (batch / GQA M-pack,
+  `AI=2G/b`), not bytes** — FP8/NVFP4 KV (v8/v9 on B300) only pays once actually bandwidth-bound.
+  Causal-decode rows are a degenerate-shape artifact (`q` at row 0 → 1 key; SDPA short-circuits, v6
+  doesn't) — a `--decode` query-offset is a v7 harness fix. Opens the decode arc v6→v11
+  (`docs/b300-decode-research.md`). See `docs/results.md`/`decisions.md` Step 6, `interview-prep.md` C8.
 
 ## Next steps
 
-1. **Step 5 — tensor cores (`kernels/v5_*`):** FP16-in / FP32-accum on the Turing WMMA units. Raises
-   the ceiling 8→65 TFLOPS *and* forces **GEMM-shaped MMA tiles**, directly attacking v4's measured
-   FMA-efficiency gap (the GEMV-shaped shuffle scoring that leaves it 18× off the floor). Goal: the
-   first version that approaches a *real* (tensor-core) MMA bound rather than a reduction-overhead
-   wall. Mind the FP16 tolerance change (v1–v4 were FP32 throughout; FP16-in needs a looser atol).
-   Full per-step loop. **Note:** re-running the whole v1→v4 curve on a bigger GPU (A100/H100) is a
-   deliberate later pass — kept on T4 through Step 4 for apples-to-apples with the v2/v3 baselines.
-2. **GPU host:** free Colab T4 exhausted → rent on **vast.ai** (T4, ~$0.10–0.20/hr; cu124 torch +
-   `python`→python3 symlink needed on the CUDA devel image). **Counter-free profiling is the norm
-   now:** `torch.cuda.max_memory_allocated()` for footprint, `torch.profiler`/CUPTI trace for
-   per-kernel timing — both work without the blocked hardware counters. ncu pipe-util only on a
-   bare-metal/dedicated box (Qubrid/Lambda-dedicated/CoreWeave). `.ncu-rep` is binary — read via
-   `ncu -i <file> --page raw --csv`, not on the Mac.
+1. **Step 7 — paged KV-cache gather (`kernels/v7_*`):** block-table indirection so the KV cache need
+   not be contiguous (the import surface a from-scratch mini-vLLM consumes). Carry v6's split-KV +
+   LSE merge; add a non-contiguous-KV correctness case. Also fold in the **`--decode` causal
+   query-offset** fix (place the query at `N_k−1` so causal decode attends the whole cache, not 1
+   key). Per the Step-6 finding, the occupancy lever (bigger batch / GQA M-packing → `AI=2G/b`) comes
+   before the low-precision-KV lever — v6 reaches only ~12% of HBM, so cutting bytes is premature.
+2. **Backfill Step 5 docs** from `notebooks/step5_run_of_record.ipynb` (results/decisions/status/C-chain).
+3. **GPU host:** **vast.ai** T4 (~$0.10–0.20/hr). Image gotchas confirmed this run: torch installs into
+   a **venv** (`/venv/main`) — install with `%pip`/`sys.executable -m pip` and prepend the venv `bin/`
+   to `PATH` so `!python -m …` cells resolve (do NOT symlink system python3 over the venv); add
+   `numpy`. `notebooks/v6_decode_gate.ipynb` is the standalone Run-All gate. **Counter-free profiling
+   is the norm:** `torch.cuda.max_memory_allocated()` + CUDA-event/CUPTI timing; ncu counters blocked
+   (`ERR_NVGPUCTRPERM`) on containerized rentals — pipe-util only on a bare-metal box.
 
 ## Git
 

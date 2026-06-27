@@ -308,12 +308,12 @@ the limiter as FMA under-utilization; the pipe-util read is a bare-metal follow-
 
 ---
 
-## Step 6 — Split-KV decode (v6) — SCAFFOLD STUB (fill at the measured close-out on Colab)
+## Step 6 — Split-KV decode (v6)
 
-*Status: kernel + wiring + tests scaffolded (FP16-in/FP32-accum, two kernels — partial + merge — behind
-one `forward`). NOT yet benched or quizzed. Per the per-step loop this section is completed once tests
-are green on Colab and the roofline-first prediction is recorded. The decode arc (v6→v11) and its
-rationale are in `docs/b300-decode-research.md`.*
+DONE (measured 2026-06-27, vast.ai Tesla T4 sm_75, torch 2.6.0+cu124). FP16-in/FP32-accum, two kernels
+(partial + merge) behind one `forward`. **25/25 correctness** vs SDPA (square SHAPES where
+`choose_splits → 1` reduces v6 to plain attention + `test_v6_splitkv_decode`: `N_q=1`, `N_k ∈ {4096,
+8192, 8190}`, d 64/128, causal both ways). The decode arc (v6→v11) is in `docs/b300-decode-research.md`.
 
 **Why this step:** v1–v5 parallelize over query rows, so at decode (`N_q = 1`) the grid collapses to
 `(1, B·H)` and the T4's 40 SMs sit idle (research blind-spot #2). v6 splits the KV axis across blocks
@@ -324,12 +324,57 @@ rationale are in `docs/b300-decode-research.md`.*
 so the predicted limiter is **HBM** and the floor is `time ≈ (2·B·H·N_k·d·2 bytes) / 320 GB/s`. The
 split-KV schedule does not change these bytes; it only lets the kernel *reach* this bound.
 
-| q×kv shape | ours p50/max ms | µs/tok | %HBM BW | vs SDPA | vs naive (v5 @ N_q=1) | roofline |
+**Measured — decode (B=1, H=8, N_q=1), the real decode workload (non-causal over the full KV cache):**
+
+| q×kv shape | ours p50/max ms | µs/tok | %HBM | vs SDPA | vs naive (v5 @ N_q=1) | HBM floor |
 |---|---|---|---|---|---|---|
-| _TODO on Colab (`python -m bench.harness --backend v6_splitkv --decode`)_ | | | | | | |
+| 1x8x1x64/2048   | 0.152/0.182 |  18.94 |  8.6% | 2.44× | 6.03× | ~0.013ms |
+| 1x8x1x128/2048  | 0.219/0.233 |  27.38 | 12.0% | 1.50× | 5.73× | ~0.026ms |
+| 1x8x1x64/8192   | 0.449/0.467 |  56.06 | 11.7% | 3.16× | 7.86× | ~0.052ms |
+| 1x8x1x128/8192  | 0.696/0.709 |  87.00 | 15.1% | 1.80× | 6.90× | ~0.105ms |
+| 1x8x1x64/16384  | 0.848/0.868 | 105.99 | 12.4% | 3.32× | 8.23× | ~0.105ms |
+| 1x8x1x128/16384 | 1.358/1.371 | 169.73 | 15.4% | 1.83× | 7.04× | ~0.210ms |
 
-**Reading it (TODO):** does v6 fill the SMs vs the `1×BH` naive loop (the `vs naive` column)? what % of
-the 320 GB/s does it actually reach? does the roofline finally predict the *location* (HBM) even if it
-misses magnitude again?
+(`%HBM` = the K+V read `2·B·H·N_k·d·2 B` as a fraction of the 320 GB/s peak. `vs naive` = v5_wmma run at
+`N_q=1` — the `1×BH` single-block-per-head loop v6 must beat. Clock read was unavailable on this box —
+`clock~-1/-1`; timing is CUDA-event based, unaffected.)
 
-**ncu:** deferred (counter-free norm — `max_memory_allocated` + CUPTI µs/token).
+**Reading it — the split-KV thesis lands, but the bandwidth bound is NOT reached:**
+- ✅ **v6 beats the naive `N_q=1` loop 5.7–8.2×, growing with `N_k`** (6.0× @2048 → 8.2× @16384, d=64).
+  This is the deliverable: split-KV spreads the KV scan across `choose_splits` blocks per head (BH=8 →
+  8 splits @2048, 10 @8192/16384 → 64–80 blocks), filling the SMs that the single-block loop starved.
+  The win grows with `N_k` because there's more KV to parallelize and the fixed launch/merge cost
+  amortizes.
+- ✅ **v6 beats torch SDPA 1.5–3.3× (non-causal).** At `N_q=1` SDPA falls back to a path not tuned for a
+  single query on Turing; the hand-written split-KV is faster. The edge is bigger at d=64 (2.4–3.3×)
+  than d=128 (1.5–1.8×) — d=128 has more work per key, where v6's GEMV-shaped per-key scoring is less
+  efficient.
+- ⚠️ **But %HBM is only ~9–15% — v6 does NOT saturate HBM.** Measured time is **~7–9× above the HBM
+  floor** (0.449 ms vs 0.052 ms floor @64/8192). The roofline got the *location* right (HBM-bound in
+  principle) but the kernel never reaches it: at BH=8 the grid is only 64–80 blocks on 40 SMs (~2
+  blocks/SM, ~16 of 32 warps), and there's a **two-kernel launch + a tiny under-occupied merge** on top.
+  The real limiter is still **occupancy / launch + reduction latency**, not bandwidth — the same finding
+  as v3/v4, now at decode. The roofline mispredicted *magnitude* a 5th time, same flops/bytes blind spot
+  (it can't see the schedule). %HBM rising with `N_k` (8.6→12.4%) is the fixed overhead amortizing, not
+  the kernel getting closer to the bandwidth wall structurally.
+
+**The causal rows are a degenerate-shape artifact — disregard for perf:** with `q` at row index 0 and
+the causal rule `j > i`, the single query (`i=0`) can attend to **only key 0** — one key, not the cache.
+SDPA short-circuits that (v6 still launches all splits over the full `N_k`), so causal `vs sdpa` reads a
+meaningless 0.03–0.28× and `%HBM` is inflated (the formula counts the full `2·N·d` bytes the kernel
+never needed). Correctness still holds there (v6 matches SDPA on the 1-key answer — it's in the 25/25).
+**Realistic causal decode would place the query at position `N_k−1` (attending to all keys), which is
+exactly what the non-causal rows already measure.** Recorded as a harness limitation: `--decode` should
+offset the query position for a meaningful causal-decode timing (a v7+ improvement, not a v6 bug).
+
+For reference, the causal (degenerate) rows as run: 64/2048 0.100 ms (vs naive 9.13×), 128/2048 0.170
+(7.38×), 64/8192 0.303 (11.62×), 128/8192 0.560 (8.57×), 64/16384 0.563 (12.38×), 128/16384 1.085
+(8.80×). The `vs naive` numbers are still valid (both v5 and v6 see the same 1-key shape); only `vs sdpa`
+and `%HBM` are meaningless here.
+
+**ncu:** deferred (counter-free norm — the bench's CUDA-event timing + the roofline-distance read above
+already name the limiter as occupancy/launch, not bandwidth; a pipe-util read is a bare-metal follow-up).
+
+**Next (v7 — paged KV gather):** block-table indirection, correctness with non-contiguous KV; and the
+harness causal-decode query offset above. The %HBM gap says the lever after that is *occupancy* (bigger
+batch/GQA packing to grow the grid) before *bytes* (FP8/NVFP4 KV at v8/v9).
