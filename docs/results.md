@@ -786,6 +786,27 @@ and µs/tok drops — *if* the load latency is the dominant stall (the per-CTA h
 (equally a finding):** if the real stall is the per-key warp-shuffle reduction (the v4 GEMV wall), not the
 load, double-buffering won't move `%HBM` — which would point the next lever at the reduction, not the load.
 
-**Measured:** _pending T4 gate._ Success = `%HBM` up + µs/tok down vs Cut 1 (`v8_gqa`); null = no movement →
-bottleneck is the reduction. Either way it tells us whether bandwidth-bound is reachable on CUDA cores
-(→ v9 FP8 pays) or whether the decode floor is the reduction latency.
+**Measured (2026-06-28, Colab T4, `notebooks/v8_5_gqa_db_gate_output.ipynb`): correctness ✅ 38/38, but the
+prediction is REFUTED — double-buffering did NOTHING. The null outcome IS the finding.** Same-session A/B
+(G-sweep, N_k=8192, H_q=32, non-causal): `v8_gqa_db` ≈ `v8_gqa` at **every** G — `%HBM` flat within
+~0.1–0.8% and µs/tok within noise (and the db run was at a *lower* throttle clock, 360 vs 450 MHz, so the
+tiny apparent edge is clock, not the prefetch):
+
+| G (d=128) | db µs/tok | db %HBM | Cut 1 µs/tok | Cut 1 %HBM |
+|---|---|---|---|---|
+| 2  | 59.0 | 11.1% | 60.3 | 10.9% |
+| 8  | 17.0 |  9.6% | 18.5 |  8.8% |
+| 32 | 11.3 |  3.6% | 11.5 |  3.5% |
+
+**`%HBM` did not move toward the floor → the decode stall is NOT the exposed KV-load latency. It's the
+per-key warp-shuffle reduction (the v4 GEMV wall) + online-softmax dependency chain.** Prefetching the
+load can't help because the warps aren't waiting on memory — they're serialized in the reduction, and with
+~2 blocks/SM there aren't enough independent warps to hide that *compute* latency. So the kernel is
+**compute-latency-bound at ~10% HBM; memory was never the wall.** This closes the decode investigation:
+neither tensor cores (Cut 2, opaque-fragment tax) NOR load-overlap (v8.5) move it, because the floor is the
+reduction, not bandwidth. **Implication for v9:** FP8 (byte-cutting) won't show a latency win on this
+micro-bench either — bytes aren't the bottleneck. To make memory the wall you'd need a faster reduction
+(vectorize/ILP/more occupancy — a "v8.6") or a genuinely memory-bound regime (much larger `N_k` past L2);
+FP8/NVFP4's real value is then KV-cache *capacity* + accuracy (RMSE vs FP64), not micro-bench speedup.
+(Reclaim-at-batch unchanged: db beats SDPA 6–12× across B=1→64, same as Cut 1 — double-buffering breaks
+nothing, just doesn't help.)
