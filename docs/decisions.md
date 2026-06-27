@@ -367,3 +367,55 @@ BW flat at 8 TB/s; decode `AI=2/b` memory-bound; v6-12%-is-small-batch-artifact.
 acquiring a decode path and FlashInfer/FlashMLA *are* B300-proven, so the contribution is "an open,
 roofline-documented FP4 decode kernel vs FlashInfer/FlashMLA," not "we beat FA4." **Next (v7):** paged KV
 gather (non-contiguous KV correctness) + the `--batch` sweep + the `--decode` causal query-offset fix.
+
+## Step 7 — Paged KV gather + decode-harness fixes (v7)
+
+*Status: code complete + locally validated (2026-06-27); **GPU gate + quiz PENDING** (run
+`notebooks/v7_paged_gate.ipynb`). The decision + prediction are recorded; the measured block fills in
+after the run.*
+
+**Bottleneck (predicted): NONE new — v7 is occupancy-neutral.** This is the deliberate design point.
+v6 named the limiter (occupancy/launch at small batch); v7 does not touch it. It isolates one variable
+— **non-contiguous (paged) KV via a per-sequence block table** — so any measured change is attributable
+to the gather alone, and adds two harness fixes that *measure* what v6 could only predict.
+`AI = 2/b = 1.0` is unchanged: the gather adds `O(N_k/page_size)` index reads (~0.1% of KV bytes).
+
+**Options:**
+- **A — keep contiguous KV (v6), defer paging:** simplest, but never exercises the layout a real
+  KV-cache engine uses; the crossover stays predicted-only.
+- **B (chosen) — paged pool + block table, v6 kernels otherwise unchanged:** replace the contiguous
+  `gj→offset` at the cooperative smem load with a block-table lookup; carry split-KV + LSE merge
+  verbatim. Foundational plumbing every later decode kernel (v8–v11) rides on.
+
+**Choices (ratified with the user):**
+- **Per-sequence (per-b) block table, vLLM-faithful.** K/V physical pools `[num_blocks, page_size, H,
+  d]`; `block_table[b][logical_block] → physical_block`, shared across all H heads of a sequence; the
+  kernel derives `b = bh/H, h = bh%H`. (Alternative per-`(b,h)` table was simpler but diverges from
+  vLLM's per-sequence convention the mini-vLLM will use.)
+- **New public API `paged_attention(...)`** rather than overloading `attention(q,k,v)` — v7's signature
+  (pool + block table + page_size + `n_k` + `q_offset`) can't ride the fixed dense API. `attention()`
+  and v1–v6 are untouched; v7 is **not** in the dense-API `BACKENDS` list (it gets its own paged tests).
+- **True logical `N_k` passed explicitly** (not `n_logical·page_size`) so a non-multiple length never
+  scans the last page's padding tail (kernel loops `gj < N_k`).
+- **Causal query-offset** (`mask: gj > gi + q_offset`, default 0 = v6): at decode, `q_offset = N_k − N_q`
+  puts the query at the cache end so causal == the full scan. Correctness anchors against non-causal
+  SDPA (the equivalence), so no bottom-right-mask reference is needed.
+- **Deferred:** the merge-kernel `(m,ℓ)`-recompute cleanup (every d-thread recomputes the scalars) —
+  kept out to keep v7 a single isolated change. If the `--batch` sweep shows the tiny `(N_q,BH)` merge
+  dominating wall-clock at large BH, a single-/persistent-kernel merge becomes **v8.5** (`decode-replan §7.5`).
+
+**What changes on another arch:** identical to v6 — `choose_splits` `num_sm` 40→160 on B300; the
+crossover threshold `BH ≥ 2·num_sm` scales with it (T4 `B≥10`, B300 `B≥40` @ H=8). Paging itself is
+arch-independent (pure indexing); the gather's L1/L2 residency assumption holds across arches.
+
+**Measured (PENDING — paste after the gate run):**
+- Correctness: *N/N* vs SDPA (paged shuffled-pool gather + v6 regression), tol 2e-2.
+- `--batch` crossover at N_k=8192: *did %HBM climb 12% → saturation past BH≈80–160?* — **the answer
+  that confirms or refutes "occupancy before bytes."** This is the load-bearing measurement of the
+  whole reorder.
+- Paging overhead: v7 µs/tok vs v6 at B=1 (expect within noise — byte-neutral).
+- Causal decode now ≈ non-causal per row (the query-offset fix).
+
+**Quiz:** PENDING (Gate 2). **Next (v8 — GQA M-packing):** the occupancy lever — pack `G` query heads
+into `M` (GEMV→`M=G` GEMM, tensor cores re-engage, KV read once, `AI = 2/b → 2G/b`). v7's `--batch`
+data decides whether v8 leads at all batch sizes or only small-batch; `decode-replan §5`.

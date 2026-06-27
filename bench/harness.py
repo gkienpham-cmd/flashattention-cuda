@@ -19,7 +19,8 @@ import subprocess
 
 import torch
 
-from fa_kernels import attention
+from fa_kernels import attention, paged_attention
+from fa_kernels.paged import build_paged_kv
 from fa_kernels.reference import sdpa_reference
 from roofline.archs import get_arch
 from roofline.model import estimate
@@ -89,12 +90,15 @@ def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
     return (1, 1)
 
 
-def run(backend: str, precision: str, B: int, H: int, causal: bool,
+def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
         seq_lens: list[int] | None = None, head_dims: list[int] | None = None,
-        decode: bool = False, q_len: int | None = None) -> None:
+        decode: bool = False, q_len: int | None = None, page_size: int = 256) -> None:
     # Default to the full sweep; --seq/--dim narrow it so ncu can profile one shape's 3 passes.
     # In --decode mode the swept N is the KV length and the query length collapses to q_len (1) — the
-    # regime v6 split-KV targets, where the metric shifts to us/token + % HBM bandwidth (research §8).
+    # regime v6/v7 decode targets, where the metric shifts to us/token + % HBM bandwidth (research §8).
+    # `batches` sweeps B: at decode, BH = B*H is the occupancy knob, so a multi-B sweep MEASURES the
+    # occupancy->bandwidth crossover (%HBM climbing as BH passes ~2*SM) that the re-plan only predicted.
+    paged = backend == "v7_paged"
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
     nq = (q_len if q_len is not None else (1 if decode else None))   # None -> square (N_q = N_k)
@@ -115,15 +119,26 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
     arch = get_arch(sm) if sm in {"sm_75"} else None
     dt = _dtype(precision)
 
-    for N in seq_lens:
+    for B in batches:
+      for N in seq_lens:
         for d in head_dims:
             qn = nq if nq is not None else N
             q = torch.randn(B, H, qn, d, device=dev, dtype=dt)
             k = torch.randn(B, H, N, d, device=dev, dtype=dt)
             v = torch.randn(B, H, N, d, device=dev, dtype=dt)
 
-            ours = lambda: attention(q, k, v, causal=causal, backend=backend)
             base = lambda: sdpa_reference(q, k, v, causal=causal)
+            if paged:
+                # v7 reads a PAGED KV: scatter the dense k,v into shuffled physical pages + a block
+                # table, then time the gather kernel on that layout. Decode causal places the single
+                # query at logical N_k-1 (q_offset = N_k - qn) so it attends the WHOLE cache instead of
+                # the degenerate 1-key short-circuit -> the causal-decode rows become meaningful.
+                k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size)
+                q_off = (N - qn) if causal else 0
+                ours = lambda: paged_attention(q, k_pool, v_pool, block_table, page_size, n_k,
+                                               causal=causal, q_offset=q_off)
+            else:
+                ours = lambda: attention(q, k, v, causal=causal, backend=backend)
 
             o_p50, o_max = _time_ms(ours)
             s_p50, s_max = _time_ms(base)
@@ -144,7 +159,7 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
                 # v6 (and v5) read FP16 KV regardless of the input dtype (they cast in the kernel),
                 # so the roofline byte count uses fp16 -> at N_q=1 this is the AI=2/b=1.0 decode bound.
                 tile_m, tile_n = _roofline_tile(backend, d)
-                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv") else precision
+                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv", "v7_paged") else precision
                 est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
                                materialize_s=backend in ("v1_naive", "v2_tiled"),
                                tile_m=tile_m, tile_n=tile_n)
@@ -178,6 +193,12 @@ def main() -> None:
     p.add_argument("--backend", default="v1_naive")
     p.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16"])
     p.add_argument("--batch", type=int, default=1)
+    p.add_argument("--batch-sweep", type=int, nargs="+", default=None, dest="batch_sweep",
+                   help="decode only: sweep B over these values (e.g. --batch-sweep 1 8 16 32 64) to "
+                        "MEASURE the occupancy->bandwidth crossover (%%HBM vs BH=B*H). Overrides "
+                        "--batch; pair with --seq 8192 to hold N_k fixed. The crown-jewel v7 deliverable.")
+    p.add_argument("--page-size", type=int, default=256, dest="page_size",
+                   help="page size (tokens per block) for the v7_paged backend's block table.")
     p.add_argument("--heads", type=int, default=8)
     p.add_argument("--causal", action="store_true")
     p.add_argument("--seq", type=int, nargs="+", default=None,
@@ -194,8 +215,9 @@ def main() -> None:
     a = p.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("no CUDA device; run this on the GPU (Colab T4 / rented box)")
-    run(a.backend, a.precision, a.batch, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim,
-        decode=a.decode, q_len=a.q_len)
+    batches = a.batch_sweep if a.batch_sweep else [a.batch]
+    run(a.backend, a.precision, batches, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim,
+        decode=a.decode, q_len=a.q_len, page_size=a.page_size)
 
 
 if __name__ == "__main__":

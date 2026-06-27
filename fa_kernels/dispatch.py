@@ -21,6 +21,7 @@ _MIN_CAPABILITY = {
     "v4_fused": (7, 0),   # same FP32 math; warp-per-row + shuffle reductions need no extra capability
     "v5_wmma": (7, 5),    # first cap bump: FP16-in/FP32-accum on Turing WMMA tensor cores (sm_75+)
     "v6_splitkv": (7, 0), # FP16-in/FP32-accum on CUDA cores (no WMMA at N_q=1); split-KV + LSE merge
+    "v7_paged": (7, 0),   # v6 + block-table gather (paged KV) + causal query-offset; occupancy-neutral
 }
 
 

@@ -16,7 +16,8 @@ import pytest
 import torch
 
 from conftest import requires_cuda
-from fa_kernels import attention
+from fa_kernels import attention, paged_attention
+from fa_kernels.paged import build_paged_kv
 from fa_kernels.reference import sdpa_reference
 
 # (B, H, N, d) shapes spanning the sweep we care about. Small + the head dims 64/128. The last
@@ -174,6 +175,58 @@ def test_v6_splitkv_decode(causal, N_k, d):
     v = torch.randn(B, H, N_k, d, device="cuda", dtype=torch.float32)
 
     out = attention(q, k, v, causal=causal, backend="v6_splitkv")
+    ref = sdpa_reference(q, k, v, causal=causal)
+    atol, rtol = tol_for("v6_splitkv")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v7-specific: PAGED KV. v7 carries v6's split-KV + LSE merge unchanged and adds exactly one thing in
+# the hot loop — the KV reads GATHER through a per-sequence block table instead of a contiguous slice
+# (plus a causal query-offset). The oracle: scatter a dense KV into SHUFFLED physical pages + the
+# matching block table, run v7 on the paged layout, and compare to SDPA on the ORIGINAL dense KV. If
+# the gather indexing is wrong the shuffle guarantees a mismatch (a contiguous read would grab the
+# wrong tokens). FP16-in tolerance via tol_for("v6_splitkv") (v7 is the same precision class).
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("N_k", [4096, 8192, 8190])          # 8190 -> partial last page (non-multiple)
+@pytest.mark.parametrize("page_size", [128, 256])
+@pytest.mark.parametrize("causal", [False, True])
+def test_v7_paged_decode(causal, page_size, N_k, d):
+    torch.manual_seed(6)
+    B, H = 1, 8
+    q = torch.randn(B, H, 1,   d, device="cuda", dtype=torch.float32)   # decode: one query token
+    k = torch.randn(B, H, N_k, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H, N_k, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=6)
+    # Causal decode: place the single query at logical N_k-1 (q_offset = n_k - N_q) so it attends the
+    # WHOLE cache -> the result equals the non-causal full scan. (q_offset=0 with N_q=1 would attend
+    # only key 0 -- the degenerate case the harness fix exists to kill.) Either way the reference is
+    # SDPA over all keys.
+    q_offset = (n_k - 1) if causal else 0
+    out = paged_attention(q, k_pool, v_pool, block_table, page_size, n_k,
+                          causal=causal, q_offset=q_offset)
+    ref = sdpa_reference(q, k, v, causal=False)
+    atol, rtol = tol_for("v6_splitkv")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v7 regression: the square (prefill) shape must still reduce to num_splits=1 through the paged path,
+# exactly as v6 does for the contiguous case (base_blocks already fill the SMs / N_k < MIN_CHUNK -> 1
+# split, trivial merge). Tests both causal directions: at N_q=N_k with q_offset=0 the mask gj > gi is
+# the standard upper-left causal SDPA uses, so it compares directly to SDPA causal.
+@requires_cuda()
+@pytest.mark.parametrize("causal", [False, True])
+def test_v7_paged_square_reduces(causal):
+    torch.manual_seed(7)
+    B, H, N, d = 2, 8, 512, 64
+    page_size = 128
+    q = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H, N, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=7)
+    out = paged_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=causal, q_offset=0)
     ref = sdpa_reference(q, k, v, causal=causal)
     atol, rtol = tol_for("v6_splitkv")
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)

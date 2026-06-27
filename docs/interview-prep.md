@@ -515,3 +515,52 @@ pays once you're near the bandwidth wall, and on B300 bandwidth is *flat* vs B20
 bandwidth lever left. The honest caveat is that 12% is a single-stream number; at serving batch the grid
 fills itself, so I'm adding a batch sweep to measure the crossover. And I frame the result as an open,
 roofline-documented decode kernel vs FlashInfer/FlashMLA — not 'we beat FA4,' which is a prefill kernel."
+
+---
+
+## C10 — Paged KV + the measurement that earns the reorder (v7)
+
+*(v7 — paged KV gather + decode-harness fixes; the step that converts C9's central claim from predicted
+to measured. Code complete 2026-06-27; GPU gate pending.)*
+
+### Why a whole step for "plumbing"
+A real KV cache isn't contiguous — it's a pool of fixed-size pages plus a per-sequence **block table**
+mapping logical token positions to physical pages (vLLM's layout). To read logical key `j`:
+`lb = j/page_size; pb = block_table[b][lb]; off = j%page_size; pool[pb*page_size+off, h]`. v7 swaps v6's
+one contiguous-offset line for that lookup and **changes nothing else** — split-KV partial + LSE merge
+are byte-identical. It's the import surface my from-scratch mini-vLLM consumes, and the foundation v8–v11
+ride on. I gave it its own API (`paged_attention`, per-sequence table, vLLM-faithful) instead of
+overloading the dense `attention(q,k,v)`.
+
+### The roofline didn't move — on purpose
+`AI = 2/b = 1.0`, unchanged. The gather adds `O(N_k/page_size)` int32 index reads — ~0.1% of the KV
+bytes — so v7 is **byte-neutral and occupancy-neutral by construction.** That's the point: I deliberately
+did NOT attack the limiter this step. Isolating one variable means any wall-clock change is the gather's,
+and it sets up v8 (GQA, the actual occupancy lever) cleanly.
+
+### The deliverable is a measurement, not a speedup
+C9's load-bearing claim — "occupancy before bytes, but batch-conditional" — rested on a *code-trace*:
+`choose_splits` self-disables (`num_splits→1`) once `BH ≥ 2·SM` (=80 on T4), so batch alone should fill
+the SMs and drive `%HBM` from v6's 12% toward saturation. v7's **`--batch` sweep** (B=1→64, BH=8→512 at
+fixed N_k) *measures* that curve. If `%HBM` climbs past BH≈80–160, the crossover is real and the reorder
+is earned empirically. If it stays flat, the limiter is launch/merge (not grid occupancy) and v8.5
+(persistent-kernel merge) moves up — either way the data decides, which is the whole methodology.
+
+### The causal-decode bug I inherited and fixed
+v6's causal decode was degenerate: query at row 0 with mask `j > i` attends *only key 0* (SDPA
+short-circuits it, so the bench rows were meaningless). v7 adds a **query-offset** — place the decode
+query at logical `N_k−1`, so causal == the full-cache scan. Now the causal rows do real work and time
+≈ the non-causal rows. Small change, but it turns six garbage bench rows into honest ones.
+
+### How I prove the gather is correct without a profiler
+Scatter a dense KV into **shuffled** physical pages + the matching block table, run v7, compare to SDPA
+on the *original* dense KV. The shuffle is the test: a kernel that ignored the block table (read
+contiguously) would grab the wrong tokens and fail. Cases include a `page_size` that doesn't divide
+`N_k` (partial last page) and the square-shape `num_splits→1` regression.
+
+**Say-this:** "v7 is paged KV — the block-table indirection a real cache needs — carried on top of v6
+with one changed line and the rest identical, so it's byte- and occupancy-neutral by design. I didn't
+build it to go faster; I built it to *measure*. The batch sweep turns C9's predicted occupancy→bandwidth
+crossover into a curve, and the causal query-offset fixes a degenerate v6 bench. Correctness is proven by
+gathering through a shuffled pool and comparing to dense SDPA — if the kernel ignored the table it'd read
+the wrong tokens and fail."

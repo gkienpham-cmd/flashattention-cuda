@@ -24,6 +24,7 @@ _SOURCES = {
     "v4_fused": ["fused_attention.cu", "binding.cpp"],
     "v5_wmma": ["wmma_attention.cu", "binding.cpp"],
     "v6_splitkv": ["splitkv_attention.cu", "binding.cpp"],
+    "v7_paged": ["paged_attention.cu", "binding.cpp"],
 }
 
 

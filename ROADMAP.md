@@ -23,7 +23,7 @@ diagrams in [`docs/decode-replan.md`](docs/decode-replan.md); thesis in
 [`docs/b300-decode-research.md`](docs/b300-decode-research.md)):
 
 - `[x]` **v6 — split-KV decode (Flash-Decoding)** — fill the SMs at `N_q=1`; partial + LSE merge. **[BUILD]** · *DONE 2026-06-27: beats naive `N_q=1` 5.7–8.2×, SDPA 1.5–3.3×, but only ~12% HBM → occupancy-bound, not bandwidth-bound (a `BH=8` micro-bench artifact; batch-conditional).*
-- `[ ]` **v7 — paged KV gather + harness fixes** — block-table indirection; **`--batch` sweep** (measure the occupancy→bandwidth crossover, currently only predicted) + **`--decode` causal query-offset**. **[BUILD/RENT]** · occupancy-neutral plumbing.
+- `[~]` **v7 — paged KV gather + harness fixes** — block-table indirection; **`--batch` sweep** (measure the occupancy→bandwidth crossover, currently only predicted) + **`--decode` causal query-offset**. **[BUILD/RENT]** · occupancy-neutral plumbing. *Code complete + locally validated 2026-06-27 (per-seq block table, new `paged_attention` API, gate notebook ready); GPU gate + quiz pending — run `notebooks/v7_paged_gate.ipynb`.*
 - `[ ]` **v8 — GQA M-packing** ★ *the reorder* — pack `G` query heads into `M`: GEMV→`M=G` GEMM (tensor cores re-engage), KV read once, `AI = 2/b → 2G/b`. The occupancy lever, **promoted ahead of low-precision.** **[RENT A100/H100]**.
 - `[ ]` **v9 — FP8 KV cache** — first byte cut (`b:2→1`, `AI ×2`); accuracy delta vs FP16 documented. Bytes only pay now that v8 nears the wall. **[B300]** (H100 ok for correctness).
 - `[ ]` **v10 — NVFP4 + asymmetric precision** — *the headline:* `b≈0.56` (~3.5× fewer bytes); FP4 `P·V` + MXFP8 scores + hardware `exp2`. **[B300]**.

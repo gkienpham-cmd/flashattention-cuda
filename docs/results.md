@@ -388,3 +388,66 @@ harness causal-decode query offset above; **and a `--batch` sweep** to measure t
 says the lever after that is *occupancy* — **GQA M-packing (v8, `AI=2/b→2G/b`, GEMV→GEMM)** — before
 *bytes* (FP8 v9 / NVFP4 v10 on B300). Full reordered plan + math + diagrams:
 [`decode-replan.md`](decode-replan.md).
+
+## Step 7 — Paged KV gather + decode-harness fixes (v7)
+
+*Status: code complete + locally validated (2026-06-27); **GPU gate PENDING** (vast.ai T4 — run
+`notebooks/v7_paged_gate.ipynb`). The roofline prediction below is the recorded Step-1 deliverable;
+the measured tables are scaffolds to paste the gate-notebook output into, then flip this to DONE.*
+
+**Why this step:** v6's KV was contiguous; a real KV cache is a pool of fixed-size pages plus a
+per-sequence block table (vLLM's layout — the import surface a from-scratch mini-vLLM consumes). v7
+adds that **block-table gather** and two harness fixes that turn v6's *predicted* occupancy→bandwidth
+crossover into a *measured* one. **v7 deliberately does NOT attack the limiter** — it carries v6's
+split-KV + LSE merge byte-for-byte and isolates one new variable; it sets up v8 (GQA M-packing).
+
+**Roofline prediction (T4 sm_75, decode `N_q=1`, FP16 KV `b=2`) — UNCHANGED from v6:**
+`AI = 4·N_k·d / (2·N_k·d·b) = 2/b = 1.0` FLOP/byte, `N_k`-independent. The gather adds only
+`O(N_k/page_size)` int32 index reads — at page_size=16, N_k=8192, d=64 that's ~2 KB of indices vs ~2 MB
+of KV (~0.1%), so v7 is **byte-neutral and occupancy-neutral by construction**. Predicted limiter:
+**HBM** (the floor is v6's); the wall-clock *gap* to that floor is the occupancy story the `--batch`
+sweep measures. (Caveat, recorded per `decode-replan §7`: `roofline/model.py` has no schedule term —
+it has been magnitude-wrong 5 straight steps — so treat its %HBM as an upper bound of 100% and read
+the 100%→measured gap as the deliverable, not the model's number.)
+
+**THE prediction v7 must test (the crossover):** `choose_splits` collapses `num_splits→1` once
+`base_blocks = BH ≥ 2·num_sm` (= 80 on the T4), so split-KV self-disables and batch *alone* fills the
+SMs. Predicted `%HBM` at fixed `N_k=8192`:
+
+| BH (B @ H=8) | regime | predicted %HBM |
+|---|---|---|
+| 8 (B=1)    | split-KV active, ~2 blocks/SM (v6's corner) | ~12% |
+| 64 (B=8)   | nearing the self-disable threshold          | climbing |
+| 80 (B=10)  | `num_splits→1`; one block per (b,h)         | ~30–50% |
+| 160 (B=20) | ~4 blocks/SM, full Turing occupancy         | toward ceiling |
+| 512 (B=64) | 12.8 blocks/SM, well past saturation        | 60–80%+ |
+
+**Measured — correctness (Gate 1 of 2):** *PENDING — `pytest -k "v7_paged or v6_splitkv"`.* Expect
+v7's paged cases (shuffled-pool gather; `N_q=1`, `N_k ∈ {4096,8192,8190}`, page_size ∈ {128,256}, d
+64/128, causal both ways via the query-offset; the `num_splits→1` square regression) **and** all of
+v6's cases (v6 is untouched) green at tol 2e-2. *(fill: "N/N correctness vs SDPA".)*
+
+**Measured — `--batch` crossover sweep (the crown jewel), N_k=8192:** *PENDING — paste from gate cell 6.*
+
+| B | BH | shape | µs/tok (d=64) | %HBM (d=64) | µs/tok (d=128) | %HBM (d=128) |
+|---|---|---|---|---|---|---|
+| 1  | 8   | … | … | … | … | … |
+| 8  | 64  | … | … | … | … | … |
+| 16 | 128 | … | … | … | … | … |
+| 32 | 256 | … | … | … | … | … |
+| 64 | 512 | … | … | … | … | … |
+
+**The question this answers (fill after the run):** *did `%HBM` climb from ~12% toward saturation as
+BH passed ~80–160 — i.e. does the data confirm "occupancy before bytes"?* If yes, the crossover is now
+**measured**, not predicted, and `diagrams/decode-roofline-crossover.svg` gets upgraded accordingly. If
+`%HBM` stays flat (e.g. the merge or two-kernel launch dominates even at large BH), that is itself the
+finding — the limiter is launch/merge, not grid occupancy, and v8.5 (single-/persistent-kernel merge)
+moves up.
+
+**Measured — causal decode now meaningful:** *PENDING.* With the query-offset (`q_offset = N_k − 1`)
+the causal-decode rows do full-cache work (≈ the non-causal latency), replacing v6's degenerate
+0.03–0.28× `vs sdpa`. Expect causal ≈ non-causal per row.
+
+**Paging overhead check (prediction):** v7's µs/tok should match v6's at B=1 within noise (the gather
+is byte-neutral); a measurable slowdown would mean the per-key block-table lookup is not L1/L2-resident
+as assumed — a finding to record, not a tolerance to widen.
