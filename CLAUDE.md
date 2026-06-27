@@ -214,6 +214,24 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   `notebooks/v8_gqa_gate.ipynb` all landed. **Author machine can't compile `.cu`** → build + correctness
   (Gate 1) + bench + quiz (Gate 2) are the outstanding GPU work. See `results.md`/`decisions.md` Step 8,
   `interview-prep.md` C11, `docs/v8-kickoff.md`.
+- **Step 8.6 (v8.6 hide the reduction latency, `kernels/v8_gqa_occ/` + `kernels/v8_gqa_ilp/`)** — **CODE
+  COMPLETE, T4 gate PENDING (2026-06-28).** v8.5's null pinned the decode floor to the **per-key warp-shuffle
+  reduction + serial online-softmax recurrence** (compute-latency-bound at ~10% HBM, NOT load/bytes). v8.6 is
+  a **2-arm single-variable ablation** to *hide* that latency, both CUDA-core/T4, both fork Cut 1 changing ONE
+  thing: **Arm 1 `v8_gqa_occ`** = FP16 smem single-buffer (16 KB → **4 blocks/SM**, 2× resident warps; the
+  distinction from v8.5 is it spends the freed smem on occupancy, not a 2nd buffer) and **Arm 2 `v8_gqa_ilp`**
+  = **KU=4-unrolled key loop** (compute 4 independent partials → pipeline 4 shfl reductions → 4 serial softmax
+  updates; FP32 smem kept → 2 blocks/SM, ILP the lone variable; a monotone per-tile `c_lim` replaces Cut 1's
+  per-key break, keeping the all-masked edge correct). float2/half2 vectorization REJECTED (lane-strided layout
+  non-contiguous; loads already shown irrelevant by v8.5). **Roofline is BLIND** (AI=2G/b, floor, limiter
+  identical to Cut 1 — confirmed on T4 arch G=8: AI=8.0, HBM-bound, 0.105 ms; a *schedule* claim the model
+  can't express). **Prediction recorded BEFORE the run: occupancy (Arm 1) > ILP (Arm 2)** — TLP hides the whole
+  serial chain, ILP only the reduction sub-part; **counter-prediction (the prize): if BOTH null → the floor is
+  the serial recurrence itself → score-stationary redesign (a future v8.7) is the real fix, and v9 FP8 stays
+  premature.** Wired (load/dispatch/harness/tests, both `(7,0)`, tol 2e-2, added to `GQA_BACKENDS`); gate
+  notebook `notebooks/v8_6_reduction_gate.ipynb` (fork of v8.5's, builds both arms, `-k "v8_gqa_occ or
+  v8_gqa_ilp or v8_gqa"`, 3-way A/B G-sweep + reclaim-at-batch). **Outstanding GPU work:** run the gate (T4),
+  fill the measured A/B, then quiz. See `results.md`/`decisions.md` Step 8.6, `interview-prep.md` C11.5.
 
 ## Next steps
 

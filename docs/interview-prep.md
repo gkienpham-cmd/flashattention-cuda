@@ -761,3 +761,39 @@ SDPA past B=8. **Say-this:** "I didn't just measure that tensor cores are slower
 core at it can't help. The probe was the cheap experiment that let me kill the expensive kernel with evidence
 instead of a hunch. v8's deliverable is the CUDA-core M-packing; the tensor-core path is a documented,
 two-architecture dead end — and knowing *why* it's dead is the result."
+
+## C11.5 — Hiding the reduction latency: occupancy vs ILP (v8.5 → v8.6)
+
+**The chain that got me here.** Three measurements pinned the decode floor: v8 Cut 1 wins (M-packing, 8.6×)
+but sits at ~10% HBM; Cut 2 (tensor cores) lost and *didn't scale* T4→A100; v8.5 (double-buffer) was a clean
+null — prefetching the KV load moved nothing. Triangulated, the kernel is **compute-latency-bound at ~10%
+HBM**, and the latency is the **per-key warp-shuffle reduction + serial online-softmax recurrence**: one warp
+runs a 5-deep `__shfl_xor` butterfly per key, chained into a dependent softmax update, with nothing to
+overlap it. v8.5 ruled OUT memory; v8.6 asks whether the compute latency is **hideable**.
+
+**Why an ablation, and what each arm isolates.** The user-scoped levers are all about *hiding* (not removing)
+the latency, so I split them so any gain is attributable:
+- **Arm 1 — occupancy (`v8_gqa_occ`):** stage KV as FP16 smem (16 KB single buffer) → **4 blocks/SM** (Cut 1
+  is 32 KB FP32 → 2). The subtlety that makes this *not* a re-run of v8.5: v8.5 also halved smem to FP16, but
+  *spent* the savings on a 2nd buffer and stayed at 2 blocks/SM. Same half tile, opposite use — v8.5 bought
+  overlap (null), Arm 1 buys **occupancy**. Doubling resident warps hides the whole serial chain with TLP.
+- **Arm 2 — key-ILP (`v8_gqa_ilp`):** unroll the key loop KU=4 — compute 4 independent partials, fire their
+  4 reductions back-to-back so the independent shfl chains pipeline, then 4 sequential softmax updates. FP32
+  smem kept (2 blocks/SM) so ILP is the lone variable. Note: I *rejected* float2/half2 vectorization here
+  because the lane-strided layout (`lane + 32·e`) isn't contiguous — and v8.5 already showed loads aren't the
+  wall, so a wider load is a near-null control, not a lever.
+
+**The prediction I'm committing to before the GPU run.** The byte-roofline is **blind** — same AI=2G/b, same
+floor, same limiter for both arms (I verified it on the T4 arch: G=8 → AI=8.0, HBM-bound, 0.105 ms). So
+v8.6's claim is purely about the *schedule*, which the model can't represent. Mechanistically I predict
+**occupancy > ILP**: more warps hide the *entire* chain (reduction + exp + softmax update) via thread-level
+parallelism, while ILP only overlaps the *reduction* sub-part and leaves the serial softmax recurrence
+exposed. **The counter-prediction is the real prize:** if BOTH are null, the floor is the serial
+online-softmax recurrence itself — which neither occupancy nor ILP can touch — and the only remaining lever
+is a **score-stationary redesign** (one key per lane → no per-key cross-lane reduction) that *removes* the
+wall instead of hiding it (a future v8.7). Either way, v9 FP8 stays premature until a kernel is actually
+bandwidth-bound. **Say-this:** "By v8.6 I'd localized the decode floor to a single serial inner loop and ran
+a two-arm ablation — occupancy vs ILP — to test whether that latency is hideable. I committed to occupancy
+being the stronger lever and to a falsifiable counter-prediction: if neither moves %HBM, the bottleneck is
+the online-softmax recurrence, which means the fix is an algorithmic relayout, not a knob. That's the
+discipline — isolate one variable, predict the mechanism, and let the null result point at the next kernel."

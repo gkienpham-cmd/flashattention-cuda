@@ -644,3 +644,38 @@ both build/run on Ampere; 38/38 correctness on A100).
 **Claim discipline (carried from v7):** frame as "an open, roofline-documented decode kernel measured vs
 FlashInfer/FlashMLA"; op-level ~2.9× single-token decode, NOT end-to-end, NOT "beat FA4" (FA4's decode
 path is upstreamed). See `decode-replan §5`, `v8-kickoff.md`.
+
+## Step 8.6 — attack the reduction wall: occupancy vs key-ILP (v8_gqa_occ, v8_gqa_ilp)
+
+**Bottleneck (measured, not predicted):** after v8.5's null result (double-buffering the KV load moved
+nothing), the decode floor is pinned to the **per-key warp-shuffle reduction + serial online-softmax
+recurrence** — the kernel is *compute-latency-bound at ~10% HBM*, not memory- or compute-throughput-bound.
+The latency is exposed because one warp's inner loop is a serial chain (`__shfl_xor` butterfly → dependent
+softmax update) with too few independent warps (~2 blocks/SM) to hide it.
+
+**Options to hide that latency (the user-scoped lever set — *hide*, not *remove*):**
+1. **Occupancy** — halve smem (FP16 stage, single buffer: 16 KB → 4 blocks/SM) to double resident warps
+   (TLP hides the whole chain). → **Arm 1, `v8_gqa_occ`.**
+2. **Key-ILP** — unroll the key loop (KU=4) so independent reduction chains pipeline. → **Arm 2,
+   `v8_gqa_ilp`** (FP32 smem kept, 2 blocks/SM, so ILP is the lone variable).
+3. **Vectorized loads** — rejected: the lane-strided dot-product layout (`lane + 32·e`) is non-contiguous,
+   so float2/half2 don't apply; and v8.5 already showed loads aren't the wall.
+4. **Score-stationary rewrite** (one key per lane → no per-key cross-lane reduction) — *removes* the wall
+   but is a full redesign; **deferred** to a future v8.7, gated on whether 1/2 move the needle first.
+
+**Choice:** a **2-arm single-variable ablation** (Arms 1 & 2), CUDA-core / T4-cheap, both forking Cut 1.
+Matches the arc's discipline (Cut 2 and v8.5 were each clean single-variable runs) and *attributes* any
+gain to occupancy vs ILP rather than confounding them in one kernel.
+
+**Prediction (recorded before measuring):** the byte-roofline is **blind** (AI=2G/b, floor, limiter
+identical to Cut 1 for both arms — confirmed on the T4 arch). Mechanistically **occupancy > ILP** (TLP
+hides the entire serial chain; ILP overlaps only the reductions, leaving the softmax recurrence exposed).
+**If both null → the floor is the serial recurrence itself** → score-stationary redesign is the real fix
+and v9 FP8 stays premature.
+
+**What changes on another arch:** more warps/SM and larger register files (A100/H100) raise the occupancy
+lever's ceiling (Arm 1 should help more there); the ILP lever is arch-insensitive (it's instruction-level).
+On a genuinely bandwidth-bound regime (N_k past L2, or large batch saturating HBM) the whole question flips
+and bytes (v9) finally pay — neither holds on this T4 micro-bench.
+
+**Measured:** *pending T4 run-of-record (`notebooks/v8_6_reduction_gate.ipynb`).*

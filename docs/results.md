@@ -810,3 +810,38 @@ micro-bench either — bytes aren't the bottleneck. To make memory the wall you'
 FP8/NVFP4's real value is then KV-cache *capacity* + accuracy (RMSE vs FP64), not micro-bench speedup.
 (Reclaim-at-batch unchanged: db beats SDPA 6–12× across B=1→64, same as Cut 1 — double-buffering breaks
 nothing, just doesn't help.)
+
+## Step 8.6 — attack the reduction wall: occupancy vs key-ILP (v8_gqa_occ, v8_gqa_ilp)
+
+*Roofline-first recorded; T4 gate pending (`notebooks/v8_6_reduction_gate.ipynb`). v8.5 isolated the wall
+to the **per-key warp-shuffle reduction + serial online-softmax recurrence** (not the KV-load latency).
+v8.6 tries to **hide** that compute latency — the only lever left before bytes (v9) can ever pay.*
+
+**Why:** v8.5 proved the decode kernel is **compute-latency-bound at ~10% HBM** — one warp's inner loop
+runs a 5-deep `__shfl_xor` butterfly per key (~30–40 cyc exposed) chained into a serial softmax update,
+with nothing to overlap it. v8.6 is a **2-arm single-variable ablation** (both CUDA-core / T4, both fork
+Cut 1, each changing exactly one thing):
+- **Arm 1 — occupancy (`v8_gqa_occ`):** stage KV as **FP16 smem** (16 KB single buffer) → **4 blocks/SM**
+  (Cut 1 is 32 KB FP32 → 2). 2× resident warps hide the latency via thread-level parallelism. *(Distinct
+  from v8.5, which also used half smem but spent it on a 2nd buffer and stayed at 2 blocks/SM.)*
+- **Arm 2 — key-ILP (`v8_gqa_ilp`):** **KU=4-unrolled key loop** — compute 4 independent dot-product
+  partials, issue their 4 reductions back-to-back so the independent shfl chains pipeline, then 4
+  sequential softmax updates. FP32 smem kept → 2 blocks/SM unchanged (ILP is the only variable).
+
+**Roofline prediction (the gate — the model is BLIND here):** both arms keep identical bytes + FLOPs, so
+`AI=2G/b`, the HBM floor, and the limiter are **identical to Cut 1** (verified on the T4 arch: G=8,
+N_k=8192, d=128 → **AI=8.0, HBM-bound, floor 0.105 ms**, far below ridge 203). The byte-roofline cannot
+distinguish Cut 1 from either arm — so v8.6's prediction is a **scheduling** claim the model can't express,
+and the measured µs/tok + %HBM movement *is* the gap between the byte-model and the real warp schedule.
+
+**Mechanistic prediction (the real hypothesis under test):** **Arm 1 (occupancy) is the stronger lever** —
+doubling resident warps hides the *entire* serial chain (reduction + exp + softmax update) with TLP,
+independent of the recurrence. **Arm 2 (ILP) is weaker** — it overlaps only the independent *reduction*
+chains, leaving the serial softmax recurrence (`m_cur/l_cur/o_reg`) exposed. **Counter-prediction (equally a
+finding): if BOTH are null → the floor is the serial online-softmax recurrence itself**, which neither
+occupancy nor ILP can hide → the real fix is a parallel-across-keys (score-stationary) redesign that
+*removes* the per-key reduction (a future "v8.7"), and v9 FP8 stays premature until then.
+
+**Measured:** *pending T4 run-of-record (`notebooks/v8_6_reduction_gate.ipynb`).* Fill the per-arm/per-G A/B
+vs Cut 1 (µs/tok + %HBM) and the reclaim-at-batch rows, then state which lever (if any) moved %HBM toward
+the floor and whether the residual floor is the serial recurrence.

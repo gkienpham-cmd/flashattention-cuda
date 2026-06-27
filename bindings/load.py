@@ -28,6 +28,8 @@ _SOURCES = {
     "v8_gqa": ["gqa_attention.cu", "binding.cpp"],
     "v8_gqa_tc": ["gqa_tc_attention.cu", "binding.cpp"],
     "v8_gqa_db": ["gqa_db_attention.cu", "binding.cpp"],
+    "v8_gqa_occ": ["gqa_occ_attention.cu", "binding.cpp"],
+    "v8_gqa_ilp": ["gqa_ilp_attention.cu", "binding.cpp"],
 }
 
 

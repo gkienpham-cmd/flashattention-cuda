@@ -27,6 +27,10 @@ _MIN_CAPABILITY = {
                           # Cut 2b's mma.m16n8k16 + cp.async peak version bumps a sibling to (8, 0).
     "v8_gqa_db": (7, 0),  # v8.5: GQA M-packing + portable double-buffered KV pipeline (sm_75/T4; ordinary
                           # ld.global prefetch, NOT cp.async). The schedule pass toward bandwidth-bound.
+    "v8_gqa_occ": (7, 0), # v8.6 Arm 1: GQA M-packing + HALF-resident smem (16 KB -> 4 blocks/SM). The
+                          # occupancy lever to hide the reduction latency (single-variable vs Cut 1).
+    "v8_gqa_ilp": (7, 0), # v8.6 Arm 2: GQA M-packing + KU=4-unrolled key loop (pipeline independent shfl
+                          # reductions). The ILP lever (FP32 smem, 2 blocks/SM unchanged) vs Cut 1.
 }
 
 
