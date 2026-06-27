@@ -162,6 +162,19 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   Causal query-offset fix works (causal µs/tok ≈ non-causal). Apparent ~15–25% paging overhead vs v6 at
   B=1 (dependent block-table load), cross-session clocks unverified. See `results.md`/`decisions.md`
   Step 7, `interview-prep.md` C10, `decode-replan.md` §2.1/§7 (corrected).
+- **Step 7 deep-research close-out (2026-06-27)** — DONE: 35-agent pass (6 data-forensics + 7 web-research
+  + 7 adversarial claims, 2-of-3 gate) → [`docs/v7-deep-research.md`](docs/v7-deep-research.md) +
+  [`docs/v8-kickoff.md`](docs/v8-kickoff.md) + 2 new diagrams. **Per-CTA-bound + GQA-before-bytes both
+  survive 0/3 refute.** Three settled: (1) **%HBM is fp16-correct, NOT 2× understated** — the kernel casts
+  K/V to half (`paged_attention.cu:274-276`); `precision=fp32` is a cosmetic header label (the "2×
+  undercount" claim died 3/3); (2) **SDPA overtakes v7 by B=8** (v7 SM-saturated/flat, SDPA amortizes launch
+  ~4.5×) → v8 gains a **"reclaim-batch"** deliverable; (3) causal `vs_sdpa` is a top-left-mask artifact (v7
+  scans all N_k, ref ~1 key), correctness test already honest. v8 **tensor-core gate: M≥16** → G=8 needs
+  pad-to-16 / multi-group / CUDA-core-QK (**the ablation**); target **sm_80 (A100)**. Frame vs
+  **FlashInfer/FlashMLA, NOT "beat FA4"** — FA4's decode path is now *upstreamed* (Modal PRs, `pack_GQA`
+  2.92×). B300 confirmed: HBM flat **8 TB/s**, 288 GB, NVFP4 15 PF dense, exp 2× (10.7 TeraExp/s), `sm_103`.
+  Cleanup TODOs: bottom-right causal-mask ref; stale "split-KV fills SMs" comments in
+  `paged_attention.cu:221-226` + `roofline/model.py:96-99`.
 
 ## Next steps
 
@@ -169,17 +182,24 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → v9 FP8 KV → v10 NVFP4 + asymmetric
 precision (headline) → v11 MLA/speculative.
 
-1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — DONE (both gates, 2026-06-27).** Carry-forward
-   cleanups (not gating): upgrade `diagrams/decode-roofline-crossover.svg` (predicted arc → measured-flat
-   line); a fully-honest causal `vs sdpa` needs the reference built with a bottom-right mask; bare-metal
-   pipe-util to confirm the smem-residency (2 blocks/SM) story directly.
+1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — DONE (both gates, 2026-06-27).** Deep-research
+   close-out applied (`docs/v7-deep-research.md` + `docs/v8-kickoff.md`); `diagrams/decode-roofline-crossover.svg`
+   **refreshed** to the measured-flat line (+ new `v7-vs-sdpa-batch-crossover.svg`, `per-cta-limiter-anatomy.svg`),
+   and the stale "split-KV fills the SMs" comments were corrected in `paged_attention.cu` + `roofline/model.py`.
+   Carry-forward cleanups (not gating, → v8's harness): a fully-honest causal `vs sdpa` needs the reference
+   built with a bottom-right mask; bare-metal pipe-util to confirm the smem-residency (2 blocks/SM) story directly.
 2. **Step 8 — GQA M-packing (the reorder, NOW the per-CTA-efficiency lever):** pack the `G` query heads
    of a GQA group into the CTA's `M` dim → GEMV becomes an `M=G` GEMM (tensor cores re-engage), KV read
    once, `AI = 2/b → 2G/b`, **and G compute-warps/block** (the fix v7 proved is needed). Promoted ahead
    of low-precision because v7 measured the kernel is per-CTA-bound at **all** batch sizes (flat ~10–12%
    HBM, BH=8→512), so cutting bytes is premature regardless of batch. `[RENT]` A100/H100. Then bytes: v9
    FP8 KV, v10 NVFP4 + asymmetric precision `[B300]`. (Diagrams: `gqa-mpacking.svg`,
-   `decode-roofline-crossover.svg`.)
+   `decode-roofline-crossover.svg`, `per-cta-limiter-anatomy.svg`.) **Refinements (deep-research, 2026-06-27;
+   full starter in [`docs/v8-kickoff.md`](docs/v8-kickoff.md)):** tensor cores engage only at **M≥16** → G=8
+   needs pad-to-16 / multi-group-pack / CUDA-core-QK (**the v8 ablation**); sweep `G∈{1,2,4,8,16,32}`; target
+   **sm_80 (A100)** (m16n8k16 + cp.async, not Turing WMMA); **task 1 = the `AI=2G/b` roofline extension**;
+   comparators FlashInfer + XQA (M-packing SOTA) vs vLLM PagedAttention v2 (CUDA-core floor); new deliverable
+   **reclaim SDPA at batch B≥8**.
 3. **Finish Step 5** — prose close-out is backfilled (results/decisions/status/C7.5, 2026-06-27); the
    one remaining item is the **measurement**: execute `notebooks/step5_run_of_record.ipynb` (it's
    unexecuted — no saved outputs) and fill the prefill speedup table (v5÷v4, v5÷SDPA, distance-to-floor)

@@ -1,0 +1,73 @@
+<svg width="100%" viewBox="0 0 700 430" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Why v7 decode is per-CTA-bound — 2 resident blocks per SM, 1 of 8 warps active, batch only adds waves</title>
+<desc>Anatomy of the v7 decode limiter on a T4 SM. Shared memory of 32 KB per block (sK 16 KB plus sV 16 KB) against the SM's 64 KB budget caps residency at 2 resident blocks per SM, regardless of batch or split count. Inside each block, 256 threads form 8 warps; all 8 cooperatively load the KV tile into shared memory, but at N_q=1 only warp 0 runs the score and PV loop — the other 7 idle. So roughly 2 active compute-warps per SM cannot hide the per-key warp-shuffle reduction latency. Adding batch supplies more blocks, but they run as serial waves over the same 2-blocks-per-SM cap, so wall-clock grows linearly and the achieved HBM fraction stays flat near 10 to 12 percent. v8 GQA M-packing fixes this by packing G query heads into the M dimension, lighting up G compute-warps and turning the GEMV into a GEMM with KV read once.</desc>
+<rect x="0" y="0" width="700" height="430" fill="#ffffff"/>
+<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">v7 decode: the limiter is inside the CTA</text>
+<text x="30" y="48" font-size="11" fill="#888780">T4 SM — 64 KB smem · 32 warp slots · the wall is per-block, so batch can't cure it</text>
+
+<!-- SM box with 2 resident CTAs -->
+<rect x="30" y="62" width="380" height="320" rx="6" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="1"/>
+<text x="40" y="80" font-size="12" font-weight="600" fill="#5F5E5A">1 SM · only 2 blocks resident (32 KB each / 64 KB)</text>
+
+<!-- CTA 1 -->
+<rect x="44" y="92" width="352" height="128" rx="5" fill="#ffffff" stroke="#888780" stroke-width="0.8"/>
+<text x="54" y="109" font-size="11" font-weight="600" fill="#2C2C2A">block 0 — 256 threads = 8 warps</text>
+<!-- warp 0 active -->
+<rect x="54" y="118" width="40" height="34" rx="3" fill="#185FA5"/>
+<text x="74" y="139" font-size="10" fill="#ffffff" text-anchor="middle">w0</text>
+<!-- warps 1-7 idle -->
+<rect x="98" y="118" width="40" height="34" rx="3" fill="#E3E1DA"/><text x="118" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w1</text>
+<rect x="142" y="118" width="40" height="34" rx="3" fill="#E3E1DA"/><text x="162" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w2</text>
+<rect x="186" y="118" width="40" height="34" rx="3" fill="#E3E1DA"/><text x="206" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w3</text>
+<rect x="230" y="118" width="40" height="34" rx="3" fill="#E3E1DA"/><text x="250" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w4</text>
+<rect x="274" y="118" width="40" height="34" rx="3" fill="#E3E1DA"/><text x="294" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w5</text>
+<rect x="318" y="118" width="40" height="34" rx="3" fill="#E3E1DA"/><text x="338" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w6</text>
+<rect x="362" y="118" width="26" height="34" rx="3" fill="#E3E1DA"/><text x="375" y="139" font-size="10" fill="#A6A39A" text-anchor="middle">w7</text>
+<text x="54" y="172" font-size="10" fill="#5F5E5A">all 8 warps: cooperative KV load → smem</text>
+<text x="54" y="186" font-size="10" fill="#185FA5">only w0: score + P·V loop (N_q=1)</text>
+<text x="54" y="200" font-size="10" fill="#993C1D">w1–w7: idle after the load</text>
+<!-- smem tag -->
+<rect x="54" y="206" width="334" height="8" rx="2" fill="#FAECE7" stroke="#D85A30" stroke-width="0.4"/>
+<text x="221" y="213" font-size="8" fill="#993C1D" text-anchor="middle">sK 16 KB + sV 16 KB = 32 KB smem</text>
+
+<!-- CTA 2 (faded duplicate) -->
+<rect x="44" y="232" width="352" height="60" rx="5" fill="#ffffff" stroke="#888780" stroke-width="0.8" opacity="0.85"/>
+<text x="54" y="249" font-size="11" font-weight="600" fill="#2C2C2A">block 1 — same shape (1/8 warps active)</text>
+<rect x="54" y="258" width="40" height="24" rx="3" fill="#185FA5"/><text x="74" y="274" font-size="9" fill="#ffffff" text-anchor="middle">w0</text>
+<rect x="98" y="258" width="290" height="24" rx="3" fill="#E3E1DA"/><text x="243" y="274" font-size="9" fill="#A6A39A" text-anchor="middle">w1–w7 idle</text>
+
+<!-- waves -->
+<text x="44" y="318" font-size="11" font-weight="600" fill="#5F5E5A">more batch → more blocks → serial WAVES (cap stays 2/SM):</text>
+<rect x="44" y="326" width="40" height="14" rx="2" fill="#C7D8E8"/><rect x="88" y="326" width="40" height="14" rx="2" fill="#C7D8E8"/>
+<text x="134" y="337" font-size="10" fill="#888780">wave 1</text>
+<rect x="190" y="326" width="40" height="14" rx="2" fill="#D5E8DF"/><rect x="234" y="326" width="40" height="14" rx="2" fill="#D5E8DF"/>
+<text x="280" y="337" font-size="10" fill="#888780">wave 2 …</text>
+<text x="44" y="360" font-size="11" fill="#993C1D">linear time → %HBM FLAT ~10–12% at every batch</text>
+<text x="44" y="374" font-size="10" fill="#888780">(measured: BH=8→512, no climb)</text>
+
+<!-- arrow to v8 -->
+<line x1="416" y1="220" x2="452" y2="220" stroke="#534AB7" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- v8 panel -->
+<rect x="456" y="62" width="220" height="320" rx="6" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
+<text x="466" y="82" font-size="13" font-weight="600" fill="#3C3489">v8 — GQA M-packing</text>
+<text x="466" y="100" font-size="11" fill="#5F5E5A">pack G query heads into M:</text>
+<!-- packed block -->
+<rect x="466" y="110" width="200" height="120" rx="5" fill="#ffffff" stroke="#9B92D8" stroke-width="0.8"/>
+<text x="476" y="127" font-size="11" font-weight="600" fill="#2C2C2A">1 block · M=G rows</text>
+<rect x="476" y="134" width="40" height="30" rx="3" fill="#534AB7"/><text x="496" y="153" font-size="9" fill="#ffffff" text-anchor="middle">w0</text>
+<rect x="520" y="134" width="40" height="30" rx="3" fill="#534AB7"/><text x="540" y="153" font-size="9" fill="#ffffff" text-anchor="middle">w1</text>
+<rect x="564" y="134" width="40" height="30" rx="3" fill="#534AB7"/><text x="584" y="153" font-size="9" fill="#ffffff" text-anchor="middle">…</text>
+<rect x="608" y="134" width="48" height="30" rx="3" fill="#534AB7"/><text x="632" y="153" font-size="9" fill="#ffffff" text-anchor="middle">w(G)</text>
+<text x="476" y="184" font-size="10" fill="#3C3489">G compute-warps active (not 1)</text>
+<text x="476" y="198" font-size="10" fill="#3C3489">GEMV → M=G GEMM (tensor cores)</text>
+<text x="476" y="212" font-size="10" fill="#3C3489">KV read ONCE (AI = 2/b → 2G/b)</text>
+<text x="466" y="252" font-size="11" font-weight="500" fill="#2C2C2A">Gate: tensor cores need M≥16</text>
+<text x="466" y="268" font-size="10" fill="#5F5E5A">G=8 &lt; 16 → pad-to-16 / pack 2</text>
+<text x="466" y="282" font-size="10" fill="#5F5E5A">groups / CUDA-core QK — the</text>
+<text x="466" y="296" font-size="10" fill="#5F5E5A">v8 ablation. Target sm_80 (A100).</text>
+<text x="466" y="324" font-size="11" font-weight="600" fill="#3C3489">fixes the per-CTA wall</text>
+<text x="466" y="338" font-size="10" fill="#5F5E5A">directly — not "fills the SMs"</text>
+<text x="466" y="352" font-size="10" fill="#5F5E5A">(batch already over-fills them)</text>
+</svg>

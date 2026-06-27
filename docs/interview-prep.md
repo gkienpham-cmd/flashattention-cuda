@@ -636,3 +636,19 @@ M-packing — M=G turns the GEMV into a GEMM and lights up G warps — and it ki
 batch' hedge: I'm 8× from the bandwidth wall at every batch size, so cutting bytes is premature
 regardless. Correctness is a shuffled-pool gather vs dense SDPA — ignore the block table and you read the
 wrong tokens and fail."
+
+### Close-out addenda (deep-research, 2026-06-27)
+- **The %HBM number is honest (fp16).** A skeptic asks: the bench prints `precision=fp32` and allocates fp32
+  K/V — isn't your 10–12% really 25%? No. The kernel *casts to half* before reading
+  (`paged_attention.cu:274–276`); every HBM KV load is `__half` = 2 bytes, and the denominator uses 2 bytes/
+  elem, so it matches what the kernel actually streams. The header is a stale input-contract label, not
+  bytes-on-the-wire. (The "2× undercount" claim died 3/3 in the adversarial pass.)
+- **SDPA beats me at batch — and I know exactly why.** I win only at B=1 (2.65×). By B=8 torch SDPA overtakes
+  (~0.5×). It's not that I got slower — my per-token cost is *flat* (I'm SM-saturated at B=1 via 10 splits =
+  80 blocks = the 2-blocks/SM cap), while SDPA's per-token cost collapses ~4.5× as batch fills its grid. At
+  B=1 I win *because* SDPA under-fills the grid even worse than my split-KV does. That serving regime (B≥8) is
+  what v8 has to reclaim.
+- **The tensor-core gate for v8.** Packing G heads into M only reaches tensor cores at **M≥16** (FlashInfer:
+  "tensor core instruction m minimum rows is 16"). Llama-3-70B has G=8 < 16, so a single group needs padding
+  to 16 (half row-util), or pack two groups, or keep CUDA-core scoring for QK. That trade is the v8 ablation,
+  and it's why I target **sm_80 (A100)** — the m16n8k16 MMA atom + cp.async, not Turing WMMA.

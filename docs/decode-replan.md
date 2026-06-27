@@ -124,6 +124,17 @@ the batch alone fills the machine. The crossover **[verified by code-trace]**:
 > it's per-CTA-bound at all batch. The accurate framing is **GEMV→GEMM (per-CTA efficiency) before bytes,
 > at all batch sizes**. GQA M-packing is still the right lead.
 
+> **✅ ADVERSARIALLY CONFIRMED (2026-06-27, 0/3 refute).** Three independent verifiers reproduced all 10
+> batch-sweep `%HBM` values (<0.1 pp from `harness.py:174`) and the 32 KB→2-blocks/SM + 1-of-8-warps cause
+> from source — this subsection's correction is now load-bearing fact, not hypothesis. New supporting finding:
+> **SDPA overtakes v7 by B=8** (v7 SM-saturated → flat; SDPA amortizes launch ~4.5×) — independent
+> confirmation of per-CTA inefficiency, and the deliverable v8 adds: *reclaim the batch regime*. The
+> production literature (FlashInfer / TRT-LLM XQA / FlashMLA) confirms M-packing and split-KV are
+> **orthogonal** (grid = batch × kv_head × split) — keep both; do NOT drop split-KV when adding packing.
+> Also resolved: the headline `%HBM` is **fp16-correct** (kernel casts K/V to half; the `precision=fp32`
+> header is cosmetic), so the per-CTA story needs no dtype caveat. Full cited synthesis:
+> [`v7-deep-research.md`](v7-deep-research.md).
+
 ---
 
 ## 3. The decode roofline (the math the paper rests on)
@@ -225,6 +236,14 @@ BF16 prefill** — that advantage is commoditized.
    SGLang (Apr 2026); the FlashInfer sm103 FMHA deadlock (#2939) was **fixed**. **Only SageAttention**
    remains consumer-only (RTX 5090 / sm120). **[verified — refutes `b300-decode-research.md §6`'s
    "immature/deadlock" hedge, now partly stale].**
+
+> **Update (2026-06-27, v7 close-out — the `fa4-no-decode` claim died 3/3 refute):** "acquiring" is now
+> too weak — the decode path is **MERGED** into Dao-AILab/flash-attention: Modal upstreamed split-KV (#1940),
+> single-query (#1993), paged (#1999/#2104), FP8 (#2109), and **GQA-packing #2186 (2.92× single-token
+> decode)**. So FA4 already carries the split-KV + GQA + FP8 levers v6–v9 build — which makes the "don't claim
+> to beat FA4" discipline *more* important (it's a moving target), and reinforces the FlashInfer/FlashMLA
+> comparator framing below. (v8 comparators: FlashInfer `use_tensor_cores=True` + TRT-LLM XQA as M-packing
+> SOTA; vLLM PagedAttention v2 as the no-M-packing CUDA-core floor.)
 
 > **The defensible contribution, stated honestly:** *not* "we beat FA4." Rather — **an open,
 > roofline-documented, asymmetric-precision FP4 split-KV decode kernel on B300, measured against the

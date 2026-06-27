@@ -1,0 +1,50 @@
+<svg width="100%" viewBox="0 0 700 460" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v7 vs torch SDPA across batch — v7 wins only at B=1, SDPA overtakes by B=8 (decode, N_k=8192, T4)</title>
+<desc>v7 speedup over torch SDPA (ratio, log axis) versus decode batch size B for N_k=8192 on a T4. At B=1 v7 is faster: 2.65x at d=64 and 1.46x at d=128. For every sampled batch from B=8 to B=64 v7 is slower than SDPA: about 0.50 to 0.56x at d=64 and 0.32 to 0.35x at d=128 — both curves cross below the parity line somewhere in the open interval from B=1 to B=8 (no B=2 or B=4 sample). The mechanism: v7 is already SM-saturated at B=1 (10 splits give 80 blocks, the 2-blocks-per-SM cap), so its per-token cost is flat across batch, while SDPA's per-token cost collapses about 4.5x as batch fills its own grid. At B=1 v7 wins only because SDPA under-fills the grid even worse there. The serving regime is continuous batching at B greater than or equal to 8, so reclaiming it is the v8 deliverable.</desc>
+<rect x="0" y="0" width="700" height="460" fill="#ffffff"/>
+<!-- region shading: below parity = SDPA faster -->
+<rect x="80" y="192" width="520" height="178" fill="#FAECE7" opacity="0.55"/>
+<rect x="80" y="60" width="520" height="132" fill="#E1F5EE" opacity="0.45"/>
+<!-- axes -->
+<line x1="80" y1="55" x2="80" y2="372" stroke="#888780" stroke-width="0.5"/>
+<line x1="80" y1="370" x2="600" y2="370" stroke="#888780" stroke-width="0.5"/>
+<text x="76" y="48" font-size="12" fill="#5F5E5A">v7 speedup over torch SDPA  (×, log)</text>
+<text x="600" y="404" font-size="12" fill="#5F5E5A" text-anchor="end">decode batch B  (H=8, log)</text>
+<!-- parity line at ratio = 1.0 (y=192) -->
+<line x1="80" y1="192" x2="600" y2="192" stroke="#993C1D" stroke-width="1.3" stroke-dasharray="6 3"/>
+<text x="596" y="188" font-size="11" fill="#993C1D" text-anchor="end">parity (1.0×) — v7 = SDPA</text>
+<!-- y ticks -->
+<text x="76" y="94" font-size="10" fill="#888780" text-anchor="end">2.5×</text>
+<line x1="80" y1="90" x2="600" y2="90" stroke="#B4B2A9" stroke-width="0.3" stroke-dasharray="3 3"/>
+<text x="76" y="196" font-size="10" fill="#888780" text-anchor="end">1.0×</text>
+<text x="76" y="268" font-size="10" fill="#888780" text-anchor="end">0.5×</text>
+<line x1="80" y1="264" x2="600" y2="264" stroke="#B4B2A9" stroke-width="0.3" stroke-dasharray="3 3"/>
+<text x="76" y="313" font-size="10" fill="#888780" text-anchor="end">0.33×</text>
+<!-- x ticks: B = 1,8,16,32,64 -->
+<text x="100" y="386" font-size="10" fill="#888780" text-anchor="middle">1</text>
+<text x="310" y="386" font-size="10" fill="#888780" text-anchor="middle">8</text>
+<text x="380" y="386" font-size="10" fill="#888780" text-anchor="middle">16</text>
+<text x="450" y="386" font-size="10" fill="#888780" text-anchor="middle">32</text>
+<text x="520" y="386" font-size="10" fill="#888780" text-anchor="middle">64</text>
+<!-- crossover band (1,8] -->
+<rect x="100" y="60" width="210" height="310" fill="none"/>
+<line x1="205" y1="60" x2="205" y2="370" stroke="#A6A39A" stroke-width="0.8" stroke-dasharray="2 3"/>
+<text x="205" y="430" font-size="10" fill="#5F5E5A" text-anchor="middle">crossover in (1, 8] — exact B unsampled</text>
+<!-- region labels -->
+<text x="92" y="78" font-size="11" font-weight="600" fill="#0F6E56">v7 faster ↑</text>
+<text x="92" y="358" font-size="11" font-weight="600" fill="#993C1D">SDPA faster ↓ (serving regime)</text>
+<!-- d=64 curve: (100,90)(310,252)(380,252)(450,262)(520,264) -->
+<path d="M100,90 L310,252 L380,252 L450,262 L520,264" fill="none" stroke="#185FA5" stroke-width="2.2"/>
+<circle cx="100" cy="90" r="3.8" fill="#185FA5"/><circle cx="310" cy="252" r="3.8" fill="#185FA5"/><circle cx="380" cy="252" r="3.8" fill="#185FA5"/><circle cx="450" cy="262" r="3.8" fill="#185FA5"/><circle cx="520" cy="264" r="3.8" fill="#185FA5"/>
+<text x="120" y="86" font-size="11" fill="#185FA5">d=64: 2.65× → 0.50×</text>
+<!-- d=128 curve: (100,152)(310,305)(380,302)(450,311)(520,311) -->
+<path d="M100,152 L310,305 L380,302 L450,311 L520,311" fill="none" stroke="#0F6E56" stroke-width="2.2"/>
+<circle cx="100" cy="152" r="3.8" fill="#0F6E56"/><circle cx="310" cy="305" r="3.8" fill="#0F6E56"/><circle cx="380" cy="302" r="3.8" fill="#0F6E56"/><circle cx="450" cy="311" r="3.8" fill="#0F6E56"/><circle cx="520" cy="311" r="3.8" fill="#0F6E56"/>
+<text x="120" y="148" font-size="11" fill="#0F6E56">d=128: 1.46× → 0.32×</text>
+<!-- mechanism annotation -->
+<text x="330" y="120" font-size="11" font-weight="600" fill="#2C2C2A">Why it flips:</text>
+<text x="330" y="136" font-size="11" fill="#5F5E5A">v7 SM-saturated at B=1 → per-tok cost FLAT</text>
+<text x="330" y="150" font-size="11" fill="#5F5E5A">SDPA per-tok cost collapses ~4.5× with batch</text>
+<text x="330" y="164" font-size="11" fill="#5F5E5A">At B=1 v7 wins only as SDPA under-fills worse</text>
+<text x="330" y="178" font-size="11" font-weight="500" fill="#3C3489">→ v8 must RECLAIM batch B≥8</text>
+</svg>

@@ -493,6 +493,25 @@ arch-independent (pure indexing); the gather's L1/L2 residency assumption holds 
 - **Possible v8.5 contingency:** the merge kernel + two-kernel launch were *not* isolated as the limiter
   (the smem cap + single-warp GEMV dominate), so a persistent/fused merge is lower priority than first
   thought — but worth a pipe-util read on bare metal to confirm the smem-residency story directly.
+- **Adversarial close-out (2026-06-27, 35-agent pass: 6 forensics + 7 research + 7 claims through a 2-of-3 gate):** the per-CTA-bound headline
+  **survives 0/3 refute**; the "GQA before bytes" reorder **survives 0/3**. Two premises corrected (both were
+  "sound conclusion + stale premise"): (a) **%HBM is fp16-correct, not 2× understated** — the kernel casts K/V
+  to half (`paged_attention.cu:274–276`), so `precision=fp32` is a cosmetic header label; the "is %HBM
+  understated?" worry closes **NO**; (b) the apparent ~15–25% v6→v7 paging overhead stays **UNPROVEN**
+  (separate vast.ai sessions, `clock~-1/-1`; same-shape delta 19–27% but inseparable from clock drift) →
+  resolve with a **same-session v6/v7 A/B** in v8's harness. New finding: **SDPA overtakes v7 by B=8** (v7
+  SM-saturated → flat; SDPA amortizes launch ~4.5×) → v8 gains a **"reclaim SDPA at batch"** deliverable.
+  **Carried-forward cleanups (not blockers):** the bottom-right causal-mask reference, and stale comments
+  asserting the refuted "split-KV fills the SMs → HBM ceiling" in `paged_attention.cu:221–226` +
+  `roofline/model.py:96–99`.
+- **Competitive framing (research B4/B7):** name **FlashInfer** (`use_tensor_cores=True`) + **TRT-LLM XQA** as
+  v8's M-packing comparators and **vLLM PagedAttention v2** (split-KV + paging, *no* M-packing — the cleanest
+  isolation of v8's one variable) as the CUDA-core baseline floor. **Do NOT claim "beat FA4":** the
+  `fa4-no-decode` claim **died 3/3** — FA4's decode path is now *upstreamed* (Modal split-KV/single-query/
+  paged/FP8/`pack_GQA` PRs; pack_GQA = 2.92×), so it already carries the split-KV+GQA+FP8 levers v6–v9 build.
+  Frame as "open, roofline-documented, measured vs FlashInfer/FlashMLA." B300 confirmed: HBM **flat 8 TB/s**,
+  288 GB, NVFP4 15 PF dense, exp **2× (10.7 TeraExp/s)**, `sm_103`. *(Full synthesis:
+  [`v7-deep-research.md`](v7-deep-research.md).)*
 
 **Quiz:** passed 2026-06-27 (Gate 2). Kien nailed the refutation (flat %HBM, crossover false) and the
 per-CTA mechanism: smem caps residency at 2 blocks/SM, so batch replicates an inefficient block without

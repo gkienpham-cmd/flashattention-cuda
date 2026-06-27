@@ -571,3 +571,25 @@ once — it attacks the actual binding constraint (per-CTA efficiency). And **by
 premature at *all* batch sizes, not just small batch**: v7 never gets within 8× of the bandwidth wall at
 any BH, so cutting bytes multiplies a term it can't reach. `diagrams/decode-roofline-crossover.svg` needs
 the "predicted crossover" arc replaced with the measured-flat line. See `decisions.md` Step 7.
+
+**Deep-research close-out (2026-06-27) — adversarial verify pass (35 agents: 6 forensics + 7 research + 7 claims, 2-of-3 refute gate); the headline survives 0/3, and three facts get layered on:**
+1. **%HBM is fp16-correct — the printed ~7–12.5% is right, NOT 2× understated.** A skeptic flagged the
+   `precision=fp32` bench header; resolved decisively: the kernel *casts* K/V to half
+   (`paged_attention.cu:274–276`) and every HBM KV load is `__half` = 2 B/elem (lines 125–126), so the
+   `kv_bytes·2`-byte denominator matches bytes-on-the-wire. The header is a stale *input-contract* label (the
+   "true %HBM is 2× higher" claim died 3/3 refute). Peak achieved HBM = 12.5% (1×8×1×128/16384) — still ~8×
+   below the wall, so per-CTA-bound stands unchanged. *(Cosmetic follow-up: relabel header
+   `in=fp32 / kv-read=fp16`; the `.to(kHalf)` cast is a real throwaway fp16 re-allocation **inside** the timed
+   region a true fp16-native vLLM cache wouldn't pay — worth a one-line note for the mini-vLLM framing.)*
+2. **SDPA overtakes v7 by B=8 (non-causal) — sharper mechanism than "untuned SDPA."** v7 wins *only* at B=1
+   (2.65×/1.46×); for B≥8 it **loses** (0.56→0.50× d=64, 0.34→0.32× d=128). Cause: v7 is already SM-saturated
+   at B=1 (10 splits → 80 blocks = the 2-blocks/SM cap) so its per-token cost is **flat** (~67 µs/tok d=64),
+   while SDPA's per-token cost **collapses ~4.5×** as batch fills *its* grid. At B=1 v7 wins *because* SDPA
+   under-fills the grid even worse (~3.7% HBM vs v7's 9.8%). Crossover bracketed in (1, 8] (no B=2/4 sample).
+   **This makes "reclaim SDPA at batch" a first-class v8 deliverable** — serving runs continuous batching B≥8.
+3. **Causal `vs_sdpa` (0.15→0.02×) is a baseline artifact, not a regression** — confirmed: v7 scans all N_k
+   keys while the SDPA reference (`is_causal=True`, top-left-aligned `[1,N_k]` mask) attends ~1 key, so the
+   ratio tracks ~1/N_k. The correctness test (`test_correctness.py:209`, `causal=False`) is already the right
+   full-cache oracle and passes 51/51; only the bench column misleads. Fix (v8-harness, ~6 lines):
+   bottom-right-aligned causal mask in the reference. *(Full cited synthesis with the GQA/B300 research:
+   [`v7-deep-research.md`](v7-deep-research.md).)*

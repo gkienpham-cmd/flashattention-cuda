@@ -8,11 +8,18 @@ background) — open in a browser, macOS Preview/Quick Look, or VS Code and it r
 
 | File | What it shows |
 |---|---|
-| `decode-roofline-crossover.svg` | **The headline.** Achieved %HBM vs effective batch `BH`. v6 was measured only at `BH=8` (12% HBM, occupancy-bound); split-KV self-disables and batch fills the SMs past the crossover `BH = 2·SM` (80 on T4, 320 on B300). Left of it = occupancy-bound (FP4 doesn't help); right = bandwidth-bound (FP4 pays). |
+| `decode-roofline-crossover.svg` | **The headline — REFRESHED to MEASURED (v7, 2026-06-27).** Achieved %HBM vs effective batch `BH`. The v7 `--batch` sweep measured it **FLAT at 9.4–12.4% from BH=8→512** (d=64 and d=128 lines); the predicted rising crossover is now **ghosted and labelled REFUTED**. The wall is per-CTA (32 KB smem → 2 blocks/SM; 1-of-8 warps at N_q=1), so batch only adds waves. The next lever is GQA M-packing (per-CTA efficiency), not fewer bytes. |
 | `gqa-mpacking.svg` | The occupancy lever: packing `G` query heads into `M` turns the `M=1` GEMV (KV read `G×`) into an `M=G` GEMM (KV read once), raising `AI = 2/b → 2G/b` and re-engaging tensor cores. |
 | `splitkv-lse-merge-dataflow.svg` | The two-kernel schedule the roofline can't see — split-KV partial + LSE merge, and where the launch / under-occupied-merge / warp-shuffle overhead lives. |
 | `b200-b300-seams.svg` | Verified B200→B300 deltas with the **flat-bandwidth** surprise highlighted; the decode consequence of each. |
 | `build-roadmap-v6-v11.svg` | **Reordered** plan: v6 split-KV → v7 paged KV → **v8 GQA M-packing (the reorder)** → v9 FP8 KV → v10 NVFP4 + asymmetric precision (headline) → v11 MLA / speculative. Old FP8/FP4-before-GQA order shown struck through. |
+
+**v7 deep-research close-out figures (2026-06-27 — accompany [`../v7-deep-research.md`](../v7-deep-research.md)):**
+
+| File | What it shows |
+|---|---|
+| `v7-vs-sdpa-batch-crossover.svg` | **The v8 motivation.** v7's speedup over torch SDPA vs decode batch B (log). v7 wins **only at B=1** (2.65×/1.46×); SDPA overtakes by **B=8** (v7 drops to ~0.5×/0.32×) and stays ahead through B=64. v7 is SM-saturated at B=1 → per-token cost flat, while SDPA's collapses ~4.5× with batch. The serving regime (B≥8) is what **v8 must reclaim**. |
+| `per-cta-limiter-anatomy.svg` | **Why batch can't help.** One T4 SM holds only **2 resident blocks** (32 KB smem each / 64 KB); inside each block, all 8 warps load KV but at `N_q=1` only **warp 0 computes**. Batch adds serial *waves* at the same 2-blocks/SM cap → flat %HBM. Right panel: v8 M-packing lights up G warps + GEMV→GEMM (M≥16 tensor-core gate). |
 
 **Original decode-arc figures (still accurate):**
 
