@@ -290,6 +290,57 @@ finally approach a real (tensor-core) MMA bound instead of a reduction-overhead 
 
 ---
 
+## Step 5 — Tensor-core WMMA (the GEMV→GEMM fix)
+
+> **Backfilled 2026-06-27, PARTIAL.** Kernel + wiring landed (`ad021b7`) and the **correctness gate is
+> green** (tol 2e-2, rebuilt + passed during the Step-6 run). **The prefill bench was never captured**
+> — `notebooks/step5_run_of_record.ipynb` is unexecuted (all cells `execution_count=None`, no saved
+> outputs). So the *decision* below is recorded from design + roofline; the measured speedup that would
+> normally close it is OUTSTANDING (run the run-of-record). Logged as a gap, not papered over.
+
+**Bottleneck going in:** v4 was compute-bound but ~18× off the FP32 MMA floor and ~6× slower than
+SDPA. Diagnosed cause = **FMA under-utilization**: scoring one key per warp via a 5-step `__shfl`
+reduction + 2 FMAs is GEMV-shaped — ~70% reduction plumbing, never near the 8.1 TFLOPS FP32 peak.
+Named target: make the math GEMM-shaped *and* raise the ceiling.
+
+**Options considered:**
+1. **WMMA tensor cores, FP16-in/FP32-accum, keep v4's fused single-pass schedule (chosen).**
+2. **Register-blocked FP32 score *tiles* on CUDA cores** — rejected: turns scoring into a GEMM
+   (fixes the shape) but stays at the 8.1 TFLOPS ceiling, so it can't reach the 8× headroom tensor
+   cores expose; also more register pressure for less upside.
+3. **`mma.sync` PTX / CUTLASS-style pipelined tiles** — deferred: closer to production FA but a much
+   bigger step; WMMA is the minimal, didactic on-ramp to tensor cores and isolates one variable
+   (CUDA-core dot product → tensor-core MMA) on top of v4's already-correct schedule.
+
+**Choice — WMMA, and why:** the smallest step from v4 that attacks the diagnosed limiter on *both*
+axes simultaneously — GEMV→GEMM (the reduction moves inside the MMA, no shuffle) and 8→65 TFLOPS
+ceiling. One isolated variable vs v4: the two matmuls become `wmma::mma_sync`. Everything else
+(online softmax, O-rescale, S-off-HBM) is carried unchanged. The price of admission is FP16 inputs
+(hence the first loosened tolerance, 2e-2) and **the opaque-fragment tax**: WMMA accumulator results
+are scattered across lanes in an un-indexable layout, so softmax can no longer live in registers —
+S is forced through smem (store → row-softmax → reload P as half), and `oRun` (the FP32 O) lives in
+smem so the O-rescale can be folded into the PV accumulator. That smem S round-trip is the structural
+risk this step introduces — it may become the *new* limiter even as the FMA wall falls.
+
+**Measured (T4 sm_75) — correctness only; speedup OUTSTANDING:**
+- **Correct:** green at tol 2e-2 — 17 cases (6 shapes × causal, explicit-scale, + the
+  `test_v5_wmma_fp16_stability` N=16384 O-rescale/FP16-drift case at d=64 *and* d=128). The d=128 case
+  also exercises the BM=32/2-warp tile config.
+- **Speedup vs v4 / SDPA / floor:** NOT captured (run-of-record unexecuted). The roofline predicts the
+  floor drops 8× (16.97 → 2.114 ms at 8192×64, fp16); whether v5 reaches it is the open question.
+
+**What changes on another arch:** tensor-core shapes/throughput are arch-specific — Turing WMMA is
+16×16×16 at ~65 TFLOPS FP16; Ampere/Hopper add `mma.sync`/`wgmma`, bf16/tf32/fp8 and far higher peaks.
+The *structural* lesson (GEMV→GEMM, accumulate in FP32) is arch-independent; the absolute floor and the
+best MMA instruction are not. On A100/H100 the smem S round-trip matters less (more smem, async copy)
+so the limiter may shift again.
+
+**Outstanding (to fully close Step 5):** execute `notebooks/step5_run_of_record.ipynb` and backfill
+the speedup table in `results.md` + this section + the status line in `CLAUDE.md`; optionally the
+peak-memory proof and CUPTI single-kernel trace (expected ≈ v4's).
+
+---
+
 ## Step 6 — Split-KV decode (v6)
 
 *Measured 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124). 25/25 correctness. This opens the

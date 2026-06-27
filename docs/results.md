@@ -308,6 +308,92 @@ the limiter as FMA under-utilization; the pipe-util read is a bare-metal follow-
 
 ---
 
+## Step 5 — Tensor-core FlashAttention-1 (v5 WMMA, FP16-in/FP32-accum, GEMV→GEMM)
+
+> **Status — PARTIAL / backfilled 2026-06-27.** The kernel + wiring landed in commit `ad021b7`
+> (`kernels/v5_wmma/`, registered in `bindings/load.py` and gated to cap (7,5) in `dispatch.py`) and
+> the **correctness gate is green** (rebuilt + passed during the Step-6 vast.ai run; see below). **The
+> prefill bench headline (v5÷v4, v5÷SDPA) was never captured:** `notebooks/step5_run_of_record.ipynb`
+> was authored but never executed — every cell shows `execution_count=None` with zero saved outputs,
+> and no v5 *prefill* bench appears in any other notebook. The only *measured* v5 numbers that exist
+> are v5 run `@N_q=1` as the "naive" decode baseline in Steps 6/7 (those tables). What is recorded
+> below is verified from source + the (CPU-reproducible) roofline + the Step-6 correctness rebuild;
+> the speedup table is left as an **OUTSTANDING measurement** — run the run-of-record to fill it. This
+> is logged as a gap rather than papered over (project ethos).
+
+`kernels/v5_wmma/` — the **GEMV→GEMM fix** for v4's diagnosed limiter. Keep v4's single-pass fused
+schedule (online softmax, O-rescale, S never on HBM) but move *both* matmuls onto Turing's tensor
+cores (WMMA, 16×16×16, FP16-in / FP32-accum) instead of v4's 32-lane `__shfl` dot products:
+- **QK:** `S = Q @ Kᵀ` via `wmma::mma_sync` — the reduction over `d` lives *inside* the tensor core
+  (no shuffle). K is loaded as a `col_major` B-fragment so Kᵀ needs no transpose.
+- **PV:** `O += P @ V` via `wmma::mma_sync` — the running FP32 O (`oRun`) is loaded *into* the
+  accumulator fragment so the O-rescale add is the tensor core's own `C += A·B`.
+- **The opaque-fragment tax:** a WMMA accumulator's 256 results are scattered across lanes in an
+  undocumented layout you cannot index, so softmax *cannot* stay in registers (v4 kept O in named
+  regs). v5 forces S through smem: `QK → store S to smem → row-softmax in smem (each lane owns a full
+  row, no shuffle — the GEMM already reduced) → write P back as half → reload P as fragments for PV`.
+- **Tiling** — one warp per 16-row query M-tile, sized to Turing's 48 KB static-smem budget:
+  `d=64 → BM=64, BN=32, 4 warps (~44 KB smem)`; `d=128 → BM=32, BN=32, 2 warps (~46 KB)`.
+- **Precision:** first version **not** bit-comparable to FP32 SDPA — FP16 in, FP32 accumulate, FP32
+  out; the public `attention()` contract stays FP32-in (host casts to half).
+
+**Roofline prediction (T4 sm_75, B=1 H=8, fp16, `materialize_S=False`):** the FP16 tensor-core peak
+(~65 TFLOPS) is ~8× the FP32 CUDA-core peak (8.1), so **the MMA floor drops ~8× vs v4** and the ridge
+moves up 8× (25.3 → **203.1** FLOP/byte) — still compute-bound at every shape. The deliverable is the
+*distance to this lowered floor*:
+
+| shape (BxHxNxd) | intensity (FLOP/B) | ridge | predicted limiter | v5 fp16 floor | v4 fp32 floor |
+|---|---|---|---|---|---|
+| 1x8x512x64   | 256.0  | 203.1 | **MMA** | 0.008 ms | 0.066 ms |
+| 1x8x512x128  | 256.0  | 203.1 | **MMA** | 0.017 ms | 0.132 ms |
+| 1x8x2048x64  | 1024.0 | 203.1 | **MMA** | 0.132 ms | 1.060 ms |
+| 1x8x2048x128 | 1024.0 | 203.1 | **MMA** | 0.264 ms | 2.120 ms |
+| 1x8x8192x64  | 4096.0 | 203.1 | **MMA** | 2.114 ms | 16.968 ms |
+| 1x8x8192x128 | 4096.0 | 203.1 | **MMA** | 4.229 ms | 33.936 ms |
+
+> The floor is exactly ⅛ of v4's at every shape (the 65/8.1 TFLOPS ratio). v5 attacks v4's gap on
+> *both* axes at once: it raises the ceiling 8→65 TFLOPS **and** forces GEMM-shaped MMA tiles instead
+> of v4's GEMV-shaped shuffle reductions. Whether v5 lands *near* this far-lower floor — or whether a
+> new limiter (the smem S round-trip the opaque-fragment tax forces, or the small 16×16 tiles
+> under-filling the warp) appears — is exactly what the un-captured prefill bench must answer.
+
+**Measured (vast.ai rented T4 sm_75, torch 2.6.0+cu124, FP16-in):**
+- ✅ **Correctness — green.** v5 is in the `BACKENDS` sweep at tol atol/rtol **2e-2** (the first
+  loosened band, FP16-in; v6 later shares it). Coverage is the same 17 cases as v4: 6 shapes × causal
+  both ways (12) + the explicit-scale case (1) + `test_v5_wmma_fp16_stability` — d 64/128 × causal,
+  N=16384 (4), which stresses the O-rescale ordering and FP16 drift across the longest accumulation
+  *and* the d=128 BM=32/2-warp tile. Rebuilt and passed during the Step-6 vast.ai run (per the Step-6
+  rebuild; the standalone `step5_run_of_record.ipynb` was never executed/committed with outputs).
+- ✅ **S-elimination — by construction.** v5 keeps v4's design: running `(m,l)` per owning lane,
+  FP32 `oRun` in smem, S only transiently in smem, never in HBM. No HBM scratch (the smem S round-trip
+  is the new cost, not a DRAM one). Peak-memory proof not separately captured, but structurally
+  identical to v4's +16.8 MB.
+- ⏳ **Prefill speedup (v5÷v4, v5÷SDPA, distance-to-floor) — OUTSTANDING.** Not measured; run
+  `notebooks/step5_run_of_record.ipynb` (cells 19–20 bench v5 fp16 then v4 fp32 for the apples-to-FP32
+  comparison; cell 22 is the causal sweep) to fill this in.
+
+| shape | v5 p50/max ms | v4 p50 ms | SDPA p50 ms | v5÷SDPA | v5÷v4 | v5 ÷ fp16 floor |
+|---|---|---|---|---|---|---|
+| 1x8x512x64   | — | 1.68   | 0.317 | — | — | — |
+| 1x8x512x128  | — | 2.19   | 0.392 | — | — | — |
+| 1x8x2048x64  | — | 18.57  | 3.03  | — | — | — |
+| 1x8x2048x128 | — | 25.45  | 5.65  | — | — | — |
+| 1x8x8192x64  | — | 299.6  | 47.01 | — | — | — |
+| 1x8x8192x128 | — | 432.5  | 99.03 | — | — | — |
+
+*(v4/SDPA columns carried from the Step-4 table for the eventual side-by-side; v5 columns pending the
+run-of-record.)*
+
+**Lesson (partial, pending the measurement):** v5 is the structural answer to v4's "compute-bound but
+18× slow" finding — fix the math-*shape* (GEMV→GEMM via tensor cores), not just the schedule. The
+prediction says the floor drops 8×; the open question the unexecuted bench leaves is whether v5
+*reaches* it or trades the FMA-utilization wall for a new one (smem S round-trip / small-tile
+under-fill). Until the run-of-record runs, Step 5's headline is a prediction, not a result.
+
+**ncu:** deferred, same `ERR_NVGPUCTRPERM` containerized-rental block as Steps 3–4.
+
+---
+
 ## Step 6 — Split-KV decode (v6)
 
 DONE (measured 2026-06-27, vast.ai Tesla T4 sm_75, torch 2.6.0+cu124). FP16-in/FP32-accum, two kernels

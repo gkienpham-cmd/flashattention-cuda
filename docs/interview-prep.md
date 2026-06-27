@@ -422,6 +422,56 @@ FP32 FMA peak. Step 5's tensor cores fix the shape *and* raise the ceiling."
 
 ---
 
+## C7.5 — Tensor cores: the GEMV→GEMM fix (v5 WMMA)
+
+*(numbered C7.5 to sit between Step 4's C7 and Step 6's C8 without renumbering C8–C10. **Status: the
+kernel is correct and wired; the prefill speedup was never measured** — `step5_run_of_record.ipynb`
+is unexecuted. So this chain is the *prediction and the structural argument*, with the headline number
+flagged as outstanding. Don't claim a v5 speedup in an interview — claim the *fix* and the *predicted*
+8× headroom, and that the measurement is the next thing to capture.)*
+
+Step 4 diagnosed v4's wall: compute-bound but ~18× off the floor because scoring is GEMV-shaped
+(shuffle reductions, not FMAs). v5 keeps v4's entire fused schedule and changes exactly one thing —
+both matmuls become tensor-core WMMA (FP16-in/FP32-accum).
+
+### 1. Why tensor cores attack *both* axes at once
+v4's gap had two parts: a low ceiling (8.1 TFLOPS FP32) and bad shape (reductions, not FMAs). Tensor
+cores fix both in one move — the FP16 peak is ~65 TFLOPS (**8× ceiling**) *and* one `mma_sync` is a
+16×16×16 GEMM tile, so the reduction over `d` happens *inside* the core with no `__shfl`. The roofline
+floor drops exactly 8× (16.97 → 2.114 ms at 8192×64) and the ridge moves 25.3 → 203.1 FLOP/byte —
+still compute-bound, just against a far lower floor.
+
+### 2. The opaque-fragment tax (the price, and the new risk)
+A WMMA accumulator's 256 results are scattered across the warp's lanes in an **un-indexable** layout.
+v4 kept O in named registers and softmaxed there; v5 *can't* — so it forces S through smem: `QK → store
+S to smem → row-softmax in smem (each lane owns a whole row, no shuffle since the GEMM already reduced)
+→ write P back as half → reload as fragments for PV`. The running FP32 O (`oRun`) also lives in smem so
+the O-rescale folds into the PV accumulator (`C += A·B`). **That smem round-trip is the new structural
+risk** — it (or the small 16×16 tiles under-filling the warp at d=64) could become the next limiter
+even as the FMA wall falls. Which one wins is exactly what the un-run bench would have told us.
+
+### 3. What's proven vs what's pending
+Proven: **correctness** at the first loosened tolerance (2e-2, FP16-in) — 17 cases including the
+N=16384 O-rescale/FP16-drift stability test at d=64 and d=128. Pending: the speedup. The honest state
+is "the fix is in and correct; the measurement is owed."
+
+### The meta-lesson
+This is the cleanest example of *predict-then-don't-measure being a visible gap*, not a silent one.
+The roadmap's whole point is prediction-vs-measured; v5 has the prediction (8× lower floor, GEMM
+shape) but the measured half is missing, so the step is honestly **partial** — correct and predicted,
+not yet confirmed. The roofline has mispredicted magnitude four straight times (Steps 1–4); v5 is the
+first where we *don't yet know* if it's wrong, and saying so is the deliverable.
+
+**Say-this:** "v5 keeps v4's fused schedule and swaps both matmuls to Turing WMMA tensor cores,
+FP16-in/FP32-accum. That attacks v4's gap on both axes — 8× higher ceiling and GEMV→GEMM so the
+reduction lives inside the MMA, no shuffle. The cost is the opaque-fragment tax: WMMA accumulators are
+un-indexable, so softmax can't stay in registers — S goes through smem, which is the new candidate
+limiter. It's correct at 2e-2 FP16 tolerance, but — being honest — I never captured the prefill bench:
+the run-of-record notebook is unexecuted, so I have the *predicted* 8× floor drop but not the measured
+speedup. That measurement is the next thing to run."
+
+---
+
 ## C8 — Decode ≠ prefill: split-KV (the v6 keystone)
 
 *(measured 2026-06-27, T4 sm_75; design + B300 arc in `docs/b300-decode-research.md`)*

@@ -101,11 +101,21 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   GEMV-shaped (per-key `__shfl` reduction ≫ FMAs), never near the 8.1 TFLOPS peak. Roofline missed
   *magnitude* a 4th time, same blind spot. ncu still deferred. See `docs/results.md`/`decisions.md`
   Step 4, `interview-prep.md` C7.
-- **Step 5 (v5 WMMA, `kernels/v5_wmma/`)** — kernel + wiring landed (commit `ad021b7`) and tests are
-  green (in `BACKENDS`, tol 2e-2 FP16-in; rebuilt + passed during the Step-6 run); run-of-record in
-  `notebooks/step5_run_of_record.ipynb`. **OUTSTANDING BACKFILL:** the prose close-out (`results.md`/
-  `decisions.md` Step 5 + this status line + `interview-prep.md`) was deferred — pull the measured
-  speedups from the run-of-record notebook before calling Step 5 fully documented.
+- **Step 5 (v5 WMMA, `kernels/v5_wmma/`)** — **PARTIAL** (kernel + wiring landed `ad021b7`; correctness
+  gate green; prose close-out backfilled 2026-06-27). The **GEMV→GEMM fix** for v4's FMA-utilization
+  wall: keep v4's fused single-pass schedule but move *both* matmuls onto Turing WMMA tensor cores
+  (FP16-in/FP32-accum, 16×16×16). **The opaque-fragment tax** (WMMA accumulators are un-indexable)
+  forces softmax/S through smem (store→row-softmax→reload P as half) and keeps FP32 `oRun` in smem so
+  the O-rescale folds into the PV accumulator. Tiles `d=64→BM=64/4-warp`, `d=128→BM=32/2-warp`.
+  **Correctness green** (in `BACKENDS`, tol **2e-2** FP16-in — the first loosened band; 17 cases incl.
+  the N=16384 O-rescale/FP16-drift stability at d=64 *and* d=128; rebuilt + passed during the Step-6
+  run). **Roofline predicts the floor drops 8×** (65/8.1 TFLOPS → 16.97→2.114 ms @ 8192×64; ridge
+  25.3→203.1, still compute-bound). **⚠️ OUTSTANDING MEASUREMENT: the prefill bench (v5÷v4, v5÷SDPA,
+  distance-to-floor) was NEVER captured** — `notebooks/step5_run_of_record.ipynb` is unexecuted (all
+  cells `execution_count=None`, no saved outputs); the only measured v5 numbers are v5@N_q=1 as the
+  decode "naive" baseline in Steps 6/7. So Step 5's headline is a *prediction, not a result*; run the
+  run-of-record to fill the speedup table in `results.md` + `decisions.md` + this line. See
+  `docs/results.md`/`decisions.md` Step 5, `interview-prep.md` C7.5.
 - **Step 6 (v6 split-KV decode, `kernels/v6_splitkv/`)** — DONE (2026-06-27): both gates cleared (quiz
   passed + counter-free decode bench, vast.ai T4). FP16-in/FP32-accum, **two kernels** behind one
   `forward` — a split-KV partial (each block does v4-style online softmax over one KV chunk → writes
@@ -170,7 +180,11 @@ precision (headline) → v11 MLA/speculative.
    HBM, BH=8→512), so cutting bytes is premature regardless of batch. `[RENT]` A100/H100. Then bytes: v9
    FP8 KV, v10 NVFP4 + asymmetric precision `[B300]`. (Diagrams: `gqa-mpacking.svg`,
    `decode-roofline-crossover.svg`.)
-3. **Backfill Step 5 docs** from `notebooks/step5_run_of_record.ipynb` (results/decisions/status/C-chain).
+3. **Finish Step 5** — prose close-out is backfilled (results/decisions/status/C7.5, 2026-06-27); the
+   one remaining item is the **measurement**: execute `notebooks/step5_run_of_record.ipynb` (it's
+   unexecuted — no saved outputs) and fill the prefill speedup table (v5÷v4, v5÷SDPA, distance-to-floor)
+   in `results.md` Step 5 + `decisions.md` + the status line. Until then Step 5 is PARTIAL (correct +
+   predicted, not measured).
 4. **GPU host:** **vast.ai** T4 (~$0.10–0.20/hr). Image gotchas confirmed this run: torch installs into
    a **venv** (`/venv/main`) — install with `%pip`/`sys.executable -m pip` and prepend the venv `bin/`
    to `PATH` so `!python -m …` cells resolve (do NOT symlink system python3 over the venv); add
