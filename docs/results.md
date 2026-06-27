@@ -692,6 +692,26 @@ G-expanded paged pool; v8 itself ran fine, 18.32 µs/tok. Not a v8 failure, a ba
 ~1 key while v8 scans the whole cache via `q_offset`) — the correctness test already uses the honest
 `causal=False` oracle; a bottom-right-mask reference is the deferred harness cleanup.
 
-**Measured — Cut 2 tensor-core ablation (A100):** _pending `[RENT]`._ pad-M=8→16 vs multi-group-pack vs
-CUDA-core-QK, vs FlashInfer / XQA / vLLM PagedAttention v2. Cut 1 already shows ~9× of HBM headroom
-remains (`%HBM ≤ 11%`), so the tensor-core GEMM has room to chase.
+**Cut 2 — tensor cores (the GEMV→GEMM step on top of M-packing). Re-staged into 2a/2b:**
+
+*Roofline prediction (recorded BEFORE the kernel runs — the gate).* Tensor cores **do not change the
+bytes**, so the model is unchanged: `AI = 2G/b`, limiter still **HBM**, same `G×`-lower floor. The
+prediction is therefore *not* a new roofline number but a **schedule** claim the model can't express:
+Cut 1 left `%HBM ≤ 11%` (≈9× of headroom) because the M=G score matmul was still a warp-shuffle
+GEMV with the opaque-fragment softmax done by hand; replacing it with a 16×16×16 tensor-core GEMM
+should **close part of that per-CTA gap → lower µs/tok and higher %HBM at a given G**, with the
+*caveat* that at G=8 the WMMA tile is **half-empty** (8 real rows padded to 16), so Cut 2a captures the
+GEMV→GEMM direction but not the peak — that's what Cut 2b's `mma.m16n8k16` removes. Predicted ordering:
+`Cut 2a > Cut 1` on µs/tok at G≥4 (where the GEMM amortizes the smem-softmax overhead), with the gap
+widening toward G=16 (full tile, no padding waste).
+
+**Cut 2a (Turing WMMA, sm_75/T4 — `kernels/v8_gqa_tc/`):** _code complete, GPU gate pending
+(`notebooks/v8_gqa_tc_gate.ipynb`, runs on free Colab T4)._ Variant 1 of the M≥16 ablation — pad
+`M=G→16` + mask — built by grafting v5's WMMA QK/PV + smem-softmax onto Cut 1's paged split-KV/merge
+skeleton (one warp per 16-row M-tile). Same `gqa_attention(..., backend="v8_gqa_tc")` contract, tol
+2e-2. Gate = correctness (both GQA backends parametrized) + a same-session **v8_gqa_tc vs v8_gqa**
+A/B (the GEMV→GEMM uplift). Ablation arms 2 (multi-group-pack → full M=16) and 3 (CUDA-core-QK +
+WMMA-PV) follow once 2a is green.
+
+**Cut 2b (A100 `mma.m16n8k16` + cp.async):** _pending `[RENT]`._ Port the winning 2a strategy to the
+Ampere atom for peak (no padding waste, async KV staging), vs FlashInfer / XQA / vLLM PagedAttention v2.

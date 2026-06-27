@@ -55,7 +55,14 @@ _TOL = {
     # v8_gqa is the same FP16-in/FP32-accum precision class as v6/v7 (it carries their split-KV + LSE
     # merge byte-for-byte; M-packing changes only which warp owns which row, not the math). Same 2e-2.
     "v8_gqa": (2e-2, 2e-2),
+    # v8_gqa_tc (Cut 2a) runs the same GQA M-packing on Turing WMMA tensor cores (FP16-in/FP32-accum,
+    # pad-G->16). Same precision class as v5/v8 -> same 2e-2 band.
+    "v8_gqa_tc": (2e-2, 2e-2),
 }
+
+# GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core) and Cut 2a (Turing WMMA tensor cores).
+# Both go through gqa_attention(..., backend=...) with identical contract, so one test body covers both.
+GQA_BACKENDS = ["v8_gqa", "v8_gqa_tc"]
 
 
 def tol_for(backend: str):
@@ -243,11 +250,12 @@ def test_v7_paged_square_reduces(causal):
 # The KV pool here has H_kv heads (fewer than q's H_q). N_k=8190 is non-multiple (partial last page +
 # clamped last split under packing). FP16-in tolerance via tol_for("v8_gqa").
 @requires_cuda()
+@pytest.mark.parametrize("backend", GQA_BACKENDS)
 @pytest.mark.parametrize("d", [64, 128])
 @pytest.mark.parametrize("N_k", [4096, 8190])               # 8190 -> non-multiple last page/split
-@pytest.mark.parametrize("G", [1, 2, 4, 8])                 # group factor; G<8 leaves idle warps
+@pytest.mark.parametrize("G", [1, 2, 4, 8])                 # group factor; G<8 pads/idles past M
 @pytest.mark.parametrize("causal", [False, True])
-def test_v8_gqa_decode(causal, G, N_k, d):
+def test_v8_gqa_decode(causal, G, N_k, d, backend):
     torch.manual_seed(8)
     B, H_kv = 1, 2
     H_q = G * H_kv
@@ -261,9 +269,9 @@ def test_v8_gqa_decode(causal, G, N_k, d):
     # WHOLE cache -> equals the non-causal full scan. Oracle = SDPA over KV expanded by G.
     q_offset = (n_k - 1) if causal else 0
     out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k,
-                        causal=causal, q_offset=q_offset)
+                        causal=causal, q_offset=q_offset, backend=backend)
     ref = sdpa_reference_gqa(q, k, v, causal=False)
-    atol, rtol = tol_for("v8_gqa")
+    atol, rtol = tol_for(backend)
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
 
 
@@ -272,9 +280,10 @@ def test_v8_gqa_decode(causal, G, N_k, d):
 # so grid.x = ceil_div(16, 8) = 2 row-tiles per (batch, KV head): the block re-stages the KV head once
 # per tile (still 8x fewer reads than v7's per-query-head read). Both must match the GQA oracle.
 @requires_cuda()
+@pytest.mark.parametrize("backend", GQA_BACKENDS)
 @pytest.mark.parametrize("d", [64, 128])
 @pytest.mark.parametrize("G", [3, 16])
-def test_v8_gqa_idle_warps_and_multiblock(G, d):
+def test_v8_gqa_idle_warps_and_multiblock(G, d, backend):
     torch.manual_seed(80)
     B, H_kv, N_k = 1, 2, 8192
     H_q = G * H_kv
@@ -284,9 +293,10 @@ def test_v8_gqa_idle_warps_and_multiblock(G, d):
     v = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
 
     k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=80)
-    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=False, q_offset=0)
+    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=False, q_offset=0,
+                        backend=backend)
     ref = sdpa_reference_gqa(q, k, v, causal=False)
-    atol, rtol = tol_for("v8_gqa")
+    atol, rtol = tol_for(backend)
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
 
 
@@ -296,8 +306,9 @@ def test_v8_gqa_idle_warps_and_multiblock(G, d):
 # N_q=N_k makes the mask gj > i_q the standard upper-left causal SDPA uses, so it compares directly to
 # SDPA causal over the G-expanded KV.
 @requires_cuda()
+@pytest.mark.parametrize("backend", GQA_BACKENDS)
 @pytest.mark.parametrize("causal", [False, True])
-def test_v8_gqa_square_reduces(causal):
+def test_v8_gqa_square_reduces(causal, backend):
     torch.manual_seed(81)
     B, H_kv, N, d = 2, 2, 512, 64
     G = 4
@@ -308,7 +319,8 @@ def test_v8_gqa_square_reduces(causal):
     v = torch.randn(B, H_kv, N, d, device="cuda", dtype=torch.float32)
 
     k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=81)
-    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=causal, q_offset=0)
+    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=causal, q_offset=0,
+                        backend=backend)
     ref = sdpa_reference_gqa(q, k, v, causal=causal)
-    atol, rtol = tol_for("v8_gqa")
+    atol, rtol = tol_for(backend)
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)

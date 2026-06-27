@@ -22,8 +22,9 @@ _MIN_CAPABILITY = {
     "v5_wmma": (7, 5),    # first cap bump: FP16-in/FP32-accum on Turing WMMA tensor cores (sm_75+)
     "v6_splitkv": (7, 0), # FP16-in/FP32-accum on CUDA cores (no WMMA at N_q=1); split-KV + LSE merge
     "v7_paged": (7, 0),   # v6 + block-table gather (paged KV) + causal query-offset; occupancy-neutral
-    "v8_gqa": (7, 0),     # Cut 1: GQA M-packing on CUDA cores (sm_75/T4). Cut 2's tensor-core path
-                          # (mma.m16n8k16 + cp.async) bumps this to (8, 0) when it lands.
+    "v8_gqa": (7, 0),     # Cut 1: GQA M-packing on CUDA cores (sm_75/T4).
+    "v8_gqa_tc": (7, 5),  # Cut 2a: GQA M-packing on Turing WMMA tensor cores (sm_75/T4, pad-G->16).
+                          # Cut 2b's mma.m16n8k16 + cp.async peak version bumps a sibling to (8, 0).
 }
 
 

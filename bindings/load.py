@@ -26,6 +26,7 @@ _SOURCES = {
     "v6_splitkv": ["splitkv_attention.cu", "binding.cpp"],
     "v7_paged": ["paged_attention.cu", "binding.cpp"],
     "v8_gqa": ["gqa_attention.cu", "binding.cpp"],
+    "v8_gqa_tc": ["gqa_tc_attention.cu", "binding.cpp"],
 }
 
 
