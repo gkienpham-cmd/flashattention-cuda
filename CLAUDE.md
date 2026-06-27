@@ -238,3 +238,13 @@ precision (headline) → v11 MLA/speculative.
 - Solo learning repo; `main` is the working branch and the Colab pull target — commit directly to
   `main` (do not branch; the notebook pulls `main`). Commit/push only when the user asks.
 - Do **not** commit `.vscode/` or other IDE cruft.
+- **ALWAYS sync Kien's local `main` after pushing to `main` (learned 2026-06-27).** Work usually
+  happens in a harness-created git **worktree** (`.claude/worktrees/<name>/`) — a *separate checkout*
+  from Kien's main project folder (`/Users/kienpham/Documents/flashattention-cuda`, branch `main`). A
+  commit + `git push origin HEAD:main` from the worktree updates `origin/main` but leaves Kien's main
+  checkout BEHIND, so he doesn't see the new files locally and has to ask "where did they go?". So
+  **every time you commit + push to `main`, immediately fast-forward his main checkout in the same
+  turn:**
+  `git -C /Users/kienpham/Documents/flashattention-cuda pull --ff-only origin main`
+  (it's a clean fast-forward since he never commits on local `main` himself; the untracked
+  `build-roadmap-*.svg` won't conflict). Then confirm the new files are present in the main folder.
