@@ -30,6 +30,20 @@ _SOURCES = {
 }
 
 
+# Per-kernel gencode. The DEFAULT targets BOTH the Colab T4 (sm_75) and a rented A100 (sm_80) so any
+# kernel runs on either box (a sm_75-only binary will NOT load on an A100 — different SASS, no JIT PTX).
+# A kernel that uses arch-specific features overrides with its own list. The roofline arch constant and
+# this gencode must agree (see roofline/archs.py: T4=sm_75, A100=sm_80).
+_DEFAULT_ARCH = [
+    "-gencode=arch=compute_75,code=sm_75",   # Tesla T4 (Turing) — the free Colab box
+    "-gencode=arch=compute_80,code=sm_80",   # A100 (Ampere) — the v8 Cut 2b rental
+]
+_ARCH = {
+    # Cut 2b's cp.async + mma.m16n8k16 path (when written) is Ampere-only -> sm_80 alone:
+    # "v8_gqa_tc_sm80": ["-gencode=arch=compute_80,code=sm_80"],
+}
+
+
 @lru_cache(maxsize=None)
 def build_kernel(name: str):
     """Compile (once) and return the loaded extension module for kernel version `name`.
@@ -50,11 +64,6 @@ def build_kernel(name: str):
     return load(
         name=f"fa_{name}",
         sources=sources,
-        extra_cuda_cflags=[
-            "-O3",
-            # sm_75 is the Colab T4. When we rent Ampere/Hopper we extend this list; the
-            # roofline tool's arch constant and this gencode must agree (see roofline/archs.py).
-            "-gencode=arch=compute_75,code=sm_75",
-        ],
+        extra_cuda_cflags=["-O3", *_ARCH.get(name, _DEFAULT_ARCH)],
         verbose=True,
     )
