@@ -652,3 +652,63 @@ wrong tokens and fail."
   "tensor core instruction m minimum rows is 16"). Llama-3-70B has G=8 < 16, so a single group needs padding
   to 16 (half row-util), or pack two groups, or keep CUDA-core scoring for QK. That trade is the v8 ablation,
   and it's why I target **sm_80 (A100)** — the m16n8k16 MMA atom + cp.async, not Turing WMMA.
+
+## C11 — GQA M-packing: turning the GEMV into a GEMM (v8)
+
+*(v8 — the reorder's payoff lever. Phase 0 roofline + Cut 1 CUDA-core code complete; GPU gate pending.
+Built STAGED: Cut 1 = CUDA-core M-pack on T4, Cut 2 = sm_80 tensor cores + the M≥16 ablation.)*
+
+### The one-line idea
+A GQA model has `H_q` query heads but only `H_kv = H_q/G` KV heads — the `G` query heads of a group all
+attend the **same** KV head. v7 ran one (batch, query-head) per block, so the G heads of a group each
+re-read that KV head and each used only warp 0 (the 1-of-8 wall). v8 **packs the G query heads into the
+score GEMM's M dimension**: one block, one KV head staged **once**, G query rows computed against it. So
+`G` warps light up instead of 1, KV bytes drop by `G`, and `AI = 2/b → 2G/b`. It's the smallest change
+that hits the limiter v7 *measured*.
+
+### Why this is the right lever (not bytes, not the merge)
+v7 proved decode is per-CTA-bound at every batch size — flat ~10–12% HBM, BH=8→512. So the binding
+constraint is *inside* the block: 1-of-8 warps + 32 KB smem capping residency at 2 blocks/SM. Cutting
+bytes (FP8/FP4) multiplies a term I'm already 8× away from reaching. Fusing the merge doesn't touch the
+GEMV. M-packing is the only move that converts the wasted 7 warps into work and reads KV once.
+
+### What stays identical — and what the one change is
+I forked v7 and changed *only the index math*. The cooperative paged gather, the online-softmax core with
+the O-rescale, the LSE merge, and `choose_splits` are byte-for-byte. The change is the warp→work mapping:
+the block's z-dimension now iterates **KV heads** (`B·H_kv`, G× fewer), and packed row `m_row =
+blockIdx.x·8 + warp` decodes to `(g_local = m_row/N_q, i_q = m_row%N_q)` → global query head `h_q =
+h_kv·G + g_local`. At decode (N_q=1, M=G) warp `w` simply owns query head `h_kv·G + w`. The KV tile is the
+shared head, read once.
+
+### Two traps I had to get exactly right
+1. **The causal mask uses the query *position* `i_q`, not the packed row `m_row`.** Packed rows interleave
+   G heads at the *same* position; masking on `m_row` would give each head a different (wrong) cutoff.
+2. **Workspace + merge stay query-head-shaped `[B,H_q,N_q,S,*]`** while the pool gather is KV-head-shaped.
+   The G active warps write distinct `h_q` slices (no collisions); mixing the two head counts drops G−1 of
+   every G outputs. And the correctness oracle must expand KV with **`repeat_interleave(G)`** (head `h_kv`
+   → query heads `[h_kv·G, h_kv·G+G)`), not `repeat`/tile — that mapping has to match the kernel exactly.
+
+### The roofline prediction (and what it deliberately does NOT say)
+`AI = 2G/b` rises exactly `G×` and the HBM floor drops `G×` (0.132→0.016 ms at G=8 on A100). But the
+limiter **stays HBM** — A100's fp16 ridge is 153, so even G=8 (AI=8) and G=32 (AI≈32) are far below. So I
+do *not* claim "v8 becomes compute-bound." The model has no schedule term (it's been magnitude-wrong 5
+steps straight); the real win it can't see is per-CTA efficiency — G warps + KV-once should move me much
+closer to that now-8×-lower floor. The deliverable is the measured µs/tok drop and **reclaiming SDPA at
+B≥8** (where v7 lost 0.5×), not the floor itself.
+
+### Why CUDA-core first (the staging)
+The kickoff said target sm_80 with `mma.m16n8k16` + `cp.async`. But a T4 can't run those, and my whole
+cheap correctness loop is on T4. So Cut 1 keeps both matmuls on CUDA cores — it still gets G-warps +
+KV-once + `AI=2G/b`, just no tensor-core GEMM — which isolates M-packing as one variable and validates it
+for ~$0.15/hr. Cut 2 adds the tensor-core path on a rented A100, where the M<16→M≥16 gate forces the
+three-way ablation (pad-to-16 / pack-two-groups / CUDA-core-QK). Tensor-core uplift is then measured
+*against the CUDA-core M-packed baseline* — a clean two-variable decomposition.
+
+**Say-this:** "GQA gives me G query heads sharing one KV head. v7 wasted that — each head re-read the KV
+and used one of eight warps. v8 packs the G heads into the GEMM's M dimension: stage the KV head once, run
+G rows against it, so G warps work and KV bytes drop by G — AI goes 2/b to 2G/b. That's not a guess about
+the bottleneck; it's the exact thing v7 *measured* — per-CTA-bound, 1-of-8 warps. I forked v7 and changed
+only the warp-to-head index math; the gather, softmax, and merge are byte-identical. The roofline says AI
+rises G× but I stay HBM-bound — A100's ridge is 153 — so the headline isn't 'compute-bound now,' it's
+moving from 10% of the floor toward it and reclaiming the batch regime SDPA took. I built it CUDA-core
+first so I could prove M-packing on a cheap T4 before renting an A100 for the tensor-core GEMM."

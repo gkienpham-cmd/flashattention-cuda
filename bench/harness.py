@@ -19,9 +19,9 @@ import subprocess
 
 import torch
 
-from fa_kernels import attention, paged_attention
+from fa_kernels import attention, gqa_attention, paged_attention
 from fa_kernels.paged import build_paged_kv
-from fa_kernels.reference import sdpa_reference
+from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
 from roofline.archs import get_arch
 from roofline.model import estimate
 
@@ -92,13 +92,19 @@ def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
 
 def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
         seq_lens: list[int] | None = None, head_dims: list[int] | None = None,
-        decode: bool = False, q_len: int | None = None, page_size: int = 256) -> None:
+        decode: bool = False, q_len: int | None = None, page_size: int = 256,
+        gqa_groups: list[int] | None = None) -> None:
     # Default to the full sweep; --seq/--dim narrow it so ncu can profile one shape's 3 passes.
     # In --decode mode the swept N is the KV length and the query length collapses to q_len (1) — the
-    # regime v6/v7 decode targets, where the metric shifts to us/token + % HBM bandwidth (research §8).
+    # regime v6/v7/v8 decode targets, where the metric shifts to us/token + % HBM bandwidth (research §8).
     # `batches` sweeps B: at decode, BH = B*H is the occupancy knob, so a multi-B sweep MEASURES the
     # occupancy->bandwidth crossover (%HBM climbing as BH passes ~2*SM) that the re-plan only predicted.
-    paged = backend == "v7_paged"
+    # `gqa_groups` (v8 only) sweeps the GQA group factor G = H_q/H_kv: H stays the query-head count and
+    # H_kv = H//G shrinks as G grows, so KV bytes drop by G and decode AI = 2/b -> 2G/b. The v8 analogue
+    # of the --batch sweep: it MEASURES the GEMV->GEMM (per-CTA efficiency) win as G activates G warps.
+    paged = backend in ("v7_paged", "v8_gqa")
+    is_gqa = backend == "v8_gqa"
+    groups = gqa_groups or [1]
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
     nq = (q_len if q_len is not None else (1 if decode else None))   # None -> square (N_q = N_k)
@@ -110,40 +116,59 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
     clk_cur, clk_max = _sm_clock_mhz()
     print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  precision={precision}  causal={causal}  decode={decode}")
     if decode:
-        print(f"# {'shape(q x kv)':>16} | {'ours p50/max ms':>18} | {'us/tok':>8} | "
+        print(f"# {'shape(q x kv)':>19} | {'ours p50/max ms':>18} | {'us/tok':>8} | "
               f"{'%HBM':>6} | {'vs sdpa':>8} | {'vs naive':>8} | roofline")
     else:
-        print(f"# {'shape':>16} | {'ours p50/max ms':>18} | {'sdpa p50/max ms':>18} | "
+        print(f"# {'shape':>19} | {'ours p50/max ms':>18} | {'sdpa p50/max ms':>18} | "
               f"{'speedup':>8} | {'tok/s(ours)':>12} | roofline")
 
-    arch = get_arch(sm) if sm in {"sm_75"} else None
+    # Roofline row prints for any arch we have constants for (T4/A100/B300); unknown sm -> skip it.
+    try:
+        arch = get_arch(sm)
+    except KeyError:
+        arch = None
     dt = _dtype(precision)
 
     for B in batches:
       for N in seq_lens:
         for d in head_dims:
+          for G in groups:
             qn = nq if nq is not None else N
-            q = torch.randn(B, H, qn, d, device=dev, dtype=dt)
-            k = torch.randn(B, H, N, d, device=dev, dtype=dt)
-            v = torch.randn(B, H, N, d, device=dev, dtype=dt)
+            # GQA (v8): H is the query-head count (held fixed); H_kv = H//G KV heads. As G grows, KV
+            # bytes drop by G (shared across the group). Skip G that doesn't divide H. Non-GQA: G=1,
+            # H_kv=H (every prior backend), so the body is unchanged for them.
+            if is_gqa and H % G != 0:
+                print(f"  # skip G={G}: H={H} not divisible by G")
+                continue
+            H_kv = (H // G) if is_gqa else H
+            q = torch.randn(B, H,    qn, d, device=dev, dtype=dt)
+            k = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
+            v = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
 
-            base = lambda: sdpa_reference(q, k, v, causal=causal)
-            if paged:
+            q_off = (N - qn) if causal else 0
+            if is_gqa:
+                # v8 reads a PAGED GQA KV (H_kv heads); the oracle expands KV by G (repeat_interleave).
+                base = lambda: sdpa_reference_gqa(q, k, v, causal=causal)
+                k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size)
+                ours = lambda: gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k,
+                                             causal=causal, q_offset=q_off)
+            elif paged:
                 # v7 reads a PAGED KV: scatter the dense k,v into shuffled physical pages + a block
                 # table, then time the gather kernel on that layout. Decode causal places the single
                 # query at logical N_k-1 (q_offset = N_k - qn) so it attends the WHOLE cache instead of
                 # the degenerate 1-key short-circuit -> the causal-decode rows become meaningful.
+                base = lambda: sdpa_reference(q, k, v, causal=causal)
                 k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size)
-                q_off = (N - qn) if causal else 0
                 ours = lambda: paged_attention(q, k_pool, v_pool, block_table, page_size, n_k,
                                                causal=causal, q_offset=q_off)
             else:
+                base = lambda: sdpa_reference(q, k, v, causal=causal)
                 ours = lambda: attention(q, k, v, causal=causal, backend=backend)
 
             o_p50, o_max = _time_ms(ours)
             s_p50, s_max = _time_ms(base)
             speedup = s_p50 / o_p50
-            tokens = B * H * qn
+            tokens = B * H * qn            # work is per QUERY head; H is H_q (unchanged by G)
             toks_s = tokens / (o_p50 / 1e3)
 
             roof = ""
@@ -156,35 +181,47 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # read-once ideal (AI ~1000+). NOTE the model counts ONE exp per score, but v3's
                 # two-pass recomputes scores -> it does ~2x the exp work, so the printed MUFU bound
                 # is optimistic; the ncu read is what settles MMA-vs-MUFU (the Step-2 discipline).
-                # v6 (and v5) read FP16 KV regardless of the input dtype (they cast in the kernel),
-                # so the roofline byte count uses fp16 -> at N_q=1 this is the AI=2/b=1.0 decode bound.
+                # v5/v6/v7/v8 read FP16 KV regardless of the input dtype (they cast in the kernel),
+                # so the roofline byte count uses fp16. For v8, G>1 -> the decode bound is AI=2G/b.
                 tile_m, tile_n = _roofline_tile(backend, d)
-                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv", "v7_paged") else precision
+                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa") else precision
                 est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
                                materialize_s=backend in ("v1_naive", "v2_tiled"),
-                               tile_m=tile_m, tile_n=tile_n)
+                               tile_m=tile_m, tile_n=tile_n, G=(G if is_gqa else 1))
                 roof = f"{est.limiter.upper()} (~{est.seconds*1e3:.2f}ms)"
 
             if decode:
                 # Decode headline metrics (research §8): us/token, % of peak HBM bandwidth achieved on
-                # the K+V read (2*B*H*N*d*b bytes, b=2 for fp16 KV), and the speedup over a NAIVE
-                # seqlen_q=1 loop (v5 run at N_q=1, the 1xBH single-block-per-head schedule v6 must beat).
+                # the K+V read (2*B*H_kv*N*d*b bytes, b=2 for fp16 KV — H_kv, NOT H_q, since GQA shares
+                # KV across the group), and the speedup over the NO-M-PACKING floor. For v8 that floor is
+                # v7 run on the SAME attention with KV broadcast-expanded to H_q heads (each query head
+                # re-reads its KV head, G times the bytes) — the cleanest same-session isolation of
+                # M-packing's one variable. For v6/v7 it stays the naive seqlen_q=1 loop (v5 @ N_q=1).
                 us_tok = o_p50 * 1e3 / tokens
                 if arch is not None:
-                    kv_bytes = 2.0 * B * H * N * d * 2  # K and V, fp16
+                    kv_bytes = 2.0 * B * H_kv * N * d * 2  # K and V, fp16; H_kv KV heads
                     hbm_pct = (kv_bytes / (o_p50 / 1e3)) / (arch.hbm_bw_gbps * 1e9) * 100.0
                 else:
                     hbm_pct = float("nan")
                 try:
-                    naive = lambda: attention(q, k, v, causal=causal, backend="v5_wmma")
+                    if is_gqa:
+                        k_exp = k.repeat_interleave(G, dim=1)   # [B, H_q, N, d] — no-packing baseline
+                        v_exp = v.repeat_interleave(G, dim=1)
+                        kp7, vp7, bt7, nk7 = build_paged_kv(k_exp, v_exp, page_size)
+                        naive = lambda: paged_attention(q, kp7, vp7, bt7, page_size, nk7,
+                                                        causal=causal, q_offset=q_off)
+                    else:
+                        naive = lambda: attention(q, k, v, causal=causal, backend="v5_wmma")
                     n_p50, _ = _time_ms(naive)
                     vs_naive = n_p50 / o_p50
                 except Exception:
                     vs_naive = float("nan")
-                print(f"  {f'{B}x{H}x{qn}x{d}/{N}':>16} | {o_p50:7.3f}/{o_max:7.3f} | {us_tok:8.2f} | "
+                label = f"{B}x{H}x{qn}x{d}/{N}" + (f" G{G}" if is_gqa else "")
+                print(f"  {label:>19} | {o_p50:7.3f}/{o_max:7.3f} | {us_tok:8.2f} | "
                       f"{hbm_pct:5.1f}% | {speedup:7.2f}x | {vs_naive:7.2f}x | {roof}")
             else:
-                print(f"  {f'{B}x{H}x{N}x{d}':>16} | {o_p50:7.3f}/{o_max:7.3f} | "
+                label = f"{B}x{H}x{N}x{d}" + (f" G{G}" if is_gqa else "")
+                print(f"  {label:>19} | {o_p50:7.3f}/{o_max:7.3f} | "
                       f"{s_p50:7.3f}/{s_max:7.3f} | {speedup:7.2f}x | {toks_s:12.3e} | {roof}")
 
 
@@ -212,12 +249,19 @@ def main() -> None:
                         "over a naive seqlen_q=1 loop (v5_wmma). This is v6 split-KV's home turf.")
     p.add_argument("--q-len", type=int, default=None, dest="q_len",
                    help="query length in --decode mode (default 1); ignored without --decode.")
+    p.add_argument("--gqa-group", type=int, nargs="+", default=None, dest="gqa_groups",
+                   help="v8 only: sweep the GQA group factor G = H_q/H_kv over these values "
+                        "(e.g. --gqa-group 1 2 4 8 16 32). --heads is H_q (held fixed; must be "
+                        "divisible by each G); H_kv = H_q//G shrinks as G grows, so KV bytes drop by G "
+                        "and decode AI = 2/b -> 2G/b. The v8 analogue of --batch-sweep: it MEASURES the "
+                        "GEMV->GEMM per-CTA-efficiency win (G compute-warps + KV read once). Pair with "
+                        "--decode --seq 8192 to hold N_k fixed; use --heads 32 to allow G up to 32.")
     a = p.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("no CUDA device; run this on the GPU (Colab T4 / rented box)")
     batches = a.batch_sweep if a.batch_sweep else [a.batch]
     run(a.backend, a.precision, batches, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim,
-        decode=a.decode, q_len=a.q_len, page_size=a.page_size)
+        decode=a.decode, q_len=a.q_len, page_size=a.page_size, gqa_groups=a.gqa_groups)
 
 
 if __name__ == "__main__":

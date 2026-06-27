@@ -25,6 +25,7 @@ so the physical pages may be in any (shuffled) order. Output is dense [B, H, N_q
 from __future__ import annotations
 
 DEFAULT_PAGED_BACKEND = "v7_paged"
+DEFAULT_GQA_BACKEND = "v8_gqa"
 
 
 def build_paged_kv(k, v, page_size: int, *, shuffle: bool = True, seed: int | None = None):
@@ -82,6 +83,32 @@ def paged_attention(q, k_pool, v_pool, block_table, page_size, n_k, *,
     """
     # Imported here (not at module top) so `import fa_kernels` succeeds on a CPU-only box; dispatch
     # pulls in torch + the CUDA toolchain only when a kernel actually runs. Mirrors attention().
+    from .dispatch import get_backend
+
+    if scale is None:
+        scale = 1.0 / (q.shape[-1] ** 0.5)
+    module = get_backend(backend)
+    return module.forward(q, k_pool, v_pool, block_table, int(page_size), int(n_k),
+                          scale, causal, int(q_offset))
+
+
+def gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, *,
+                  scale: float | None = None, causal: bool = False, q_offset: int = 0,
+                  backend: str = DEFAULT_GQA_BACKEND):
+    """GQA M-packed paged-KV decode (v8+). Same paged contract as `paged_attention`, but the KV pool
+    has only `H_kv` heads while `q` has `H_q = G * H_kv` query heads — the `G` query heads of a group
+    share one KV head, and the kernel packs them into the score GEMM's M dimension (KV read once per
+    group, G compute-warps active). The group factor `G = H_q // H_kv` is derived from the shapes.
+
+    Shapes (note the head-count split vs paged_attention):
+        q           : [B, H_q,  N_q, d]                      (decode: N_q = 1)
+        k_pool      : [num_blocks, page_size, H_kv, d]       H_kv = H_q / G
+        v_pool      : [num_blocks, page_size, H_kv, d]
+        block_table : [B, n_logical]  int32
+
+    `causal`/`q_offset` behave exactly as in `paged_attention` (decode: q_offset = n_k - N_q so the
+    single query attends the whole cache). Output is dense [B, H_q, N_q, d].
+    """
     from .dispatch import get_backend
 
     if scale is None:

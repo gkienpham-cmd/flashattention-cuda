@@ -24,6 +24,25 @@ def sdpa_reference(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return F.scaled_dot_product_attention(q, k, v, is_causal=causal, scale=scale)
 
 
+def sdpa_reference_gqa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                       *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
+    """GQA correctness oracle: broadcast-expand the KV heads to match q, then call SDPA.
+
+    `q` has H_q query heads; `k, v` have H_kv = H_q / G heads (the G query heads of a group share one
+    KV head). We expand with `repeat_interleave(G, dim=1)` — NOT `repeat`/`tile` — so KV head `h_kv`
+    serves query heads `[h_kv*G, h_kv*G + G)`, exactly matching the kernel's `h_q = h_kv*G + g_local`
+    mapping. (`repeat` would instead tile the heads `[0,1,..,H_kv-1, 0,1,..]`, a silent-wrong oracle.)
+    When H_q == H_kv (G=1) this is identical to `sdpa_reference`.
+    """
+    H_q, H_kv = q.shape[1], k.shape[1]
+    if H_kv != H_q:
+        assert H_q % H_kv == 0, f"H_q={H_q} must be a multiple of H_kv={H_kv}"
+        G = H_q // H_kv
+        k = k.repeat_interleave(G, dim=1)
+        v = v.repeat_interleave(G, dim=1)
+    return F.scaled_dot_product_attention(q, k, v, is_causal=causal, scale=scale)
+
+
 def fp64_reference(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                    *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
     """Ground-truth attention in float64. Used to measure quantization RMSE in Phase 3.

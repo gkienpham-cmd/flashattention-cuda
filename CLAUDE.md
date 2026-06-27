@@ -174,7 +174,26 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   **FlashInfer/FlashMLA, NOT "beat FA4"** — FA4's decode path is now *upstreamed* (Modal PRs, `pack_GQA`
   2.92×). B300 confirmed: HBM flat **8 TB/s**, 288 GB, NVFP4 15 PF dense, exp 2× (10.7 TeraExp/s), `sm_103`.
   Cleanup TODOs: bottom-right causal-mask ref; stale "split-KV fills SMs" comments in
-  `paged_attention.cu:221-226` + `roofline/model.py:96-99`.
+  `paged_attention.cu:221-226` + `roofline/model.py:96-99` (both now **corrected**).
+- **Step 8 (v8 GQA M-packing, `kernels/v8_gqa/`)** — **PARTIAL: Phase 0 (roofline) + Cut 1 (CUDA-core)
+  code complete; GPU gate PENDING.** Built STAGED (Kien's call): **Cut 1 = CUDA-core M-pack on sm_75/T4**
+  (`_MIN_CAPABILITY=(7,0)`; isolates M-packing cheaply, no tensor cores) → **Cut 2 = sm_80 tensor-core +
+  the full 3-way M≥16 ablation** (pad-16 / multi-group-pack / CUDA-core-QK) `[RENT A100]`. Cut 1 **forks
+  v7 verbatim** → `gqa_attention.cu`, changing ONLY the index math: grid z = `B·H_kv` (KV heads), packed
+  row `m_row=blockIdx.x·8+warp` → `(g_local=m_row/N_q, i_q=m_row%N_q, h_q=h_kv·G+g_local)`; gather uses
+  `H_kv,h_kv`; **causal mask uses `i_q` NOT `m_row`** (trap); workspace/merge stay query-head-shaped
+  `[B,H_q,N_q,S,*]`. So the G query heads of a group share one staged KV tile → **G warps active (not 1),
+  KV read once, `AI = 2/b → 2G/b`** — attacks v7's MEASURED per-CTA wall. New `gqa_attention()` API +
+  `sdpa_reference_gqa` oracle (KV via **`repeat_interleave(G)`**, not `repeat` — trap). **Roofline (Task 1)
+  extended** (`estimate(...,G)`; A100/B300 archs added): **prediction recorded BEFORE coding** — at G=8 the
+  AI rises 8× (1.0→8.0) and the HBM floor drops 8× (0.132→0.016 ms), but the **limiter STAYS HBM** (A100
+  fp16 ridge=153, so even G=32 is far below — NO compute-flip in the realistic GQA range; the win is
+  per-CTA efficiency the model can't see → deliverable is the µs/tok drop + **reclaim-SDPA-at-B≥8**).
+  Tests (3 GQA fns: decode G∈{1,2,4,8}×non-multiple `N_k`×causal, idle-warp G=3 + multi-tile G=16, square
+  reduction), harness `--gqa-group` sweep + same-session vs-v7-no-packing A/B, gate notebook
+  `notebooks/v8_gqa_gate.ipynb` all landed. **Author machine can't compile `.cu`** → build + correctness
+  (Gate 1) + bench + quiz (Gate 2) are the outstanding GPU work. See `results.md`/`decisions.md` Step 8,
+  `interview-prep.md` C11, `docs/v8-kickoff.md`.
 
 ## Next steps
 
@@ -188,7 +207,9 @@ precision (headline) → v11 MLA/speculative.
    and the stale "split-KV fills the SMs" comments were corrected in `paged_attention.cu` + `roofline/model.py`.
    Carry-forward cleanups (not gating, → v8's harness): a fully-honest causal `vs sdpa` needs the reference
    built with a bottom-right mask; bare-metal pipe-util to confirm the smem-residency (2 blocks/SM) story directly.
-2. **Step 8 — GQA M-packing (the reorder, NOW the per-CTA-efficiency lever):** pack the `G` query heads
+2. **Step 8 — GQA M-packing (the reorder, NOW the per-CTA-efficiency lever) — Cut 1 code complete; GPU
+   gate (build + correctness + bench + quiz) pending, then Cut 2 `[RENT A100]` tensor cores + ablation.**
+   Pack the `G` query heads
    of a GQA group into the CTA's `M` dim → GEMV becomes an `M=G` GEMM (tensor cores re-engage), KV read
    once, `AI = 2/b → 2G/b`, **and G compute-warps/block** (the fix v7 proved is needed). Promoted ahead
    of low-precision because v7 measured the kernel is per-CTA-bound at **all** batch sizes (flat ~10–12%

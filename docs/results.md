@@ -593,3 +593,60 @@ the "predicted crossover" arc replaced with the measured-flat line. See `decisio
    full-cache oracle and passes 51/51; only the bench column misleads. Fix (v8-harness, ~6 lines):
    bottom-right-aligned causal mask in the reference. *(Full cited synthesis with the GQA/B300 research:
    [`v7-deep-research.md`](v7-deep-research.md).)*
+
+## Step 8 — GQA M-packing (v8)
+
+*IN PROGRESS. **Phase 0 (roofline) done + recorded below — this is the prediction-before-measurement,
+captured BEFORE any kernel code** (the per-step gate; v7 just had a prediction refuted, so the discipline
+matters). Cut 1 = CUDA-core M-pack on T4 (cheap correctness + the warp-utilization/KV-reuse win as one
+isolated variable); Cut 2 = sm_80 tensor-core variant + the M≥16 ablation `[RENT A100]`. Measured tables
+below are stubbed until the gate notebook runs.*
+
+**Why this step:** v7 measured decode is **per-CTA-bound at every batch size** — flat ~10–12% HBM from
+BH=8→512, refuting the occupancy→bandwidth crossover. The binding constraint is *inside the CTA*: at
+`N_q=1` only **1 of 8 warps computes** (GEMV shape) and `sK+sV=32 KB` caps residency at 2 blocks/SM.
+v8's one new variable — **GQA M-packing** — packs the `G = H_q/H_kv` query heads that share one KV head
+into the score GEMM's `M` dimension, so a CTA reads that KV head **once** and computes `G` query rows
+against it: **G warps light up instead of 1**, KV bytes drop by `G`, and decode `AI = 2/b → 2G/b`. It
+attacks the *measured* limiter (per-CTA efficiency), which is why it's promoted ahead of the byte levers
+(v9 FP8 / v10 NVFP4) — cutting bytes is premature while the kernel sits ≥8× below the bandwidth wall.
+
+**Roofline prediction (Task 1 — `roofline/model.py` now takes `G`; decode `AI = 2G/b`).** Recorded on
+**A100 sm_80** (the Cut-2 perf target; the headline runs there), decode `N_q=1`, `N_k=8192`, FP16 KV
+`b=2`, B=8 H=8:
+
+| G (group) | model | AI (FLOP/byte) | limiter | t_hbm floor | note |
+|---|---|---|---|---|---|
+| 1 (MHA)        | `2/b`  | **1.0** | HBM | 0.132 ms | reproduces the v6/v7 decode bound exactly |
+| 4 (Llama-3-8B) | `2G/b` | **4.0** | HBM | 0.033 ms | KV read once per 4 heads → 4× fewer bytes |
+| 8 (L3-70B)     | `2G/b` | **8.0** | HBM | 0.016 ms | 8× lower floor; still HBM-bound (8 < ridge) |
+
+**The prediction, stated honestly (so the measurement can refute it):**
+1. **AI rises exactly `G×` (1→4→8) and the HBM *floor* drops `G×`** (0.132→0.016 ms at G=8) — KV shared
+   across the group is the whole mechanism.
+2. **The limiter does NOT flip to compute.** A100's FP16 tensor-core ridge is **153 FLOP/byte**; even at
+   G=8, AI=8.0 ≪ 153, so the model stays **HBM-bound**. A flip would need `G ≈ 153`, which GQA never
+   reaches (real `G ≤ 8–16`). So the headline is *not* "v8 becomes compute-bound."
+3. **The real, model-invisible win is per-CTA efficiency.** v7 measured the kernel at only ~10% of its
+   HBM floor; v8 should (a) move the kernel much closer to the now-`G×`-lower floor by lighting up `G`
+   warps and reading KV once, and (b) on Cut 2, re-engage tensor cores via the `M=G` GEMM. The roofline
+   has been magnitude-wrong 5 straight steps because it has no schedule term — so the deliverable is the
+   **measured µs/tok drop and the reclaim-SDPA-at-batch**, not the model's floor.
+
+**Predicted G-sweep shape (to be measured):** µs/tok should fall as `G` rises (more warps active, KV read
+once), with the **biggest jump on Cut 2 at `G` crossing the M<16→M≥16 tensor-core threshold** (G=8 pads
+to 16; G=16 fills a tile). On Cut 1 (CUDA-core) the win is bounded by "G warps + KV-once" with no
+tensor-core uplift — that gap is exactly what Cut 2's ablation measures.
+
+**Measured — correctness (Gate 1):** _pending T4 run (`notebooks/v8_gqa_gate.ipynb`)._ Target: 0-fail vs
+`sdpa_reference_gqa` at tol 2e-2 across decode GQA (`G∈{1,2,4,8}`, non-multiple `N_k`, causal+offset),
+prefill square reduction, and v7 regression.
+
+**Measured — Cut 1 decode bench + G-sweep (T4):** _pending._ Columns: µs/tok, %HBM, vs SDPA, vs v7
+(same-session A/B), per `G∈{1,2,4,8,16,32}`.
+
+**Measured — reclaim-SDPA-at-batch (B≥8):** _pending._ The headline the v7 data created — v7 *lost* to
+SDPA at B≥8 (0.5×); v8 must reclaim it.
+
+**Measured — Cut 2 tensor-core ablation (A100):** _pending `[RENT]`._ pad-M=8→16 vs multi-group-pack vs
+CUDA-core-QK, vs FlashInfer / XQA / vLLM PagedAttention v2.

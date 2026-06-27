@@ -518,3 +518,69 @@ per-CTA mechanism: smem caps residency at 2 blocks/SM, so batch replicates an in
 making it efficient. **Next (v8 — GQA M-packing):** pack `G` query heads into `M` (GEMV→`M=G` GEMM,
 tensor cores re-engage, KV read once, `AI = 2/b → 2G/b`, **G active warps/block**). v7's data says v8
 must lead at *all* batch sizes; `decode-replan §5`.
+
+## Step 8 — GQA M-packing (v8)
+
+*IN PROGRESS. **Phase 0 (roofline) done + recorded; Cut 1 (CUDA-core) code complete + wired; GPU gate
+pending.** This is the per-step gate captured BEFORE the kernel landed. The build is STAGED (user
+decision): Cut 1 = CUDA-core M-pack on sm_75/T4 (cheap correctness, M-packing isolated as one variable);
+Cut 2 = sm_80 tensor-core variant + the M≥16 ablation `[RENT A100]`.*
+
+**Bottleneck (predicted/attacked): the per-CTA wall v7 MEASURED.** v7 proved decode is per-CTA-bound at
+every batch size (flat ~10–12% HBM, BH=8→512): at `N_q=1` only **1 of 8 warps computes** and `sK+sV=32 KB`
+caps residency at 2 blocks/SM. v8 attacks exactly this: packing the `G = H_q/H_kv` query heads of a group
+into `M` lights up **G compute-warps** against a KV head **read once**, raising `AI = 2/b → 2G/b`. The win
+is **per-CTA efficiency, not occupancy** (v7 proved filling the grid doesn't move %HBM).
+
+**Options:**
+- **A — bytes first (FP8/NVFP4 KV):** refuted by v7 — the kernel never gets within ~8× of the bandwidth
+  wall at any batch, so cutting bytes multiplies a term it can't reach. Deferred to v9/v10.
+- **B — persistent/fused merge (v8.5):** the two-kernel launch + merge were *not* isolated as the limiter
+  (smem cap + single-warp GEMV dominate), so this is lower priority. Deferred.
+- **C (chosen) — GQA M-packing:** the one lever that directly converts the 1-of-8-warps GEMV into a
+  G-row GEMM with KV read once. Leads the reordered arc at *all* batch sizes.
+
+**Choices (ratified with the user):**
+- **Staged arch: Cut 1 CUDA-core (sm_75/T4) before Cut 2 tensor-core (sm_80).** The kickoff doc targeted
+  sm_80 directly, but a Turing T4 can't run `mma.m16n8k16`/`cp.async`, so a tensor-core-from-the-start
+  kernel couldn't use the cheap T4 correctness loop. Cut 1 keeps both matmuls on CUDA cores — it still
+  gets G-warps-active + KV-read-once + `AI=2G/b`, just without the GEMV→GEMM tensor-core uplift — so
+  M-packing is validated cheaply and isolated as one variable. `_MIN_CAPABILITY["v8_gqa"] = (7,0)` for
+  Cut 1; bumps to `(8,0)` when Cut 2 lands.
+- **Fork v7 verbatim; change only the index math.** The hot loop (cooperative paged gather + online
+  softmax + O-rescale), the LSE merge, and `choose_splits` are carried byte-for-byte. The only changes:
+  the warp→work mapping (`m_row → (g_local, i_q, h_q)`), the gather head (`H→H_kv`), and `base_blocks =
+  B·H_kv·row_tiles`. Two correctness traps encoded: the causal mask uses the **query position `i_q`**
+  (not the packed row `m_row` — packed rows share a position), and the workspace/merge stay **query-head
+  shaped** `[B,H_q,N_q,S,*]` while the pool gather is KV-head shaped.
+- **`G` derived from shapes, not an argument.** `H_kv = k_pool.size(2)`, `G = H_q/H_kv`; new
+  `gqa_attention(...)` API mirrors `paged_attention` (pool now has `H_kv` heads). v8 is **not** in the
+  dense `BACKENDS` list — it gets its own GQA tests (like v7).
+- **GQA reference uses `repeat_interleave(G)`, not `repeat`.** KV head `h_kv` must serve query heads
+  `[h_kv·G, h_kv·G+G)` to match the kernel's `h_q = h_kv·G + g_local`; `repeat`/tile would be a
+  silent-wrong oracle.
+- **Cut 2 ablation (full, user decision): pad-M=8→16+mask vs multi-group-pack vs CUDA-core-QK.** G=8 < 16
+  doesn't fill a tensor-core tile, and the three approaches disagree on magnitude — the G-sweep across the
+  M<16→M≥16 threshold is the headline experiment.
+
+**What changes on another arch:** Cut 1 is arch-independent CUDA-core math (runs sm_70+). Cut 2 needs
+sm_80 (`mma.m16n8k16` + `cp.async`); the tile/`BLOCK_M` retune per arch. `choose_splits` `num_sm` 40→108
+(A100)→160 (B300). The split-KV self-disables at `G×` larger batch than v7 (z-extent is now `B·H_kv`),
+which is fine — batch never moved %HBM anyway.
+
+**Roofline prediction (recorded, A100 sm_80, decode `N_q=1`, `N_k=8192`, FP16):** `AI = 2G/b` rises
+exactly `G×` (1.0→8.0 at G=8) and the HBM floor drops `G×` (0.132→0.016 ms), but the limiter **stays
+HBM** — A100's FP16 ridge is 153, so even G=8 (and G=32, AI≈32) is far below. **No limiter flip in the
+realistic GQA range.** So the headline is *not* "v8 becomes compute-bound"; it's that the kernel should
+move much closer to the now-`G×`-lower floor (the roofline has no schedule term — magnitude-wrong 5
+straight steps — so the µs/tok drop + reclaim-SDPA-at-batch are the deliverables, not the floor).
+
+**Measured:** _pending GPU gate (`notebooks/v8_gqa_gate.ipynb`)._ Targets: correctness 0-fail vs
+`sdpa_reference_gqa` (decode `G∈{1,2,4,8}` + non-multiple `N_k` + causal/offset + idle-warp `G=3` +
+multi-tile `G=16` + square reduction) **and** v7 regression; the Cut-1 G-sweep (µs/tok ↓, vs-v7-no-packing
+↑ as `G` rises); reclaim SDPA at B≥8. Then Cut 2 `[RENT A100]`: the 3-way ablation vs FlashInfer / XQA /
+vLLM PagedAttention v2.
+
+**Claim discipline (carried from v7):** frame as "an open, roofline-documented decode kernel measured vs
+FlashInfer/FlashMLA"; op-level ~2.9× single-token decode, NOT end-to-end, NOT "beat FA4" (FA4's decode
+path is upstreamed). See `decode-replan §5`, `v8-kickoff.md`.

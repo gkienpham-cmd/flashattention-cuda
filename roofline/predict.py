@@ -17,11 +17,11 @@ from .model import estimate
 
 def predict_bottleneck(sm: str, B: int, H: int, N_q: int, N_k: int, d: int,
                        precision: str, materialize_s: bool, use_tensor_core: bool,
-                       tile_m: int = 1, tile_n: int = 1):
+                       tile_m: int = 1, tile_n: int = 1, G: int = 1):
     arch = get_arch(sm)
     return arch, estimate(arch, B=B, H=H, N_q=N_q, N_k=N_k, d=d,
                           precision=precision, materialize_s=materialize_s,
-                          use_tensor_core=use_tensor_core, tile_m=tile_m, tile_n=tile_n)
+                          use_tensor_core=use_tensor_core, tile_m=tile_m, tile_n=tile_n, G=G)
 
 
 def _parse_shape(s: str) -> tuple[int, int, int, int]:
@@ -42,18 +42,26 @@ def main() -> None:
                         "output element), e.g. 64x64. Only affects the --materialize-s traffic.")
     p.add_argument("--no-tensor-core", action="store_true",
                    help="use CUDA-core peak instead of tensor-core peak for the MMA bound")
+    p.add_argument("--kv-len", type=int, default=None, dest="kv_len",
+                   help="decode: N_k (KV-cache length) separate from the shape's N (=N_q). Omit for "
+                        "the square N_q=N_k case. Use e.g. --shape 8x8x1x128 --kv-len 8192 for decode.")
+    p.add_argument("--gqa-group", type=int, default=1, dest="gqa_group",
+                   help="GQA group factor G = H_q/H_kv (G query heads share one KV head). Decode AI "
+                        "= 2G/b; G=1 is plain MHA. The v8 lever.")
     a = p.parse_args()
 
     B, H, N, d = _parse_shape(a.shape)
+    N_q = N
+    N_k = a.kv_len if a.kv_len is not None else N
     tile_m, tile_n = (int(x) for x in a.tile.lower().split("x"))
-    arch, est = predict_bottleneck(a.arch, B, H, N, N, d, a.precision,
+    arch, est = predict_bottleneck(a.arch, B, H, N_q, N_k, d, a.precision,
                                    a.materialize_s, not a.no_tensor_core,
-                                   tile_m=tile_m, tile_n=tile_n)
+                                   tile_m=tile_m, tile_n=tile_n, G=a.gqa_group)
 
     util = est.utilization()
     print(f"arch        : {arch.name} ({arch.sm})")
-    print(f"shape       : B={B} H={H} N={N} d={d}  precision={a.precision}  "
-          f"materialize_S={a.materialize_s}  tile={tile_m}x{tile_n}")
+    print(f"shape       : B={B} H={H} N_q={N_q} N_k={N_k} d={d}  precision={a.precision}  "
+          f"materialize_S={a.materialize_s}  tile={tile_m}x{tile_n}  G={a.gqa_group}")
     print(f"LIMITER     : {est.limiter.upper()}   (predicted lower bound {est.seconds*1e3:.3f} ms)")
     print(f"  t_mma     : {est.t_mma*1e3:8.3f} ms   util {util['mma']*100:5.1f}%")
     print(f"  t_hbm     : {est.t_hbm*1e3:8.3f} ms   util {util['hbm']*100:5.1f}%")

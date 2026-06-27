@@ -49,9 +49,15 @@ class RooflineEstimate:
 
 def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
              precision: str = "fp16", materialize_s: bool = False,
-             use_tensor_core: bool = True, tile_m: int = 1, tile_n: int = 1) -> RooflineEstimate:
+             use_tensor_core: bool = True, tile_m: int = 1, tile_n: int = 1,
+             G: int = 1) -> RooflineEstimate:
     bh = B * H
     nbytes = _BYTES[precision]
+    # GQA group factor: G query heads share one KV head (H_kv = H/G). The G query heads still each
+    # do their matmul (mma_flops unchanged), but the KV they read is shared, so KV bytes drop by G
+    # -> decode AI = 2/b -> 2G/b. G=1 is plain MHA (every prior version), so all old calls are
+    # byte-identical. Only the fused-decode KV term below divides by G; Q-read and O-write are
+    # per-query-head and stay at bh.
 
     # --- compute: two matmuls, each 2*M*N*K FLOPs ---
     mma_flops = 2.0 * bh * N_q * N_k * d   # QK^T
@@ -91,17 +97,24 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         hbm_bytes = operand_bytes + s_bytes + o_write
     else:
         # Fused versions (v3+ online softmax): S never touches HBM and streaming reads each operand
-        # ~once. K and V are the two N_k-sized operands (2*bh*N_k*d); Q is only N_q rows and O is
-        # written once. At DECODE (N_q=1) this is the research §4 decode roofline: work = 4*N_k*d
-        # FLOPs, traffic = 2*N_k*d*b bytes -> arithmetic intensity AI = 4Nd/(2Nd*b) = 2/b FLOP/byte,
-        # INDEPENDENT of N_k -> pure HBM-bound, far below the ridge (the tensor cores idle). The split-
-        # KV schedule (v6) does not change these bytes — it fills the grid but does NOT make the kernel
-        # reach this bound: v7's --batch sweep measured only ~10% of HBM on T4 decode (flat across batch),
-        # because the kernel is per-CTA-bound (GEMV shape + 32 KB smem capping residency at 2 blocks/SM),
-        # not bandwidth-bound. So this t_hbm is a floor the schedule is far from, not one split-KV attains.
-        # (Prefill N_q=N_k recovers the old ~3*bh*N_k*d read-once estimate.)
-        # GQA/MLA would raise AI to 2G/b by sharing KV across heads — the v10/v11 lever, not modeled.
-        hbm_bytes = 2.0 * bh * N_k * d * nbytes + bh * N_q * d * nbytes + o_write
+        # ~once. K and V are the two N_k-sized operands; Q is only N_q rows and O is written once. At
+        # DECODE (N_q=1, G=1) this is the research §4 decode roofline: work = 4*N_k*d FLOPs, traffic =
+        # 2*N_k*d*b bytes -> AI = 4Nd/(2Nd*b) = 2/b FLOP/byte, INDEPENDENT of N_k -> pure HBM-bound,
+        # far below the ridge (the tensor cores idle).
+        #
+        # NOTE on what t_hbm is and is NOT: it is a FLOOR the kernel is far from, not a bound split-KV
+        # attains. v7's --batch sweep measured only ~10% of HBM on T4 decode, FLAT from BH=8 to 512 (no
+        # occupancy->bandwidth crossover). The kernel is per-CTA-bound, not bandwidth-bound: at N_q=1
+        # only 1 of 8 warps computes (GEMV shape) and sK+sV=32 KB caps residency at 2 blocks/SM. Filling
+        # the grid with splits does NOT move %HBM. So the lever is per-CTA EFFICIENCY, not bytes.
+        #
+        # v8 GQA M-packing IS that lever (promoted from the old "v10/v11, not modeled" note): G query
+        # heads share one KV head, so KV is read once per group (bh/G) instead of per head (bh). KV bytes
+        # drop by G while FLOPs hold -> AI = 2/b -> 2G/b, and G warps light up instead of 1. The win is
+        # the G-fold per-CTA work-per-KV-byte, not occupancy. (Prefill N_q=N_k recovers the old
+        # ~3*bh*N_k*d read-once estimate; there KV is read once regardless of G within a CTA.)
+        kv_bytes = 2.0 * (bh / G) * N_k * d * nbytes
+        hbm_bytes = kv_bytes + bh * N_q * d * nbytes + o_write
     t_hbm = hbm_bytes / (arch.hbm_bw_gbps * 1e9)
 
     # --- MUFU exp: one exp per score entry ---

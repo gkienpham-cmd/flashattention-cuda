@@ -16,9 +16,9 @@ import pytest
 import torch
 
 from conftest import requires_cuda
-from fa_kernels import attention, paged_attention
+from fa_kernels import attention, gqa_attention, paged_attention
 from fa_kernels.paged import build_paged_kv
-from fa_kernels.reference import sdpa_reference
+from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
 
 # (B, H, N, d) shapes spanning the sweep we care about. Small + the head dims 64/128. The last
 # two have N that is NOT a multiple of v2's tile (64 at d=64, 32 at d=128) to exercise the
@@ -52,6 +52,9 @@ _TOL = {
     # extra approximation vs v5 is the cross-split LSE merge, but that combine is exact in FP32 — the
     # only new FP16 error is reading KV as half, identical to v5. Same 2e-2 holds.
     "v6_splitkv": (2e-2, 2e-2),
+    # v8_gqa is the same FP16-in/FP32-accum precision class as v6/v7 (it carries their split-KV + LSE
+    # merge byte-for-byte; M-packing changes only which warp owns which row, not the math). Same 2e-2.
+    "v8_gqa": (2e-2, 2e-2),
 }
 
 
@@ -229,4 +232,83 @@ def test_v7_paged_square_reduces(causal):
     out = paged_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=causal, q_offset=0)
     ref = sdpa_reference(q, k, v, causal=causal)
     atol, rtol = tol_for("v6_splitkv")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v8-specific: GQA M-PACKING. v8 carries v7's paged split-KV + LSE merge unchanged and changes exactly
+# which work each warp owns — it packs the G = H_q/H_kv query heads that SHARE one KV head into the
+# score GEMM's M dimension, so a CTA reads that KV head once and runs G query rows against it (G warps
+# active, not 1). The oracle must broadcast-expand KV by G with repeat_interleave (sdpa_reference_gqa),
+# matching the kernel's h_q = h_kv*G + g_local mapping; a plain `repeat` would be a silent-wrong oracle.
+# The KV pool here has H_kv heads (fewer than q's H_q). N_k=8190 is non-multiple (partial last page +
+# clamped last split under packing). FP16-in tolerance via tol_for("v8_gqa").
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("N_k", [4096, 8190])               # 8190 -> non-multiple last page/split
+@pytest.mark.parametrize("G", [1, 2, 4, 8])                 # group factor; G<8 leaves idle warps
+@pytest.mark.parametrize("causal", [False, True])
+def test_v8_gqa_decode(causal, G, N_k, d):
+    torch.manual_seed(8)
+    B, H_kv = 1, 2
+    H_q = G * H_kv
+    page_size = 128
+    q = torch.randn(B, H_q,  1,   d, device="cuda", dtype=torch.float32)   # decode: one query token
+    k = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)   # GQA: only H_kv KV heads
+    v = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=8)
+    # Causal decode: place the single query at logical N_k-1 (q_offset = n_k - N_q) so it attends the
+    # WHOLE cache -> equals the non-causal full scan. Oracle = SDPA over KV expanded by G.
+    q_offset = (n_k - 1) if causal else 0
+    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k,
+                        causal=causal, q_offset=q_offset)
+    ref = sdpa_reference_gqa(q, k, v, causal=False)
+    atol, rtol = tol_for("v8_gqa")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v8 idle-warp + multi-row-tile coverage: G=3 is non-power-of-2 and leaves 5 idle warps (M=3 < 8) —
+# the `active = m_row < M` guard must drop them, NOT a `G % 8 == 0` assumption. G=16 forces M=16 > 8,
+# so grid.x = ceil_div(16, 8) = 2 row-tiles per (batch, KV head): the block re-stages the KV head once
+# per tile (still 8x fewer reads than v7's per-query-head read). Both must match the GQA oracle.
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("G", [3, 16])
+def test_v8_gqa_idle_warps_and_multiblock(G, d):
+    torch.manual_seed(80)
+    B, H_kv, N_k = 1, 2, 8192
+    H_q = G * H_kv
+    page_size = 256
+    q = torch.randn(B, H_q,  1,   d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=80)
+    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=False, q_offset=0)
+    ref = sdpa_reference_gqa(q, k, v, causal=False)
+    atol, rtol = tol_for("v8_gqa")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v8 regression: the square (prefill) shape must still reduce to num_splits=1 through the GQA path,
+# exactly as v6/v7 do (base_blocks already fill the SMs -> 1 split, trivial merge). With M = G*N_q now
+# large, choose_splits returns 1 and each packed query row does the full attention. q_offset=0 with
+# N_q=N_k makes the mask gj > i_q the standard upper-left causal SDPA uses, so it compares directly to
+# SDPA causal over the G-expanded KV.
+@requires_cuda()
+@pytest.mark.parametrize("causal", [False, True])
+def test_v8_gqa_square_reduces(causal):
+    torch.manual_seed(81)
+    B, H_kv, N, d = 2, 2, 512, 64
+    G = 4
+    H_q = G * H_kv
+    page_size = 128
+    q = torch.randn(B, H_q,  N, d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H_kv, N, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H_kv, N, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size, seed=81)
+    out = gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, causal=causal, q_offset=0)
+    ref = sdpa_reference_gqa(q, k, v, causal=causal)
+    atol, rtol = tol_for("v8_gqa")
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
