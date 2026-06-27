@@ -305,3 +305,31 @@ raises the ceiling 8→65 TFLOPS *and* forces GEMM-shaped MMA tiles.
 **ncu:** still deferred — containerized rentals block hardware counters (`ERR_NVGPUCTRPERM`). The
 counter-free evidence (memory proof + CUPTI single-kernel trace + roofline distance) already names
 the limiter as FMA under-utilization; the pipe-util read is a bare-metal follow-up.
+
+---
+
+## Step 6 — Split-KV decode (v6) — SCAFFOLD STUB (fill at the measured close-out on Colab)
+
+*Status: kernel + wiring + tests scaffolded (FP16-in/FP32-accum, two kernels — partial + merge — behind
+one `forward`). NOT yet benched or quizzed. Per the per-step loop this section is completed once tests
+are green on Colab and the roofline-first prediction is recorded. The decode arc (v6→v11) and its
+rationale are in `docs/b300-decode-research.md`.*
+
+**Why this step:** v1–v5 parallelize over query rows, so at decode (`N_q = 1`) the grid collapses to
+`(1, B·H)` and the T4's 40 SMs sit idle (research blind-spot #2). v6 splits the KV axis across blocks
+(Flash-Decoding) to fill the SMs without changing the math.
+
+**Roofline prediction (T4 sm_75, decode `N_q = 1`, FP16 KV `b = 2`):** decode arithmetic intensity
+`AI = 2/b = 1.0` FLOP/byte, **independent of `N_k`** (research §4) — far below the T4 fp16 ridge (~203),
+so the predicted limiter is **HBM** and the floor is `time ≈ (2·B·H·N_k·d·2 bytes) / 320 GB/s`. The
+split-KV schedule does not change these bytes; it only lets the kernel *reach* this bound.
+
+| q×kv shape | ours p50/max ms | µs/tok | %HBM BW | vs SDPA | vs naive (v5 @ N_q=1) | roofline |
+|---|---|---|---|---|---|---|
+| _TODO on Colab (`python -m bench.harness --backend v6_splitkv --decode`)_ | | | | | | |
+
+**Reading it (TODO):** does v6 fill the SMs vs the `1×BH` naive loop (the `vs naive` column)? what % of
+the 320 GB/s does it actually reach? does the roofline finally predict the *location* (HBM) even if it
+misses magnitude again?
+
+**ncu:** deferred (counter-free norm — `max_memory_allocated` + CUPTI µs/token).

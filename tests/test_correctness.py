@@ -31,7 +31,7 @@ SHAPES = [
     (1, 2, 100, 128),   # 100 % 32 != 0  -> partial QK/PV tile at d=128
 ]
 
-BACKENDS = ["v1_naive", "v2_tiled", "v3_online", "v4_fused", "v5_wmma"]
+BACKENDS = ["v1_naive", "v2_tiled", "v3_online", "v4_fused", "v5_wmma", "v6_splitkv"]
 
 # Default FP32 tolerance (v1-v4: FP32 in / FP32 accumulate / FP32 out).
 ATOL, RTOL = 1e-4, 1e-4
@@ -47,6 +47,10 @@ _TOL = {
     "v3_online": (ATOL, RTOL),
     "v4_fused": (ATOL, RTOL),
     "v5_wmma": (2e-2, 2e-2),
+    # v6_splitkv is also FP16-in/FP32-accum (research §8 tags v6 "FP16"), so it shares v5's band. The
+    # extra approximation vs v5 is the cross-split LSE merge, but that combine is exact in FP32 — the
+    # only new FP16 error is reading KV as half, identical to v5. Same 2e-2 holds.
+    "v6_splitkv": (2e-2, 2e-2),
 }
 
 
@@ -147,4 +151,29 @@ def test_v5_wmma_fp16_stability(causal, d):
     out = attention(q, k, v, causal=causal, backend="v5_wmma")
     ref = sdpa_reference(q, k, v, causal=causal)
     atol, rtol = tol_for("v5_wmma")
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v6-specific: the DECODE regime (N_q=1, N_k large) is exactly what split-KV exists for and what the
+# square SHAPES above never exercise — there choose_splits picks num_splits=1 (base_blocks already
+# fill the SMs), so v6 reduces to plain attention and the merge is trivial. At N_q=1 with a small head
+# count choose_splits raises num_splits well above 1, so this is the only test that drives the real
+# cross-split LSE merge: each block owns a KV chunk, emits an unnormalized (O, m, l), and the merge
+# recombines. An N_k that is NOT a multiple of the chunk (8190) exercises the clamped last split and
+# the empty-/short-split merge weights; causal also makes whole splits future-only (l=0 -> dropped in
+# merge). FP16-in tolerance via tol_for("v6_splitkv").
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("N_k", [4096, 8192, 8190])
+@pytest.mark.parametrize("causal", [False, True])
+def test_v6_splitkv_decode(causal, N_k, d):
+    torch.manual_seed(5)
+    B, H = 1, 8
+    q = torch.randn(B, H, 1,   d, device="cuda", dtype=torch.float32)   # decode: one query token
+    k = torch.randn(B, H, N_k, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H, N_k, d, device="cuda", dtype=torch.float32)
+
+    out = attention(q, k, v, causal=causal, backend="v6_splitkv")
+    ref = sdpa_reference(q, k, v, causal=causal)
+    atol, rtol = tol_for("v6_splitkv")
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)

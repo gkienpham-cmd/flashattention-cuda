@@ -287,3 +287,38 @@ roofline-distance evidence already names the limiter.
 **Next (Step 5 — tensor cores):** FP16-in/FP32-accum WMMA. Raises the ceiling 8→65 TFLOPS *and*
 forces GEMM-shaped MMA tiles — directly attacking v4's FMA-efficiency gap. Expect the limiter to
 finally approach a real (tensor-core) MMA bound instead of a reduction-overhead wall.
+
+---
+
+## Step 6 — Split-KV decode (v6) — SCAFFOLD STUB
+
+*Status: scaffolded (kernel + wiring + tests); measured close-out + quiz pending on Colab. This opens
+the decode arc v6→v11 (`docs/b300-decode-research.md`): the long-term goal is a B300 low-precision
+decode kernel that beats FA4 (a BF16 prefill/training kernel) in the regime it never targets.*
+
+**Bottleneck (predicted): decode occupancy.** At `N_q = 1` the prefill grid
+`(ceil_div(N_q, rows), B·H)` collapses to `(1, B·H)` — a handful of blocks that starve the 40 SMs
+(research blind-spot #2). Decode is HBM-bound (`AI = 2/b`, §4); the issue is the kernel can't *reach*
+that bound with one block per head — there is no work to spread.
+
+**Options:**
+- **A — run v4/v5 unchanged at `N_q = 1`:** correct but `1×BH` blocks, SM-starved. This is the *naive
+  baseline* v6 must beat (the bench `vs naive` column).
+- **B (chosen) — split-KV / Flash-Decoding:** partition KV across blocks; each emits an unnormalized
+  partial `(O, m, ℓ)`; a merge kernel does the log-sum-exp combine across splits. Fills the SMs without
+  changing the result. Research §5 lever (a), §7 rank #1 ("v6 foundation"): high payoff, low risk, no
+  B300 needed.
+
+**Choice:** FP16-in/FP32-accum (research §8 tags v6 "FP16"), two kernels behind one `forward`,
+contiguous KV (paged gather is v7). `choose_splits` raises `num_splits` until the block count hits ~2×
+the SM count, capped at 32 and floored at a 256-key chunk; **prefill (large `N_q`) → `num_splits = 1` →
+v6 reduces to plain attention** (which is what makes the square-shape correctness tests pass). No
+tensor cores: at `N_q = 1` the matmuls are M=1 (GEMV), so WMMA would idle on a 1-row tile.
+
+**What changes on B300 (research §3):** 160 SMs ⇒ more splits (retune `choose_splits` `num_sm` 40→160);
+**HBM bandwidth is FLAT vs B200** ⇒ the real decode wins are **precision** (NVFP4 KV ≈ 3.5× fewer bytes,
+v9), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
+2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v8/v9.
+
+**Measured:** TODO on Colab (correctness count, decode bench, % HBM BW, vs-naive speedup). **Quiz:**
+pending. **Next (v7):** paged KV gather — block-table indirection, correctness with non-contiguous KV.

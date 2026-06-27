@@ -90,9 +90,15 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         s_bytes = 4.0 * bh * N_q * N_k * nbytes
         hbm_bytes = operand_bytes + s_bytes + o_write
     else:
-        # Fused versions (v3+ online softmax): S never touches HBM and streaming means the
-        # operands are read ~once each. This is the read-once ideal the journey climbs toward.
-        hbm_bytes = 3.0 * bh * N_k * d * nbytes + o_write
+        # Fused versions (v3+ online softmax): S never touches HBM and streaming reads each operand
+        # ~once. K and V are the two N_k-sized operands (2*bh*N_k*d); Q is only N_q rows and O is
+        # written once. At DECODE (N_q=1) this is the research §4 decode roofline: work = 4*N_k*d
+        # FLOPs, traffic = 2*N_k*d*b bytes -> arithmetic intensity AI = 4Nd/(2Nd*b) = 2/b FLOP/byte,
+        # INDEPENDENT of N_k -> pure HBM-bound, far below the ridge (the tensor cores idle). The split-
+        # KV schedule (v6) does not change these bytes — it only fills the SMs so the kernel can
+        # actually reach this bound. (Prefill N_q=N_k recovers the old ~3*bh*N_k*d read-once estimate.)
+        # GQA/MLA would raise AI to 2G/b by sharing KV across heads — the v10/v11 lever, not modeled.
+        hbm_bytes = 2.0 * bh * N_k * d * nbytes + bh * N_q * d * nbytes + o_write
     t_hbm = hbm_bytes / (arch.hbm_bw_gbps * 1e9)
 
     # --- MUFU exp: one exp per score entry ---

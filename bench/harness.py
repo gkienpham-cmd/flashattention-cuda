@@ -26,6 +26,7 @@ from roofline.model import estimate
 
 SEQ_LENS = [512, 2048, 8192]
 HEAD_DIMS = [64, 128]
+DECODE_KV_LENS = [2048, 8192, 16384]   # KV-cache lengths swept in --decode mode (N_q collapses to 1)
 
 
 def _time_ms(fn, *, warmup: int = 10, iters: int = 50) -> tuple[float, float]:
@@ -89,26 +90,35 @@ def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
 
 
 def run(backend: str, precision: str, B: int, H: int, causal: bool,
-        seq_lens: list[int] | None = None, head_dims: list[int] | None = None) -> None:
+        seq_lens: list[int] | None = None, head_dims: list[int] | None = None,
+        decode: bool = False, q_len: int | None = None) -> None:
     # Default to the full sweep; --seq/--dim narrow it so ncu can profile one shape's 3 passes.
-    seq_lens = seq_lens or SEQ_LENS
+    # In --decode mode the swept N is the KV length and the query length collapses to q_len (1) — the
+    # regime v6 split-KV targets, where the metric shifts to us/token + % HBM bandwidth (research §8).
+    seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
+    nq = (q_len if q_len is not None else (1 if decode else None))   # None -> square (N_q = N_k)
     dev = torch.device("cuda")
     cap = torch.cuda.get_device_capability()
     sm = f"sm_{cap[0]}{cap[1]}"
     name = torch.cuda.get_device_name()
     # Current/max SM clock (MHz) — captures throttling on the free tier at the moment of the run.
     clk_cur, clk_max = _sm_clock_mhz()
-    print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  precision={precision}  causal={causal}")
-    print(f"# {'shape':>16} | {'ours p50/max ms':>18} | {'sdpa p50/max ms':>18} | "
-          f"{'speedup':>8} | {'tok/s(ours)':>12} | roofline")
+    print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  precision={precision}  causal={causal}  decode={decode}")
+    if decode:
+        print(f"# {'shape(q x kv)':>16} | {'ours p50/max ms':>18} | {'us/tok':>8} | "
+              f"{'%HBM':>6} | {'vs sdpa':>8} | {'vs naive':>8} | roofline")
+    else:
+        print(f"# {'shape':>16} | {'ours p50/max ms':>18} | {'sdpa p50/max ms':>18} | "
+              f"{'speedup':>8} | {'tok/s(ours)':>12} | roofline")
 
     arch = get_arch(sm) if sm in {"sm_75"} else None
     dt = _dtype(precision)
 
     for N in seq_lens:
         for d in head_dims:
-            q = torch.randn(B, H, N, d, device=dev, dtype=dt)
+            qn = nq if nq is not None else N
+            q = torch.randn(B, H, qn, d, device=dev, dtype=dt)
             k = torch.randn(B, H, N, d, device=dev, dtype=dt)
             v = torch.randn(B, H, N, d, device=dev, dtype=dt)
 
@@ -118,7 +128,7 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
             o_p50, o_max = _time_ms(ours)
             s_p50, s_max = _time_ms(base)
             speedup = s_p50 / o_p50
-            tokens = B * H * N
+            tokens = B * H * qn
             toks_s = tokens / (o_p50 / 1e3)
 
             roof = ""
@@ -131,14 +141,36 @@ def run(backend: str, precision: str, B: int, H: int, causal: bool,
                 # read-once ideal (AI ~1000+). NOTE the model counts ONE exp per score, but v3's
                 # two-pass recomputes scores -> it does ~2x the exp work, so the printed MUFU bound
                 # is optimistic; the ncu read is what settles MMA-vs-MUFU (the Step-2 discipline).
+                # v6 (and v5) read FP16 KV regardless of the input dtype (they cast in the kernel),
+                # so the roofline byte count uses fp16 -> at N_q=1 this is the AI=2/b=1.0 decode bound.
                 tile_m, tile_n = _roofline_tile(backend, d)
-                est = estimate(arch, B=B, H=H, N_q=N, N_k=N, d=d, precision=precision,
+                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv") else precision
+                est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
                                materialize_s=backend in ("v1_naive", "v2_tiled"),
                                tile_m=tile_m, tile_n=tile_n)
                 roof = f"{est.limiter.upper()} (~{est.seconds*1e3:.2f}ms)"
 
-            print(f"  {f'{B}x{H}x{N}x{d}':>16} | {o_p50:7.3f}/{o_max:7.3f} | "
-                  f"{s_p50:7.3f}/{s_max:7.3f} | {speedup:7.2f}x | {toks_s:12.3e} | {roof}")
+            if decode:
+                # Decode headline metrics (research §8): us/token, % of peak HBM bandwidth achieved on
+                # the K+V read (2*B*H*N*d*b bytes, b=2 for fp16 KV), and the speedup over a NAIVE
+                # seqlen_q=1 loop (v5 run at N_q=1, the 1xBH single-block-per-head schedule v6 must beat).
+                us_tok = o_p50 * 1e3 / tokens
+                if arch is not None:
+                    kv_bytes = 2.0 * B * H * N * d * 2  # K and V, fp16
+                    hbm_pct = (kv_bytes / (o_p50 / 1e3)) / (arch.hbm_bw_gbps * 1e9) * 100.0
+                else:
+                    hbm_pct = float("nan")
+                try:
+                    naive = lambda: attention(q, k, v, causal=causal, backend="v5_wmma")
+                    n_p50, _ = _time_ms(naive)
+                    vs_naive = n_p50 / o_p50
+                except Exception:
+                    vs_naive = float("nan")
+                print(f"  {f'{B}x{H}x{qn}x{d}/{N}':>16} | {o_p50:7.3f}/{o_max:7.3f} | {us_tok:8.2f} | "
+                      f"{hbm_pct:5.1f}% | {speedup:7.2f}x | {vs_naive:7.2f}x | {roof}")
+            else:
+                print(f"  {f'{B}x{H}x{N}x{d}':>16} | {o_p50:7.3f}/{o_max:7.3f} | "
+                      f"{s_p50:7.3f}/{s_max:7.3f} | {speedup:7.2f}x | {toks_s:12.3e} | {roof}")
 
 
 def main() -> None:
@@ -153,10 +185,17 @@ def main() -> None:
                         "Use to profile one shape's qk/softmax/pv passes under ncu.")
     p.add_argument("--dim", type=int, nargs="+", default=None,
                    help="override head dims to run (e.g. --dim 64); default is the full sweep.")
+    p.add_argument("--decode", action="store_true",
+                   help="decode regime: query length collapses to --q-len (default 1) and the swept "
+                        "--seq is the KV length. Reports us/token, %%HBM bandwidth, and the speedup "
+                        "over a naive seqlen_q=1 loop (v5_wmma). This is v6 split-KV's home turf.")
+    p.add_argument("--q-len", type=int, default=None, dest="q_len",
+                   help="query length in --decode mode (default 1); ignored without --decode.")
     a = p.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("no CUDA device; run this on the GPU (Colab T4 / rented box)")
-    run(a.backend, a.precision, a.batch, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim)
+    run(a.backend, a.precision, a.batch, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim,
+        decode=a.decode, q_len=a.q_len)
 
 
 if __name__ == "__main__":

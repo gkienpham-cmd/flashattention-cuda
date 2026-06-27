@@ -419,3 +419,40 @@ It beats v2 ~2× and v3 ~8× — S off HBM finally wins in wall-clock — and CU
 v3's occupancy wall is gone: 151× → 18× off the floor. But it's still ~6× slower than SDPA, because
 scoring one key per warp via shuffle reductions is GEMV-shaped — ~70% reduction overhead, never near
 FP32 FMA peak. Step 5's tensor cores fix the shape *and* raise the ceiling."
+
+---
+
+## C8 — Decode ≠ prefill: split-KV (the v6 keystone) — SCAFFOLD STUB
+
+*(fill the measured numbers at the Step-6 close-out; the design + B300 arc are in
+`docs/b300-decode-research.md`)*
+
+### Why prefill kernels die at decode
+v1–v5 parallelize over query rows: grid `(ceil_div(N_q, rows), B·H)`. At decode `N_q = 1` that is
+`(1, B·H)` — a handful of blocks, the SMs idle. Both matmuls are `M = 1` (GEMV), so **tensor cores idle
+too** — v5's whole advantage evaporates. The problem isn't bandwidth or FLOPs; it's that there is **no
+parallel work to spread** across the SMs.
+
+### The decode roofline
+One step, `N` keys: work `= 4Nd` FLOPs, traffic `= 2Nd·b` bytes (read K and V; Q, O are `O(d)`,
+negligible). **`AI = 2/b`, independent of `N`** — pure memory-bound, hundreds× below the ridge. Two ways
+to climb: lower `b` (FP8 → AI 2, NVFP4 → AI ~3.5) or **share KV across heads** (GQA/MLA → `AI = 2G/b`).
+
+### Split-KV (Flash-Decoding) — the fix
+Partition the `N` keys across blocks; each block runs online softmax over its chunk and emits an
+**unnormalized** partial `(O, m, ℓ)`. A merge kernel recombines across splits with the *same*
+log-sum-exp algebra online softmax already uses across keys:
+`m = max_s m_s ; ℓ = Σ_s e^{m_s−m} ℓ_s ; O = Σ_s e^{m_s−m} O_s ; O /= ℓ`. Fills the SMs at `N_q = 1`
+without changing the result. (On B300 the merge fuses on-chip via a 2-CTA cluster + DSMEM; on T4 it's a
+second kernel.)
+
+### Forward pointer (v8/v9): asymmetric precision
+The two matmuls have **opposite FP4 tolerance**: `P·V` is a convex combination (`P ∈ [0,1]`, sums to 1)
+→ FP4 error *averages out*, **safe**; `Q·Kᵀ` feeds `exp` → error amplifies (`δ → e^δ`) and logits carry
+outliers → keep **MXFP8 + outlier residual**. That asymmetry is the v9 headline.
+
+**Say-this (TODO — add measured % HBM BW + vs-naive at close-out):** "Decode is `N_q = 1`, so prefill
+kernels under-occupy the SMs and the matmuls go GEMV — even tensor cores idle. v6 splits the KV axis so
+each block owns a chunk and emits a partial `(O, m, ℓ)`; a merge recombines them with the same LSE
+algebra as online softmax. Decode AI is `2/b`, memory-bound and N-independent, so the win is occupancy
++ fewer KV bytes, not FLOPs — which is exactly why the B300 headline (v9) is FP4 KV, not a better GEMM."

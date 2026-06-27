@@ -17,3 +17,16 @@ torch_extensions/
 bench/raw/
 *.nsys-rep
 *.ncu-rep
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+
+# Large source papers (cited by arXiv id in docs/; not committed to keep the repo lean)
+*.pdf
+
+# Raw research dumps — the curated synthesis lives in docs/{b300-decode,fa-next}-research.md
+/B300 FlashAttention Optimization Research.txt
+
+# Redundant raw Colab exports — the curated run-of-record notebooks live in notebooks/
+/step5-output.ipynb

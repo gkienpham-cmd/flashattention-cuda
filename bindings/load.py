@@ -23,6 +23,7 @@ _SOURCES = {
     "v3_online": ["online_attention.cu", "binding.cpp"],
     "v4_fused": ["fused_attention.cu", "binding.cpp"],
     "v5_wmma": ["wmma_attention.cu", "binding.cpp"],
+    "v6_splitkv": ["splitkv_attention.cu", "binding.cpp"],
 }
 
 
