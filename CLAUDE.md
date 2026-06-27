@@ -184,7 +184,10 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   compute/BW. So decode's GEMV→GEMM is the WRONG tool (v5's prefill win didn't transfer). **Cut 2 CLOSED
   via a cheap A100 PROBE (ran the existing kernels on Ampere, build now sm_75+sm_80) — the hard
   cp.async/`mma` kernel + arms 2/3 are NOT pursued.** v8's deliverable is **Cut 1 (CUDA-core M-packing)**.
-  Quiz (Gate 2) is the last open item. Cut 1 headline: G-packing buys **~`G×` wall-clock over no-packing
+  **Both gates cleared (quiz passed 2026-06-28) → Step 8 DONE.** Next: **v8.5** (cp.async double-buffer +
+  occupancy → push the CUDA-core M-pack kernel toward bandwidth-bound, T4-cheap) BEFORE **v9 FP8** — bytes
+  only pay once bandwidth-bound, and v8 is still ≤11% HBM (per-CTA-bound). Cut 1 headline: G-packing buys
+  **~`G×` wall-clock over no-packing
   (8.6× at G=8)** and **beats
   SDPA 6–10× at every batch B=1→64** (v7 lost at B≥8) — on CUDA cores, no tensor cores. `%HBM` stays ≤11%
   (still per-CTA-bound, ~9× headroom for Cut 2). The `AI=2G/b` model got the *speedup magnitude* right (a
