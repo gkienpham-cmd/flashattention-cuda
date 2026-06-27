@@ -122,7 +122,10 @@ __global__ void gqa_db_partial_kernel(const __half* __restrict__ Q,
 
     float m_cur = -FLT_MAX, l_cur = 0.f;
 
-    const int n_tiles = (j_end > j_start) ? ceil_div(j_end - j_start, TN) : 0;
+    // tiles covering [j_start, j_end) in TN-wide steps. Computed inline (NOT host ceil_div — this is
+    // device code; ceil_div is __host__-only and calling it here is what failed the first build).
+    const int span    = j_end - j_start;
+    const int n_tiles = (span > 0) ? ((span + TN - 1) / TN) : 0;
 
     // Preload tile 0 into buffer 0 (safe even if n_tiles==0: loads zeros, no OOB).
     load_kv_tile<TN, D>(sK[0], sV[0], K_pool, V_pool, bt_b, j_start, j_end, page_size, H_kv, h_kv);
