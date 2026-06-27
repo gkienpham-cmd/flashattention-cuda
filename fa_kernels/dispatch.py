@@ -25,6 +25,8 @@ _MIN_CAPABILITY = {
     "v8_gqa": (7, 0),     # Cut 1: GQA M-packing on CUDA cores (sm_75/T4).
     "v8_gqa_tc": (7, 5),  # Cut 2a: GQA M-packing on Turing WMMA tensor cores (sm_75/T4, pad-G->16).
                           # Cut 2b's mma.m16n8k16 + cp.async peak version bumps a sibling to (8, 0).
+    "v8_gqa_db": (7, 0),  # v8.5: GQA M-packing + portable double-buffered KV pipeline (sm_75/T4; ordinary
+                          # ld.global prefetch, NOT cp.async). The schedule pass toward bandwidth-bound.
 }
 
 

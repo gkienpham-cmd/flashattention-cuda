@@ -58,11 +58,15 @@ _TOL = {
     # v8_gqa_tc (Cut 2a) runs the same GQA M-packing on Turing WMMA tensor cores (FP16-in/FP32-accum,
     # pad-G->16). Same precision class as v5/v8 -> same 2e-2 band.
     "v8_gqa_tc": (2e-2, 2e-2),
+    # v8_gqa_db (v8.5) is Cut 1 + a double-buffered KV pipeline (half-resident smem). Identical math
+    # (same FP16 values, FP32 accumulate; conversion just moves to read-time) -> same 2e-2 band.
+    "v8_gqa_db": (2e-2, 2e-2),
 }
 
-# GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core) and Cut 2a (Turing WMMA tensor cores).
-# Both go through gqa_attention(..., backend=...) with identical contract, so one test body covers both.
-GQA_BACKENDS = ["v8_gqa", "v8_gqa_tc"]
+# GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core), Cut 2a (Turing WMMA), and v8.5
+# (double-buffered). All go through gqa_attention(..., backend=...) with an identical contract, so one
+# test body covers all three.
+GQA_BACKENDS = ["v8_gqa", "v8_gqa_tc", "v8_gqa_db"]
 
 
 def tol_for(backend: str):

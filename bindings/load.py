@@ -27,6 +27,7 @@ _SOURCES = {
     "v7_paged": ["paged_attention.cu", "binding.cpp"],
     "v8_gqa": ["gqa_attention.cu", "binding.cpp"],
     "v8_gqa_tc": ["gqa_tc_attention.cu", "binding.cpp"],
+    "v8_gqa_db": ["gqa_db_attention.cu", "binding.cpp"],
 }
 
 

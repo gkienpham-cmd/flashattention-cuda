@@ -764,3 +764,28 @@ that won for v5 *prefill* is the wrong tool for *decode* — and that's the real
 **v8's deliverable is Cut 1 (CUDA-core GQA M-packing): 8.6× over no-packing, beats SDPA at all batch, on
 both T4 and A100.** (Making tensor cores win decode needs SOTA-level scheduling — FlashMLA/FlashInfer
 territory — out of scope for a from-scratch single-kernel and irrelevant to the v8 thesis.)
+
+## Step 8.5 — double-buffered KV pipeline (v8_gqa_db)
+
+*Roofline-first recorded; T4 gate pending (`notebooks/v8_5_gqa_db_gate.ipynb`). The "schedule before
+bytes" step v8 proved is still needed — v8 sits at ≤11% HBM (per-CTA-bound), and FP8 (v9) only pays once
+bandwidth-bound.*
+
+**Why:** v8 Cut 1's hot loop stalls on every KV tile (`load → __syncthreads → compute → __syncthreads`),
+so the global-load latency is **exposed** — the reason it never gets past ~11% HBM. v8.5 software-pipelines
+it: prefetch tile `N+1` while computing tile `N`, so the load latency hides behind the warp-shuffle
+compute. **Portable** double-buffer (ordinary `ld.global` issued early — NOT `cp.async`, which is
+Ampere-only sm_80; the `cp.async` version is an A100 follow-on). To keep two KV buffers within budget
+*without* dropping below Cut 1's 2 blocks/SM, KV is staged as **half** (2 half-buffers = Cut 1's one FP32
+buffer), so occupancy is unchanged and the **only new variable is the load/compute overlap** (the FP16→FP32
+convert just moves from store-time to read-time; same math, same 2e-2).
+
+**Roofline prediction (the gate — schedule claim the model can't express):** `AI=2G/b`, the HBM floor, and
+the limiter are **identical to v8** (same bytes). Predicted: `%HBM` **climbs from ~11% toward the floor**
+and µs/tok drops — *if* the load latency is the dominant stall (the per-CTA hypothesis). **Counter-prediction
+(equally a finding):** if the real stall is the per-key warp-shuffle reduction (the v4 GEMV wall), not the
+load, double-buffering won't move `%HBM` — which would point the next lever at the reduction, not the load.
+
+**Measured:** _pending T4 gate._ Success = `%HBM` up + µs/tok down vs Cut 1 (`v8_gqa`); null = no movement →
+bottleneck is the reduction. Either way it tells us whether bandwidth-bound is reachable on CUDA cores
+(→ v9 FP8 pays) or whether the decode floor is the reduction latency.
