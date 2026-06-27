@@ -725,3 +725,23 @@ This is the **first step in six where the roofline's number was directionally ri
 the speedup *magnitude* (~G×), even though its absolute HBM floor stays unreached because the model still
 has no schedule term. Say it crisply: "I predicted G×, I measured ~G×, and I can tell you precisely why
 I'm *still* not at the bandwidth wall — that gap is the next kernel, not hand-waving."
+
+### Cut 2a (Turing WMMA) — the tensor-core fix BACKFIRED on decode, and why that's the real result
+I then tried the obvious "next kernel": move the M=G score matmul onto tensor cores, the same GEMV→GEMM
+fix that won for v5 *prefill*. I predicted it would beat Cut 1. **It lost — 1.4–1.6× slower (clock-
+normalized), at every G, even at G=16/32 where the 16×16×16 WMMA tile is completely full.** So it wasn't
+the pad-to-16 waste; it's structural. The reason is the thing v5 already named — the **opaque-fragment
+tax**: WMMA accumulators are un-indexable, so softmax has to round-trip through smem (QK→smem→row-softmax→
+write P as half→reload→PV) with extra barriers. For *prefill* that overhead is amortized over a big M-tile;
+for *decode* M=G≤16 is tiny, so the GEMM is too small and the fixed fragment/smem overhead dominates. The
+lean, register-resident CUDA-core GEMV (Cut 1) just wins. The deep point: **Cut 1's 8.6× came from packing
+G query rows into G active warps that read KV once — a scheduling/occupancy win — NOT from needing tensor
+cores at all.** Tensor cores were the prefill tool I wrongly assumed transferred. Two things keep me honest:
+the A/B's two runs read different throttle clocks (so ~1.5× of the raw gap is clock — but %HBM, a clock-
+robust ratio, is 2–3× lower, and the sign is the same in 12/12 rows), and my Cut 2a is a 1-warp/block
+schedule whose KV load is under-fed, so a tuned WMMA kernel would narrow but (the small-M argument says) not
+flip it. **Say-this:** "I predicted tensor cores would help and measured that they hurt — decode's matmul is
+too small to pay for the WMMA fragment overhead, so the CUDA-core GEMV is the right decode primitive. That's
+the sixth time the roofline-blind-to-schedule story bit me, and the cleanest evidence that v8's win was
+occupancy, not compute. Whether an A100 mma.m16n8k16 + cp.async kernel can overturn it is an open question I'd
+spend rented hours on only because the answer is publishable either way — not because the decode thesis needs it."

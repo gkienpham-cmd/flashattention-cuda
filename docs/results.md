@@ -705,13 +705,38 @@ GEMV→GEMM direction but not the peak — that's what Cut 2b's `mma.m16n8k16` r
 `Cut 2a > Cut 1` on µs/tok at G≥4 (where the GEMM amortizes the smem-softmax overhead), with the gap
 widening toward G=16 (full tile, no padding waste).
 
-**Cut 2a (Turing WMMA, sm_75/T4 — `kernels/v8_gqa_tc/`):** _code complete, GPU gate pending
-(`notebooks/v8_gqa_tc_gate.ipynb`, runs on free Colab T4)._ Variant 1 of the M≥16 ablation — pad
-`M=G→16` + mask — built by grafting v5's WMMA QK/PV + smem-softmax onto Cut 1's paged split-KV/merge
-skeleton (one warp per 16-row M-tile). Same `gqa_attention(..., backend="v8_gqa_tc")` contract, tol
-2e-2. Gate = correctness (both GQA backends parametrized) + a same-session **v8_gqa_tc vs v8_gqa**
-A/B (the GEMV→GEMM uplift). Ablation arms 2 (multi-group-pack → full M=16) and 3 (CUDA-core-QK +
-WMMA-PV) follow once 2a is green.
+**Cut 2a MEASURED (Turing WMMA, sm_75/T4 — `kernels/v8_gqa_tc/`, 2026-06-28, Colab T4): correctness ✅
+38/38, but the perf prediction is REFUTED — WMMA tensor cores are SLOWER than Cut 1's CUDA-core GEMV.**
+Variant 1 of the M≥16 ablation (pad `M=G→16` + mask), grafting v5's WMMA QK/PV + smem-softmax onto Cut
+1's paged split-KV/merge skeleton, one warp per 16-row M-tile. The same-session G-sweep A/B
+(N_k=8192, H_q=32, non-causal — note the two runs read different throttle clocks, `tc~360` vs
+`cuda~555` MHz, so ~1.5× of the raw gap is clock, flagged below):
 
-**Cut 2b (A100 `mma.m16n8k16` + cp.async):** _pending `[RENT]`._ Port the winning 2a strategy to the
-Ampere atom for peak (no padding waste, async KV staging), vs FlashInfer / XQA / vLLM PagedAttention v2.
+| G | tc µs/tok (d128) | Cut 1 µs/tok (d128) | tc÷cuda | tc %HBM | Cut 1 %HBM |
+|---|---|---|---|---|---|
+| 1  | 468.4 | 142.4 | 3.3× slower | 2.8% |  9.2% |
+| 4  |  80.2 |  30.9 | 2.6× slower | 4.1% | 10.6% |
+| 8  |  42.1 |  16.9 | 2.5× slower | 3.9% |  9.7% |
+| 16 |  27.5 |  13.2 | 2.1× slower | 3.0% |  6.2% |
+| 32 |  25.4 |  11.3 | 2.2× slower | 1.6% |  3.6% |
+
+**Prediction-vs-measured — a MISS (recorded honestly):** I predicted `Cut 2a > Cut 1` (the GEMM closes
+the per-CTA gap). Measured the **opposite at every G**: µs/tok rose 1.2–3.3× and `%HBM` *fell* (tc
+1.6–4.2% vs Cut 1's 7.9–11.1%). It loses even at **G=16/32 where the WMMA tile is full**, so it is NOT
+the pad-to-16 waste. Why: v5's GEMV→GEMM win was for **prefill (large M)**; decode's `M=G≤16` is too
+small for the 16×16×16 GEMM to amortize the **opaque-fragment tax** (QK→smem→row-softmax→P-as-half→
+reload→PV, with extra `__syncthreads`) — the lean register-resident CUDA-core GEMV wins. **Cut 1's
+8.6× was about G warps + KV-read-once, NOT tensor cores.** Two caveats keep this honest: (a) the
+clock confound inflates the raw gap ~1.5×, but clock-normalized tc is still ~1.4–1.6× slower at G=8
+*and* `%HBM` (a clock-robust ratio) is 2–3× lower; (b) Cut 2a is a **correctness-first 1-warp/block**
+schedule, so part of the slowdown is its under-fed KV load (32 threads vs Cut 1's 256), not purely the
+tensor cores. Reclaim-at-batch (G=8): tc still beats SDPA **2.1–4.8× across B=1→64**, but by less than
+Cut 1's 6.1–9.9× — consistent (tc is worse than Cut 1, still > SDPA). The burden of proof flips:
+tensor cores must now *earn* a decode role — exactly Cut 2b's job.
+
+**Cut 2b (A100 `mma.m16n8k16` + cp.async) — now an OPEN QUESTION, not a foregone port:** `[RENT]`, and
+only worth it to test whether load-overlap (cp.async) + finer fragments + occupancy can overturn the
+Turing result, vs FlashInfer / XQA / vLLM PagedAttention v2. Ablation arms 2 (multi-group-pack → full
+M=16) and 3 (CUDA-core-QK + WMMA-PV) are **likely dead on arrival** — G=16 is already a full tile and
+still lost 2.1×, so packing two groups to M=16 won't help; arm 3's PV is also tiny-M. Documented, not
+pursued unless Cut 2b rescues the tensor-core path.

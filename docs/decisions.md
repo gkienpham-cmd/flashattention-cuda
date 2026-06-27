@@ -598,6 +598,28 @@ straight steps — so the µs/tok drop + reclaim-SDPA-at-batch are the deliverab
 - **Still pending:** Cut 2 `[RENT A100]` — the 3-way M≥16 ablation vs FlashInfer / XQA / vLLM
   PagedAttention v2; the quiz (Gate 2).
 
+**Measured (Cut 2a — Turing WMMA tensor cores, 2026-06-28, Colab T4, `notebooks/v8_gqa_tc_gate_cut2a_output.ipynb`):**
+- **Correctness ✅ 38/38** (`pytest -k v8_gqa_tc`, 2.7 s) — the WMMA GQA M-pack kernel is correct, incl.
+  the **all-masked-block guard** I added in review (the split+WMMA edge case where a fully causally-masked
+  split row would inject `l+=BN`; v5/Cut1 dodge it via full-attn-block-0 / `break`). Blind-written kernel +
+  fix landed first try.
+- **Perf prediction REFUTED — WMMA is SLOWER than Cut 1's CUDA-core GEMV at every G** (1.2–3.3× raw; ~1.4–1.6×
+  clock-normalized at G=8; `%HBM` 2–3× lower). It loses even at **G=16/32 (full WMMA tile)**, so it is NOT
+  the pad-to-16 waste. **Mechanism:** v5's GEMV→GEMM win was for *prefill (large M)*; decode `M=G≤16` is too
+  small for the 16×16×16 GEMM to amortize the opaque-fragment tax (QK→smem→softmax→P-as-half→reload→PV +
+  extra syncs). The lean register-resident CUDA-core GEMV wins. **This re-frames the whole Cut-2 premise:
+  Cut 1's 8.6× was G-warps + KV-read-once, NOT tensor cores — tensor cores are a prefill tool the decode
+  thesis didn't need.**
+- **Honesty caveats:** (a) the A/B's two runs read different throttle clocks (tc~360 vs cuda~555 MHz), so
+  ~1.5× of the raw gap is clock — but the direction is uniform (12/12 rows) and `%HBM` (a clock-robust ratio)
+  confirms it; (b) Cut 2a is a correctness-first **1-warp/block** schedule, so some slowdown is its under-fed
+  KV load, not purely the tensor cores. A clean same-clock re-run would tighten the magnitude (not the sign).
+- **Decision:** ablation arms 2 (multi-group→full M=16) and 3 (CUDA-core-QK + WMMA-PV) are **documented but
+  not pursued** — G=16 is already a full tile and still lost 2.1×, so they won't rescue WMMA. Cut 2b (A100
+  `mma.m16n8k16` + cp.async) becomes an **open question, not a foregone port**: worth a rental only to test
+  whether load-overlap + finer fragments + occupancy overturn the Turing result. **Default conclusion
+  (pending Cut 2b): the CUDA-core GEMV (Cut 1) is the right decode primitive; v8's deliverable is Cut 1.**
+
 **Claim discipline (carried from v7):** frame as "an open, roofline-documented decode kernel measured vs
 FlashInfer/FlashMLA"; op-level ~2.9× single-token decode, NOT end-to-end, NOT "beat FA4" (FA4's decode
 path is upstreamed). See `decode-replan §5`, `v8-kickoff.md`.
