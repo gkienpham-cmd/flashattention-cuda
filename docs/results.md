@@ -596,11 +596,11 @@ the "predicted crossover" arc replaced with the measured-flat line. See `decisio
 
 ## Step 8 — GQA M-packing (v8)
 
-*IN PROGRESS. **Phase 0 (roofline) done + recorded below — this is the prediction-before-measurement,
-captured BEFORE any kernel code** (the per-step gate; v7 just had a prediction refuted, so the discipline
-matters). Cut 1 = CUDA-core M-pack on T4 (cheap correctness + the warp-utilization/KV-reuse win as one
-isolated variable); Cut 2 = sm_80 tensor-core variant + the M≥16 ablation `[RENT A100]`. Measured tables
-below are stubbed until the gate notebook runs.*
+*Cut 1 MEASURED 2026-06-28 (Colab Tesla T4 sm_75, torch 2.11.0+cu128, throttled `clock~360-390/1590MHz`);
+**Gate 1 ✅ 64/64 correctness**, decode bench + G-sweep + reclaim-at-batch captured
+(`notebooks/v8_gqa_gate_output.ipynb`). **Quiz (Gate 2) pending.** Cut 2 = sm_80 tensor-core variant +
+the M≥16 ablation is still `[RENT A100]`. **The thesis lands on Cut 1: G-packing buys ~`G×` wall-clock
+(8.6× at G=8) over the no-packing baseline and reclaims SDPA at all batch sizes — without tensor cores.***
 
 **Why this step:** v7 measured decode is **per-CTA-bound at every batch size** — flat ~10–12% HBM from
 BH=8→512, refuting the occupancy→bandwidth crossover. The binding constraint is *inside the CTA*: at
@@ -638,15 +638,60 @@ once), with the **biggest jump on Cut 2 at `G` crossing the M<16→M≥16 tensor
 to 16; G=16 fills a tile). On Cut 1 (CUDA-core) the win is bounded by "G warps + KV-once" with no
 tensor-core uplift — that gap is exactly what Cut 2's ablation measures.
 
-**Measured — correctness (Gate 1):** _pending T4 run (`notebooks/v8_gqa_gate.ipynb`)._ Target: 0-fail vs
-`sdpa_reference_gqa` at tol 2e-2 across decode GQA (`G∈{1,2,4,8}`, non-multiple `N_k`, causal+offset),
-prefill square reduction, and v7 regression.
+**Measured — correctness (Gate 1 ✅): 64/64** (`pytest -k "v8_gqa or v7_paged"`, 81.8 s on the Colab T4).
+38 v8 cases (decode `G∈{1,2,4,8}` × non-multiple `N_k∈{4096,8190}` × d 64/128 × causal both ways = 32;
+idle-warp `G=3` + multi-tile `G=16` = 4; square-reduction = 2) **and** 26 v7 regression cases pass at tol
+2e-2. The `repeat_interleave(G)` oracle (`sdpa_reference_gqa`) confirms the `h_q = h_kv·G + g_local`
+mapping; the idle-warp/multi-tile cases confirm `G` need not divide 8 and `M>8` tiles over `grid.x`.
 
-**Measured — Cut 1 decode bench + G-sweep (T4):** _pending._ Columns: µs/tok, %HBM, vs SDPA, vs v7
-(same-session A/B), per `G∈{1,2,4,8,16,32}`.
+**Measured — the G-sweep (THE deliverable), N_k=8192, H_q=32 fixed, H_kv=32/G, non-causal:**
 
-**Measured — reclaim-SDPA-at-batch (B≥8):** _pending._ The headline the v7 data created — v7 *lost* to
-SDPA at B≥8 (0.5×); v8 must reclaim it.
+| G | µs/tok (d64) | %HBM (d64) | **vs no-pack (d64)** | µs/tok (d128) | %HBM (d128) | **vs no-pack (d128)** |
+|---|---|---|---|---|---|---|
+| 1  | 102.52 | 6.4% | 0.85× | 142.02 |  9.2% | 1.00× |
+| 2  |  35.07 | 9.3% | 2.52× |  58.74 | 11.2% | 2.43× |
+| 4  |  18.31 | 8.9% | 4.79× |  30.40 | 10.8% | 4.69× |
+| 8  |  10.21 | 8.0% | **8.59×** |  16.32 | 10.0% | **8.71×** |
+| 16 |   8.44 | 4.9% | 10.42× |  13.49 |  6.1% | 10.59× |
+| 32 |   6.92 | 3.0% | 12.74× |  11.20 |  3.7% | 12.73× |
+
+**The mechanism is confirmed.** `vs no-pack` (= v8 ÷ v7 run on the same workload with KV broadcast to
+`H_q` heads — the clean same-session isolation of M-packing) tracks **almost exactly `G×` up to G=8**
+(8.6×/8.7×), then goes sub-linear (12.7× at G=32, where `M>8` re-stages the KV head over `⌈G/8⌉` blocks).
+This is the per-CTA-efficiency win the roofline's `AI=2G/b` implied — `G` warps active + KV read once →
+~`G×` wall-clock — realized **on CUDA cores, no tensor cores.** Within v8, µs/tok itself falls ~15× (d64)
+/ ~12.7× (d128) from G=1→G=32.
+
+**Prediction-vs-measured (a partial roofline WIN, the first in 6 steps):** the model predicted AI rises
+`G×`, the HBM floor drops `G×`, and the limiter **stays HBM** (no compute-flip). Measured: the µs/tok
+speedup tracks `G×` (right!), and `%HBM` stays **≤11%** at every G — still **per-CTA-bound, NOT
+bandwidth-bound** (the kernel never approaches the floor; M-packing closes most of the per-CTA gap but
+leaves headroom for Cut 2's tensor cores). So the model got the *speedup magnitude* right via `AI=2G/b`,
+while its *absolute floor* remains unreached — exactly as flagged (the model has no schedule term).
+**Caveat:** the Colab T4 was clock-throttled (`~360-390` vs 1590 MHz), so absolute µs/tok is slow, but the
+`vs no-pack` / `vs sdpa` ratios are same-session/same-clock and robust.
+
+**Measured — reclaim-SDPA-at-batch (✅ the headline), G=8, H_q=8, N_k=8192, non-causal:**
+
+| B | BH | µs/tok (d64) | **vs SDPA (d64)** | µs/tok (d128) | **vs SDPA (d128)** |
+|---|---|---|---|---|---|
+| 1  | 8   | 46.22 | 9.93× | 33.52 | 7.81× |
+| 8  | 64  |  9.89 | **8.40×** | 16.34 | **7.62×** |
+| 16 | 128 | 10.08 | 8.21× | 16.86 | 7.35× |
+| 32 | 256 | 12.36 | 6.38× | 19.84 | 6.09× |
+| 64 | 512 | 10.91 | 7.32× | 18.32 | 6.63× |
+
+**v7 LOST to SDPA at B≥8 (0.34–0.56×); v8 BEATS it 6.1–9.9× at every batch size** — the serving regime is
+reclaimed emphatically. (The `vs no-pack` column hits `nan` at `B=64, d128`: the auxiliary v7-no-packing
+baseline — which broadcasts KV to `H_q` heads — errored at the largest shape, likely OOM building the
+G-expanded paged pool; v8 itself ran fine, 18.32 µs/tok. Not a v8 failure, a baseline-construction limit.)
+
+**Measured — G=8 canonical decode (H_q=8, H_kv=1):** non-causal `vs no-pack` 1.26–4.25× (grows with
+`N_k`: more KV to share → bigger KV-read-once win). Causal `vs no-pack` 1.10–3.95× (valid). Causal
+`vs sdpa` (0.39–2.50×) is the **known top-left-mask artifact** carried from v7 (the SDPA reference attends
+~1 key while v8 scans the whole cache via `q_offset`) — the correctness test already uses the honest
+`causal=False` oracle; a bottom-right-mask reference is the deferred harness cleanup.
 
 **Measured — Cut 2 tensor-core ablation (A100):** _pending `[RENT]`._ pad-M=8→16 vs multi-group-pack vs
-CUDA-core-QK, vs FlashInfer / XQA / vLLM PagedAttention v2.
+CUDA-core-QK, vs FlashInfer / XQA / vLLM PagedAttention v2. Cut 1 already shows ~9× of HBM headroom
+remains (`%HBM ≤ 11%`), so the tensor-core GEMM has room to chase.

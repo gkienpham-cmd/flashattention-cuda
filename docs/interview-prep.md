@@ -712,3 +712,16 @@ only the warp-to-head index math; the gather, softmax, and merge are byte-identi
 rises G× but I stay HBM-bound — A100's ridge is 153 — so the headline isn't 'compute-bound now,' it's
 moving from 10% of the floor toward it and reclaiming the batch regime SDPA took. I built it CUDA-core
 first so I could prove M-packing on a cheap T4 before renting an A100 for the tensor-core GEMM."
+
+### Cut 1 measured (2026-06-28, Colab T4) — the thesis landed *without* tensor cores
+The G-sweep is the proof: `vs no-pack` (v8 ÷ v7 on the identical workload) is **8.59×/8.71× at G=8** and
+tracks ~`G×` all the way up — i.e. packing G heads buys G× wall-clock, exactly what `AI=2G/b` implies, on
+plain CUDA cores. And the serving headline: at G=8, v8 beats torch SDPA **6–10× at every batch from 1 to
+64**, where v7 *lost* (0.3–0.5× past B=8). So the reorder ("GEMV→GEMM before bytes") is now measured, not
+just argued. **The honest asterisk:** `%HBM` never exceeds ~11% even at the best G — I'm still
+per-CTA-bound, not bandwidth-bound. M-packing closed most of the per-CTA gap but left ~9× of headroom,
+which is exactly what Cut 2's tensor-core `M=G` GEMM (and only later, the FP8/FP4 byte cuts) goes after.
+This is the **first step in six where the roofline's number was directionally right** — `AI=2G/b` predicted
+the speedup *magnitude* (~G×), even though its absolute HBM floor stays unreached because the model still
+has no schedule term. Say it crisply: "I predicted G×, I measured ~G×, and I can tell you precisely why
+I'm *still* not at the bandwidth wall — that gap is the next kernel, not hand-waving."

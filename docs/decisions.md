@@ -521,10 +521,10 @@ must lead at *all* batch sizes; `decode-replan §5`.
 
 ## Step 8 — GQA M-packing (v8)
 
-*IN PROGRESS. **Phase 0 (roofline) done + recorded; Cut 1 (CUDA-core) code complete + wired; GPU gate
-pending.** This is the per-step gate captured BEFORE the kernel landed. The build is STAGED (user
-decision): Cut 1 = CUDA-core M-pack on sm_75/T4 (cheap correctness, M-packing isolated as one variable);
-Cut 2 = sm_80 tensor-core variant + the M≥16 ablation `[RENT A100]`.*
+*Cut 1 MEASURED 2026-06-28 (Colab T4 sm_75): **Gate 1 ✅ 64/64**; G-sweep + reclaim-at-batch captured.
+**Quiz (Gate 2) pending.** Cut 2 (sm_80 tensor cores + M≥16 ablation) still `[RENT A100]`. The build is
+STAGED (user decision): Cut 1 = CUDA-core M-pack on sm_75/T4 (cheap correctness, M-packing isolated as one
+variable); Cut 2 = sm_80 tensor-core variant + the M≥16 ablation.*
 
 **Bottleneck (predicted/attacked): the per-CTA wall v7 MEASURED.** v7 proved decode is per-CTA-bound at
 every batch size (flat ~10–12% HBM, BH=8→512): at `N_q=1` only **1 of 8 warps computes** and `sK+sV=32 KB`
@@ -575,11 +575,28 @@ realistic GQA range.** So the headline is *not* "v8 becomes compute-bound"; it's
 move much closer to the now-`G×`-lower floor (the roofline has no schedule term — magnitude-wrong 5
 straight steps — so the µs/tok drop + reclaim-SDPA-at-batch are the deliverables, not the floor).
 
-**Measured:** _pending GPU gate (`notebooks/v8_gqa_gate.ipynb`)._ Targets: correctness 0-fail vs
-`sdpa_reference_gqa` (decode `G∈{1,2,4,8}` + non-multiple `N_k` + causal/offset + idle-warp `G=3` +
-multi-tile `G=16` + square reduction) **and** v7 regression; the Cut-1 G-sweep (µs/tok ↓, vs-v7-no-packing
-↑ as `G` rises); reclaim SDPA at B≥8. Then Cut 2 `[RENT A100]`: the 3-way ablation vs FlashInfer / XQA /
-vLLM PagedAttention v2.
+**Measured (Cut 1, 2026-06-28, Colab T4 sm_75, `notebooks/v8_gqa_gate_output.ipynb`):**
+- **Gate 1 ✅ 64/64 correctness** (38 v8 + 26 v7 regression, tol 2e-2, 81.8 s). The idle-warp `G=3` and
+  multi-tile `G=16` cases pass → `G` need not divide 8 and `M>8` tiles over `grid.x` correctly; the
+  `repeat_interleave(G)` oracle confirms the head mapping.
+- **The G-sweep CONFIRMS the per-CTA mechanism (the headline):** `vs no-pack` (= v8 ÷ v7 on the same
+  workload, KV broadcast to `H_q`) tracks **~`G×` up to G=8 — 8.59×/8.71× (d64/d128) at G=8** — then
+  sub-linear (12.7× at G=32, where `M>8` re-stages KV over `⌈G/8⌉` blocks). µs/tok falls ~15×/12.7× from
+  G=1→32. This is `AI=2G/b` realized as wall-clock (`G` warps + KV read once), **on CUDA cores, no tensor
+  cores** — Cut 1's thesis lands.
+- **Reclaim-SDPA-at-batch ✅:** at G=8, v8 beats torch SDPA **6.1–9.9× across B=1→64** — where v7 *lost*
+  (0.34–0.56× at B≥8). The serving-batch regime is reclaimed, the v7-data deliverable delivered.
+- **Prediction-vs-measured — a partial roofline WIN (first in 6 steps):** the `AI=2G/b` model got the
+  *speedup magnitude* right (~`G×`), but `%HBM` stays **≤11%** at every G → still **per-CTA-bound, NOT
+  bandwidth-bound** (the kernel never reaches the floor the model draws; M-packing closes most of the gap,
+  ~9× headroom remains for Cut 2's tensor cores). So the model's relative scaling was right; its absolute
+  floor stays unreached — as flagged (no schedule term).
+- **Caveats (not failures):** Colab T4 clock-throttled (`~360-390/1590 MHz`) → absolute µs/tok slow but
+  same-session ratios robust; causal `vs sdpa` is the carried top-left-mask artifact (correctness uses the
+  honest `causal=False` oracle); `B=64,d128` `vs no-pack`=nan is an OOM in the auxiliary G-expanded
+  baseline, not a v8 failure.
+- **Still pending:** Cut 2 `[RENT A100]` — the 3-way M≥16 ablation vs FlashInfer / XQA / vLLM
+  PagedAttention v2; the quiz (Gate 2).
 
 **Claim discipline (carried from v7):** frame as "an open, roofline-documented decode kernel measured vs
 FlashInfer/FlashMLA"; op-level ~2.9× single-token decode, NOT end-to-end, NOT "beat FA4" (FA4's decode

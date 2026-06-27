@@ -175,8 +175,13 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   2.92×). B300 confirmed: HBM flat **8 TB/s**, 288 GB, NVFP4 15 PF dense, exp 2× (10.7 TeraExp/s), `sm_103`.
   Cleanup TODOs: bottom-right causal-mask ref; stale "split-KV fills SMs" comments in
   `paged_attention.cu:221-226` + `roofline/model.py:96-99` (both now **corrected**).
-- **Step 8 (v8 GQA M-packing, `kernels/v8_gqa/`)** — **PARTIAL: Phase 0 (roofline) + Cut 1 (CUDA-core)
-  code complete; GPU gate PENDING.** Built STAGED (Kien's call): **Cut 1 = CUDA-core M-pack on sm_75/T4**
+- **Step 8 (v8 GQA M-packing, `kernels/v8_gqa/`)** — **Cut 1 MEASURED (Colab T4, 2026-06-28): Gate 1 ✅
+  64/64; G-sweep + reclaim-at-batch captured; quiz (Gate 2) PENDING. Cut 2 (sm_80 tensor cores) still
+  `[RENT A100]`.** Headline: G-packing buys **~`G×` wall-clock over no-packing (8.6× at G=8)** and **beats
+  SDPA 6–10× at every batch B=1→64** (v7 lost at B≥8) — on CUDA cores, no tensor cores. `%HBM` stays ≤11%
+  (still per-CTA-bound, ~9× headroom for Cut 2). The `AI=2G/b` model got the *speedup magnitude* right (a
+  partial roofline win, first in 6 steps) while its absolute floor stays unreached. Built STAGED (Kien's
+  call): **Cut 1 = CUDA-core M-pack on sm_75/T4**
   (`_MIN_CAPABILITY=(7,0)`; isolates M-packing cheaply, no tensor cores) → **Cut 2 = sm_80 tensor-core +
   the full 3-way M≥16 ablation** (pad-16 / multi-group-pack / CUDA-core-QK) `[RENT A100]`. Cut 1 **forks
   v7 verbatim** → `gqa_attention.cu`, changing ONLY the index math: grid z = `B·H_kv` (KV heads), packed
