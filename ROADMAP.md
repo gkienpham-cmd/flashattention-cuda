@@ -13,13 +13,35 @@ Status: `[ ]` not started · `[~]` in progress · `[x]` done (tests green + quiz
 
 ---
 
+## ★ ACTIVE TRACK (2026-06-27): the decode arc v6 → v11
+
+The kernel versions diverged from the linear curriculum below: v1–v4 built the prefill fundamentals,
+**v5** jumped to tensor cores (WMMA, = old #6), and **v6** pivoted to the **decode regime** (`N_q=1`,
+KV-cache) — the bridge to the from-scratch mini-vLLM. The live plan is now the decode arc, **reordered
+after v6 measured occupancy (not bytes) as the limiter** (full math + per-step deliverable + 5 paper
+diagrams in [`docs/decode-replan.md`](docs/decode-replan.md); thesis in
+[`docs/b300-decode-research.md`](docs/b300-decode-research.md)):
+
+- `[x]` **v6 — split-KV decode (Flash-Decoding)** — fill the SMs at `N_q=1`; partial + LSE merge. **[BUILD]** · *DONE 2026-06-27: beats naive `N_q=1` 5.7–8.2×, SDPA 1.5–3.3×, but only ~12% HBM → occupancy-bound, not bandwidth-bound (a `BH=8` micro-bench artifact; batch-conditional).*
+- `[ ]` **v7 — paged KV gather + harness fixes** — block-table indirection; **`--batch` sweep** (measure the occupancy→bandwidth crossover, currently only predicted) + **`--decode` causal query-offset**. **[BUILD/RENT]** · occupancy-neutral plumbing.
+- `[ ]` **v8 — GQA M-packing** ★ *the reorder* — pack `G` query heads into `M`: GEMV→`M=G` GEMM (tensor cores re-engage), KV read once, `AI = 2/b → 2G/b`. The occupancy lever, **promoted ahead of low-precision.** **[RENT A100/H100]**.
+- `[ ]` **v9 — FP8 KV cache** — first byte cut (`b:2→1`, `AI ×2`); accuracy delta vs FP16 documented. Bytes only pay now that v8 nears the wall. **[B300]** (H100 ok for correctness).
+- `[ ]` **v10 — NVFP4 + asymmetric precision** — *the headline:* `b≈0.56` (~3.5× fewer bytes); FP4 `P·V` + MXFP8 scores + hardware `exp2`. **[B300]**.
+- `[ ]` **v11 — MLA / speculative decode (stretch)** — latent-KV (`AI → 2H/b`) / draft `M>1`; push intensity toward the ridge. **[B300]**.
+
+This **supersedes the ordering** of Phases 3–5 below for the active work (FP8/FP4 now follow GQA, not
+precede it); the precision/exp/masking techniques in those phases remain the technique menu the decode
+arc draws from. The phased curriculum below is kept as the bottleneck-by-bottleneck teaching context.
+
+---
+
 ## Phase 1 — FP16 fundamentals · bottleneck: **HBM bandwidth**
 - `[x]` **1. Naive** — materialize `S=QK^T`, softmax, `PV`. Baseline; exposes the bandwidth wall. **[BUILD]**
 - `[x]` **2. Tiling w/ shared memory** — stage Q/K/V tiles, cut global traffic. **[BUILD]** · *Measured: tiling cut ~0% DRAM (L2 already owned the operands); S = ~99% of traffic. Quiz + ncu gates cleared.*
 - `[x]` **3. Online softmax** — running max/sum, never materialize S. **[BUILD]** · *Both gates cleared (2026-06-19): quiz passed + counter-free measurement. 15/15 correct, S eliminated (peak mem +17 MB vs v2's +2164 MB = 125×), but **3–7× slower than v2** — deleting DRAM traffic bought nothing on a machine Step 2 proved was never bandwidth-bound; real limiter is occupancy/latency (151× above MMA floor, pass2=88.6%). ncu pipe-util deferred to bare-metal (counters blocked on cloud).*
-- `[ ]` **4. Fused FlashAttention-1** — one kernel, correct output rescaling. **[BUILD]**
-- `[ ]` **5. FlashAttention-2 partitioning** — parallelize over seq-len, better warp work split. **[BUILD]**
-- `[ ]` **6. Tensor cores** — WMMA / `mma.sync` `m16n8k8` FP16, tuned for sm_75. **[BUILD]** (Turing has TCs)
+- `[x]` **4. Fused FlashAttention-1** (= **v4**) — one kernel, O-rescale. **[BUILD]** · *DONE 2026-06-20: beats v2 1.7–2.6×, v3 7.5–15×; new limiter = FMA under-util (GEMV-shaped scoring), ~18× off floor.*
+- `[~]` **5. FlashAttention-2 partitioning** — folded into v5/v6 (v5 added the tensor-core path; v6's split-KV is the decode-side seq-len parallelization). Standalone prefill-partitioning pass deferred.
+- `[x]` **6. Tensor cores** (= **v5 WMMA**) — FP16-in/FP32-accum, sm_75. **[BUILD]** · *kernel + wiring landed, tests green; prose close-out is the outstanding Step-5 backfill.*
 
 ## Phase 2 — asynchrony & warp-specialization (FA-3 class) · bottleneck: **latency / instruction issue**
 - `[ ]` **7. Producer/consumer split** — `cp.async` needs Ampere **[RENT A100]**; portable double-buffer prototype **[BUILD]**.
