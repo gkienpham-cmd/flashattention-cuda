@@ -391,9 +391,9 @@ says the lever after that is *occupancy* — **GQA M-packing (v8, `AI=2/b→2G/b
 
 ## Step 7 — Paged KV gather + decode-harness fixes (v7)
 
-*Measured 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124, `clock~-1/-1`). **51/51 correctness**
-(`-k "v7_paged or v6_splitkv"`: paged shuffled-pool gather + v6 regression). Gate 1 ✅; Gate 2 (quiz)
-pending. **The `--batch` sweep refutes the predicted occupancy→bandwidth crossover** — see below; this
+*DONE 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124, `clock~-1/-1`), both gates: **51/51
+correctness** (`-k "v7_paged or v6_splitkv"`: paged shuffled-pool gather + v6 regression) + **quiz
+passed**. **The `--batch` sweep refutes the predicted occupancy→bandwidth crossover** — see below; this
 is the load-bearing finding of the whole reorder.*
 
 **Why this step:** v6's KV was contiguous; a real KV cache is a pool of fixed-size pages plus a

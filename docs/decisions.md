@@ -370,10 +370,10 @@ gather (non-contiguous KV correctness) + the `--batch` sweep + the `--decode` ca
 
 ## Step 7 — Paged KV gather + decode-harness fixes (v7)
 
-*Measured 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124). **51/51 correctness** (Gate 1 ✅);
-quiz (Gate 2) pending. **The headline is a refutation:** the `--batch` sweep shows NO
-occupancy→bandwidth crossover — decode here is per-CTA-bound (smem cap + single-warp GEMV), not
-grid-occupancy-bound, at every batch size. This corrects `decode-replan §2.1`.*
+*DONE 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124), both gates: **51/51 correctness** +
+**quiz passed**. **The headline is a refutation:** the `--batch` sweep shows NO occupancy→bandwidth
+crossover — decode here is per-CTA-bound (smem cap + single-warp GEMV), not grid-occupancy-bound, at
+every batch size. This corrects `decode-replan §2.1`.*
 
 **Bottleneck (predicted): NONE new — v7 is occupancy-neutral.** This is the deliberate design point.
 v6 named the limiter (occupancy/launch at small batch); v7 does not touch it. It isolates one variable
@@ -443,6 +443,8 @@ arch-independent (pure indexing); the gather's L1/L2 residency assumption holds 
   (the smem cap + single-warp GEMV dominate), so a persistent/fused merge is lower priority than first
   thought — but worth a pipe-util read on bare metal to confirm the smem-residency story directly.
 
-**Quiz:** PENDING (Gate 2 — the last gate before v8). **Next (v8 — GQA M-packing):** pack `G` query
-heads into `M` (GEMV→`M=G` GEMM, tensor cores re-engage, KV read once, `AI = 2/b → 2G/b`). v7's data
-says v8 must lead at *all* batch sizes; `decode-replan §5`.
+**Quiz:** passed 2026-06-27 (Gate 2). Kien nailed the refutation (flat %HBM, crossover false) and the
+per-CTA mechanism: smem caps residency at 2 blocks/SM, so batch replicates an inefficient block without
+making it efficient. **Next (v8 — GQA M-packing):** pack `G` query heads into `M` (GEMV→`M=G` GEMM,
+tensor cores re-engage, KV read once, `AI = 2/b → 2G/b`, **G active warps/block**). v7's data says v8
+must lead at *all* batch sizes; `decode-replan §5`.

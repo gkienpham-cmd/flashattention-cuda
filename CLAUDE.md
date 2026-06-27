@@ -136,8 +136,8 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   **open, roofline-documented asymmetric-precision FP4 decode kernel** measured vs FlashInfer/FlashMLA,"
   **not** "we beat FA4." See `docs/decode-replan.md`, `results.md`/`decisions.md` Step 6,
   `interview-prep.md` C8–C9.
-- **Step 7 (v7 split-KV paged, `kernels/v7_paged/`)** — MEASURED 2026-06-27 (vast.ai T4); **Gate 1
-  cleared (51/51 correctness), quiz/Gate 2 PENDING.** v6's two kernels carried unchanged + ONE new
+- **Step 7 (v7 split-KV paged, `kernels/v7_paged/`)** — DONE 2026-06-27 (vast.ai T4, **both gates:
+  51/51 correctness + quiz passed**). v6's two kernels carried unchanged + ONE new
   variable: KV reads **gather through a per-sequence block table** (paged pool `[num_blocks,page_size,
   H,d]`, the vLLM layout a mini-vLLM consumes) via a new `paged_attention()` API; plus two harness
   fixes (`--batch` sweep, causal query-offset). **The `--batch` sweep REFUTED the predicted
@@ -159,12 +159,10 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → v9 FP8 KV → v10 NVFP4 + asymmetric
 precision (headline) → v11 MLA/speculative.
 
-1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — built + MEASURED; only Gate 2 (quiz) remains.**
-   Code done, 51/51 correct, benched. **Quiz Kien before starting v8** (the per-step gate). After the
-   quiz, mark v7 `[x]` in ROADMAP. Optional cleanup carried forward: upgrade
-   `diagrams/decode-roofline-crossover.svg` (predicted arc → measured-flat line); a fully-honest causal
-   `vs sdpa` needs the reference built with a bottom-right mask; bare-metal pipe-util to confirm the
-   smem-residency story directly.
+1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — DONE (both gates, 2026-06-27).** Carry-forward
+   cleanups (not gating): upgrade `diagrams/decode-roofline-crossover.svg` (predicted arc → measured-flat
+   line); a fully-honest causal `vs sdpa` needs the reference built with a bottom-right mask; bare-metal
+   pipe-util to confirm the smem-residency (2 blocks/SM) story directly.
 2. **Step 8 — GQA M-packing (the reorder, NOW the per-CTA-efficiency lever):** pack the `G` query heads
    of a GQA group into the CTA's `M` dim → GEMV becomes an `M=G` GEMM (tensor cores re-engage), KV read
    once, `AI = 2/b → 2G/b`, **and G compute-warps/block** (the fix v7 proved is needed). Promoted ahead
