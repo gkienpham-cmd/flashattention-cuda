@@ -349,14 +349,22 @@ split-KV schedule does not change these bytes; it only lets the kernel *reach* t
   single query on Turing; the hand-written split-KV is faster. The edge is bigger at d=64 (2.4–3.3×)
   than d=128 (1.5–1.8×) — d=128 has more work per key, where v6's GEMV-shaped per-key scoring is less
   efficient.
-- ⚠️ **But %HBM is only ~9–15% — v6 does NOT saturate HBM.** Measured time is **~7–9× above the HBM
-  floor** (0.449 ms vs 0.052 ms floor @64/8192). The roofline got the *location* right (HBM-bound in
+- ⚠️ **But %HBM is only ~9–15% — v6 does NOT saturate HBM.** Measured time is **6.5–11.6× above the HBM
+  floor** (0.449 ms vs 0.052 ms floor @64/8192 = 8.6×; spread re-derived from the table, tighter than the
+  earlier "~7–9×"). The roofline got the *location* right (HBM-bound in
   principle) but the kernel never reaches it: at BH=8 the grid is only 64–80 blocks on 40 SMs (~2
   blocks/SM, ~16 of 32 warps), and there's a **two-kernel launch + a tiny under-occupied merge** on top.
   The real limiter is still **occupancy / launch + reduction latency**, not bandwidth — the same finding
   as v3/v4, now at decode. The roofline mispredicted *magnitude* a 5th time, same flops/bytes blind spot
   (it can't see the schedule). %HBM rising with `N_k` (8.6→12.4%) is the fixed overhead amortizing, not
   the kernel getting closer to the bandwidth wall structurally.
+- ⚠️ **This 12% is a `BH=8` (single-stream) result — and it is batch-conditional (deep-research, 2026-06-27).**
+  `choose_splits` self-disables (`num_splits→1`) once `base_blocks = BH ≥ 2·num_sm`, so at production batch
+  (T4 `BH≥80`, `B≥10`; B300 `BH≥320`, `B≥40`) batch *alone* fills the SMs and the kernel should reach its HBM
+  ceiling — there it *is* bandwidth-bound. **The bench only ran `B=1`**, the worst-case corner, so the
+  large-batch end-state is **predicted (code-trace), not measured** → **v7 adds a `--batch` sweep** to turn
+  the occupancy→bandwidth crossover into a measured curve (see `docs/decode-replan.md §2.1` +
+  `diagrams/decode-roofline-crossover.svg`).
 
 **The causal rows are a degenerate-shape artifact — disregard for perf:** with `q` at row index 0 and
 the causal rule `j > i`, the single query (`i=0`) can attend to **only key 0** — one key, not the cache.
@@ -375,6 +383,8 @@ and `%HBM` are meaningless here.
 **ncu:** deferred (counter-free norm — the bench's CUDA-event timing + the roofline-distance read above
 already name the limiter as occupancy/launch, not bandwidth; a pipe-util read is a bare-metal follow-up).
 
-**Next (v7 — paged KV gather):** block-table indirection, correctness with non-contiguous KV; and the
-harness causal-decode query offset above. The %HBM gap says the lever after that is *occupancy* (bigger
-batch/GQA packing to grow the grid) before *bytes* (FP8/NVFP4 KV at v8/v9).
+**Next (v7 — paged KV gather):** block-table indirection, correctness with non-contiguous KV; the
+harness causal-decode query offset above; **and a `--batch` sweep** to measure the crossover. The %HBM gap
+says the lever after that is *occupancy* — **GQA M-packing (v8, `AI=2/b→2G/b`, GEMV→GEMM)** — before
+*bytes* (FP8 v9 / NVFP4 v10 on B300). Full reordered plan + math + diagrams:
+[`decode-replan.md`](decode-replan.md).

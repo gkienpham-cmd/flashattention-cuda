@@ -317,8 +317,9 @@ tensor cores: at `N_q = 1` the matmuls are M=1 (GEMV), so WMMA would idle on a 1
 
 **What changes on B300 (research §3):** 160 SMs ⇒ more splits (retune `choose_splits` `num_sm` 40→160);
 **HBM bandwidth is FLAT vs B200** ⇒ the real decode wins are **precision** (NVFP4 KV ≈ 3.5× fewer bytes,
-v9), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
-2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v8/v9.
+v10), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
+2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v9/v10 (GQA
+M-packing is now v8 — reordered ahead of the byte cuts; see "What this measurement reorders" below).
 
 **Measured (decode B=1 H=8 N_q=1, non-causal = the real decode workload):**
 - **Correct:** 25/25 vs SDPA (square SHAPES via the `num_splits→1` reduction + decode `N_q=1` shapes,
@@ -340,14 +341,29 @@ v9), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge 
 
 **What changes on B300 (research §3):** 160 SMs ⇒ more splits (retune `choose_splits` `num_sm` 40→160);
 **HBM bandwidth is FLAT vs B200** ⇒ the real decode wins are **precision** (NVFP4 KV ≈ 3.5× fewer bytes,
-v9), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
-2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v8/v9.
+v10), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
+2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v9/v10 (GQA
+M-packing is now v8 — reordered ahead of the byte cuts; see "What this measurement reorders" below).
 
 **What this measurement reorders:** because v6 reaches only ~12% of HBM, the next lever is *more
-occupancy* (bigger batch / GQA M-packing to grow the grid — research §4's `AI = 2G/b`), not fewer bytes.
-Low-precision KV (FP8/NVFP4) only pays once the kernel is actually bandwidth-bound; chasing it before
-fixing occupancy would optimize a wall we're 8× away from. So: **v7 paged KV** (the import surface the
-mini-vLLM needs) + the harness causal-decode offset, then occupancy/GQA, then bytes at v8/v9 on B300.
+occupancy* (GQA M-packing to grow the grid + raise intensity — research §4's `AI = 2/b → 2G/b`), not
+fewer bytes. Low-precision KV only pays once the kernel is actually bandwidth-bound; chasing it before
+fixing occupancy would optimize a wall we're 8× away from. So the **reordered arc** (see
+[`decode-replan.md §5`](decode-replan.md)): **v7 paged KV** + harness fixes → **v8 GQA M-packing** (the
+occupancy lever, promoted) → **v9 FP8 KV** → **v10 NVFP4 + asymmetric precision** (headline) → v11 MLA.
 
-**Quiz:** passed 2026-06-27 (Gate 2). **Next (v7):** paged KV gather — block-table indirection,
-correctness with non-contiguous KV; plus the `--decode` causal query-offset fix.
+**Correction — "occupancy before bytes" is batch-conditional (deep-research, 2026-06-27):** the 12% is
+partly a `BH=8` micro-bench artifact. `choose_splits` self-disables (`num_splits→1`) once
+`base_blocks = BH ≥ 2·num_sm`, so at production batch (T4 `BH≥80`, i.e. `B≥10`; B300 `BH≥320`, `B≥40`)
+batch *alone* fills the SMs and the kernel reaches its HBM ceiling — there *bytes-first* is correct.
+v6 measured only `B=1`, the worst-case corner, so this large-batch end-state is **predicted (code-trace),
+not measured** → **v7 must add a `--batch` sweep** to pin the crossover empirically. GQA M-packing is the
+hedge that leads regardless: it wins in *both* the small-batch (occupancy) and large-batch
+(intensity+reuse) regimes. Honest framing for the paper: occupancy-first holds for `BH ≲ 2·SM`.
+
+**Quiz:** passed 2026-06-27 (Gate 2). **Deep-research close-out 2026-06-27:** 13-agent verify+research
+pass → [`decode-replan.md`](decode-replan.md) (paper-grade synthesis, 5 new diagrams). Verified: B300 HBM
+BW flat at 8 TB/s; decode `AI=2/b` memory-bound; v6-12%-is-small-batch-artifact. Reframed: FA4 is
+acquiring a decode path and FlashInfer/FlashMLA *are* B300-proven, so the contribution is "an open,
+roofline-documented FP4 decode kernel vs FlashInfer/FlashMLA," not "we beat FA4." **Next (v7):** paged KV
+gather (non-contiguous KV correctness) + the `--batch` sweep + the `--decode` causal query-offset fix.

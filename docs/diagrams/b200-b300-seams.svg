@@ -1,0 +1,71 @@
+<svg width="100%" viewBox="0 0 720 470" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>B200 to B300 (Blackwell Ultra) decode-relevant seams</title>
+<desc>A comparison table of B200 versus B300 with the decode consequence of each delta. HBM capacity grows 192 to 288 GB. HBM bandwidth is flat at 8 TB/s — highlighted as the strategic surprise: there is no extra bandwidth on B300, so a memory-bound decode kernel's only levers are fewer bytes (FP4), more occupancy (GQA), and faster exp. NVFP4 dense compute rises about 10 to 15 PFLOPS, enabling roughly 3.5 times fewer KV bytes. FP8 dense rises to about 5 PFLOPS. BF16 dense is about 3.5 PFLOPS (spec), giving a ridge of 437.5 that corrects an earlier 310 figure. The exponential SFU unit doubles to about 10.7 TExp per second, so FA4's software exp emulation can be deleted in favor of hardware exp2. SM count grows 148 to 160, which adds split-KV parallelism but worsens the M-equals-1 SM starvation. Compute capability goes sm_100 to sm_103 on CUDA 12.9.</desc>
+<rect x="0" y="0" width="720" height="470" fill="#ffffff"/>
+<text x="20" y="34" font-size="14" font-weight="500" fill="#2C2C2A">B200 → B300 (Blackwell Ultra): the decode-relevant seams</text>
+<!-- header -->
+<rect x="20" y="48" width="680" height="26" rx="3" fill="#33322F"/>
+<text x="30" y="65" font-size="11" font-weight="500" fill="#F1EFE8">spec</text>
+<text x="170" y="65" font-size="11" font-weight="500" fill="#F1EFE8" text-anchor="middle">B200</text>
+<text x="300" y="65" font-size="11" font-weight="500" fill="#F1EFE8" text-anchor="middle">B300 / Blackwell Ultra</text>
+<text x="380" y="65" font-size="11" font-weight="500" fill="#F1EFE8">decode consequence</text>
+<!-- rows -->
+<g font-size="11">
+<!-- r1 -->
+<rect x="20" y="76" width="680" height="34" fill="#F7F6F1"/>
+<text x="30" y="97" fill="#444441">HBM capacity</text>
+<text x="170" y="97" fill="#5F5E5A" text-anchor="middle">192 GB</text>
+<text x="300" y="97" fill="#2C2C2A" text-anchor="middle">288 GB (+50%)</text>
+<text x="380" y="97" fill="#5F5E5A">longer context / bigger batch resident</text>
+<!-- r2 highlight -->
+<rect x="20" y="110" width="680" height="40" fill="#FAECE7" stroke="#993C1D" stroke-width="1"/>
+<text x="30" y="129" fill="#712B13" font-weight="500">HBM bandwidth</text>
+<text x="170" y="129" fill="#993C1D" text-anchor="middle">~8 TB/s</text>
+<text x="300" y="129" fill="#712B13" text-anchor="middle" font-weight="500">8 TB/s — FLAT</text>
+<text x="380" y="125" fill="#712B13" font-weight="500">THE SURPRISE: no GB/s headroom on B300</text>
+<text x="380" y="140" fill="#993C1D">→ fewer bytes (FP4) · occupancy (GQA) · 2× exp are the only levers</text>
+<!-- r3 -->
+<rect x="20" y="150" width="680" height="34" fill="#F7F6F1"/>
+<text x="30" y="171" fill="#444441">NVFP4 dense</text>
+<text x="170" y="171" fill="#5F5E5A" text-anchor="middle">~10 PF</text>
+<text x="300" y="171" fill="#2C2C2A" text-anchor="middle">15 PFLOPS (20 sparse)</text>
+<text x="380" y="171" fill="#5F5E5A">FP4 KV ≈ 3.5× fewer bytes — the v10 lever</text>
+<!-- r4 -->
+<rect x="20" y="184" width="680" height="34" fill="#FFFFFF"/>
+<text x="30" y="205" fill="#444441">FP8 dense</text>
+<text x="170" y="205" fill="#5F5E5A" text-anchor="middle">~4.5 PF</text>
+<text x="300" y="205" fill="#2C2C2A" text-anchor="middle">5 PFLOPS</text>
+<text x="380" y="205" fill="#5F5E5A">FP8 KV halves bytes — the v9 lever</text>
+<!-- r5 -->
+<rect x="20" y="218" width="680" height="34" fill="#F7F6F1"/>
+<text x="30" y="239" fill="#444441">BF16 dense</text>
+<text x="170" y="239" fill="#5F5E5A" text-anchor="middle">2.25 PF</text>
+<text x="300" y="239" fill="#2C2C2A" text-anchor="middle">~3.5 PF *spec</text>
+<text x="380" y="239" fill="#5F5E5A">ridge 437.5 (corrects §4's unsourced 310) — confirm on-chip</text>
+<!-- r6 -->
+<rect x="20" y="252" width="680" height="34" fill="#FFFFFF"/>
+<text x="30" y="273" fill="#444441">Exp / SFU (MUFU.EX2)</text>
+<text x="170" y="273" fill="#5F5E5A" text-anchor="middle">5 TExp/s</text>
+<text x="300" y="273" fill="#2C2C2A" text-anchor="middle">~10.7 TExp/s (≈2×)</text>
+<text x="380" y="273" fill="#5F5E5A">delete FA4 exp-emulation; run hardware exp2</text>
+<!-- r7 -->
+<rect x="20" y="286" width="680" height="34" fill="#F7F6F1"/>
+<text x="30" y="307" fill="#444441">SMs</text>
+<text x="170" y="307" fill="#5F5E5A" text-anchor="middle">148</text>
+<text x="300" y="307" fill="#2C2C2A" text-anchor="middle">160</text>
+<text x="380" y="307" fill="#5F5E5A">more split-KV parallelism, but worsens M=1 SM-starvation</text>
+<!-- r8 -->
+<rect x="20" y="320" width="680" height="34" fill="#FFFFFF"/>
+<text x="30" y="341" fill="#444441">compute capability</text>
+<text x="170" y="341" fill="#5F5E5A" text-anchor="middle">sm_100</text>
+<text x="300" y="341" fill="#2C2C2A" text-anchor="middle">sm_103 · CUDA 12.9</text>
+<text x="380" y="341" fill="#5F5E5A">the build target (sm_103a for B300 exclusives)</text>
+</g>
+<line x1="20" y1="354" x2="700" y2="354" stroke="#D9D7CE" stroke-width="0.5"/>
+<!-- caption -->
+<text x="20" y="378" font-size="11.5" fill="#2C2C2A" font-weight="500">Flat bandwidth is the strategic pivot:</text>
+<text x="20" y="394" font-size="11" fill="#5F5E5A">on B300 a memory-bound decode kernel's only gains are fewer bytes (FP4 KV), more occupancy (GQA M-packing), and faster exp — exactly the v8→v11 levers.</text>
+<rect x="20" y="410" width="680" height="44" rx="4" fill="#F7F6F1" stroke="#D9D7CE" stroke-width="0.5"/>
+<text x="30" y="429" font-size="10.5" fill="#5F5E5A">Open-lane evidence: FA4's decode (M=1) tensor-core utilization is &lt;0.8%; B300 decode is reachable but unproven-as-open — FlashInfer (vLLM, GB300, Feb 2026)</text>
+<text x="30" y="444" font-size="10.5" fill="#5F5E5A">and FlashMLA (SGLang DeepSeek-V4 day-0, GB300, Apr 2026) ship measured GB300 decode; the wedge is an OPEN, roofline-documented FP4 decode kernel, not "beat FA4".</text>
+</svg>

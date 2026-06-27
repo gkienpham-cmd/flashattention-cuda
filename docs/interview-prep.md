@@ -458,7 +458,7 @@ bytes — FP8/NVFP4 KV only pays once you're actually bandwidth-bound, and we're
 it, a split-KV kernel doesn't. Realistic causal decode puts the query at `N_k−1`, which equals the
 non-causal full-cache scan. Don't quote causal-decode-at-row-0 speedups.)*
 
-### Forward pointer (v8/v9): asymmetric precision
+### Forward pointer (v10): asymmetric precision
 The two matmuls have **opposite FP4 tolerance**: `P·V` is a convex combination (`P ∈ [0,1]`, sums to 1)
 → FP4 error *averages out*, **safe**; `Q·Kᵀ` feeds `exp` → error amplifies (`δ → e^δ`) and logits carry
 outliers → keep **MXFP8 + outlier residual**. That asymmetry is the v9 headline.
@@ -468,4 +468,50 @@ even tensor cores idle. v6 splits the KV axis so each block owns a chunk and emi
 a merge recombines them with the same LSE algebra as online softmax. On the T4 it beat a naive `N_q=1`
 loop ~6–8× and SDPA ~1.5–3×, but only hit ~12% of HBM — so it's still occupancy-bound, not bandwidth-
 bound. That's the tell: decode AI is `2/b`, memory-bound and N-independent, so the next win is occupancy
-(GQA `2G/b`) then fewer KV bytes — which is why the B300 headline (v9) is FP4 KV, not a better GEMM."
+(GQA `2G/b`) then fewer KV bytes — which is why the B300 headline (v10) is FP4 KV, not a better GEMM."
+
+---
+
+## C9 — The reorder: occupancy before bytes (and the batch caveat)
+
+*(deep-research close-out 2026-06-27; full synthesis + math + 5 diagrams in `docs/decode-replan.md`)*
+
+### The decision
+v6 measured 12% of HBM → **occupancy-bound, not bandwidth-bound.** FP4 KV is a *bytes* lever, and cutting
+bytes multiplies the HBM term — which isn't binding when you're 8× off the wall. So the plan **reorders**:
+the occupancy lever **GQA M-packing (v8)** moves *ahead of* the byte levers **FP8 (v9) / NVFP4 (v10).**
+Not a pivot — the decode/B300/FP4 thesis is intact; only the *order* changed.
+
+### Why GQA M-packing leads (one change, three wins)
+Pack the `G` query heads of a GQA group into the CTA's `M` dim: (1) **occupancy** — `+G×` useful work per
+block fills the SMs; (2) **intensity** — `AI = 2/b → 2G/b`; (3) **reuse** — one KV read serves `G` heads
+instead of `G` reads. And `M = G > 1` turns the decode GEMV back into a small GEMM, so **tensor cores
+re-engage** (the v5 path, recovered in the decode regime). It wins in *both* batch regimes, so it leads
+regardless of deployment.
+
+### The batch caveat (the honest qualifier)
+"Occupancy before bytes" is **batch-conditional.** `choose_splits` self-disables (`num_splits→1`) once
+`base_blocks = BH ≥ 2·num_sm`, so at production batch (T4 `BH≥80`, B300 `BH≥320`) batch *alone* fills the
+SMs and decode becomes genuinely bandwidth-bound — there *bytes-first* is right. v6 only benched `B=1`
+(the worst corner), so the large-batch end-state is **predicted, not measured** → v7 adds a `--batch`
+sweep. On a 160-SM B300 the `M=1` starvation is *worse* (needs `B≥40` to fill).
+
+### Claim discipline (don't let the headline age badly)
+"Beat FA4 in decode" is true of the **published** FA4 (a BF16 prefill/training kernel, <0.8% MMA util at
+`M=1`) but FA4 is *acquiring* a decode path (Modal upstreamed split-KV + GQA-packing). FlashInfer (vLLM
+GB300) and FlashMLA (SGLang GB300, DeepSeek-V4 day-0) **are** B300-proven. So the defensible contribution
+is **"an open, roofline-documented, asymmetric-precision FP4 split-KV decode kernel, measured vs the real
+bar (FlashInfer/FlashMLA),"** plus the prediction-vs-measured methodology — *not* "we beat FA4."
+
+### The B300 fact that frames everything
+B300 HBM bandwidth is **flat 8 TB/s** vs B200 (verified — only capacity grew 192→288 GB, because 8-Hi→12-Hi
+stacks add layers, not pins). So a memory-bound decode kernel's *only* levers on B300 are **fewer bytes
+(FP4), more occupancy (GQA), faster exp (2× MUFU.EX2)** — exactly the v8→v11 set.
+
+**Say-this:** "v6 came out occupancy-bound at 12% of HBM, so I reordered: GQA M-packing before low-precision
+KV. GQA packs the group's query heads into M — it fixes occupancy, raises AI to `2G/b`, reads KV once, and
+re-engages tensor cores, all in one change, and it wins at any batch. FP4 KV is the headline but it only
+pays once you're near the bandwidth wall, and on B300 bandwidth is *flat* vs B200 — fewer bytes is the only
+bandwidth lever left. The honest caveat is that 12% is a single-stream number; at serving batch the grid
+fills itself, so I'm adding a batch sweep to measure the crossover. And I frame the result as an open,
+roofline-documented decode kernel vs FlashInfer/FlashMLA — not 'we beat FA4,' which is a prefill kernel."

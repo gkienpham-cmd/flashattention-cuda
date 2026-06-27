@@ -7,6 +7,24 @@ Deep-research synthesis + build plan. Compiled 2026-06-27 from: a full read of t
 Markings: **[fact]** = primary-source verified; **[infer]** = reasoned from the evidence;
 **[spec]** = speculative / needs on-hardware confirmation.
 
+> **▶ UPDATE 2026-06-27 (post-v6 measurement + deep-research) — read [`decode-replan.md`](decode-replan.md) first.**
+> v6's measured result (only ~12% of HBM ⇒ **occupancy-bound, not bandwidth-bound**) and a 13-agent
+> verify+research pass **reorder and correct** this doc:
+> - **Build order (§8) is revised:** the **GQA M-packing** lever (occupancy, `AI=2/b→2G/b`) moves *ahead
+>   of* the FP8/FP4 byte levers → **v7 paged · v8 GQA M-packing · v9 FP8 · v10 NVFP4 · v11 MLA.** Bytes
+>   only pay once the kernel is actually near the bandwidth wall.
+> - **"Decode is memory-bound" is correct but batch-conditional:** the 12% is a `BH=8` artifact;
+>   split-KV self-disables past `BH≈2·SM` so batch alone fills the SMs (predicted, not yet measured — v7
+>   adds a `--batch` sweep).
+> - **§4 correction:** `AI*_BF16 ≈ 310` → **≈ 437.5** (3.5 PF / 8 TB/s); the 310 back-solved to an
+>   unsourced 2.48 PF.
+> - **§6 correction / claim discipline:** FlashInfer (vLLM GB300, Feb 2026) and FlashMLA (SGLang GB300
+>   DeepSeek-V4 day-0, Apr 2026) **are** B300-proven (the #2939 deadlock was fixed); FA4 is *acquiring* a
+>   decode path (Modal upstreamed split-KV + GQA-packing). So the contribution is "an **open,
+>   roofline-documented FP4 decode kernel** vs FlashInfer/FlashMLA," not "we beat FA4."
+> - **Verified [fact]:** B300 HBM bandwidth is **flat 8 TB/s** vs B200 (only capacity grew 192→288 GB);
+>   decode `AI = 2/b` is N-independent and memory-bound; the 2× MUFU.EX2 exp doubling is real.
+
 ---
 
 ## 0. Thesis
@@ -105,7 +123,8 @@ One decode step, `N` KV tokens, head dim `d`, `b` bytes per KV element:
 | FP8 | 1 | 2.0 |
 | NVFP4 (1×16 + E4M3 scale) | ~0.56 | ~3.5 |
 
-B300 ridge points: `AI*_FP4 = 15e15 / 8e12 ≈ 1875`; `AI*_BF16 ≈ 310`. Decode (AI 1–4) is **~300–500×
+B300 ridge points: `AI*_FP4 = 15e15 / 8e12 ≈ 1875`; `AI*_BF16 ≈ 437.5` *(= 3.5 PF / 8 TB/s; corrected
+from `≈310`, which back-solved to an unsourced 2.48 PF — see `decode-replan.md §3`)*. Decode (AI 1–4) is **~300–500×
 below the ridge** — the tensor cores are nearly idle and `time/token ≈ KV_bytes / 8 TB/s`.
 
 Escape: **share KV across query heads.** GQA (`G` heads per KV head) → `AI = 2G/b` (GQA-8, FP4 ≈ 30).
@@ -172,6 +191,11 @@ documented cooperative MMA is 2-CTA) **[spec]** and is irrelevant to M=1 decode 
 
 ## 8. Build plan (v6 → v11), roofline-first
 
+> **⚠ REORDERED post-v6 (see the UPDATE banner + [`decode-replan.md §5`](decode-replan.md)):** the order
+> below was written bytes-first. v6 measured occupancy as the limiter, so the live order is **v7 paged ·
+> v8 GQA M-packing (occupancy) · v9 FP8 · v10 NVFP4 (headline) · v11 MLA** — GQA moves ahead of the byte
+> cuts. The per-step entries below are still accurate descriptions; only their *sequence* changed.
+
 Loop each step: predict limiter → explain → build + hand-verify → correctness vs reference → bench →
 roofline read (prediction vs measured) → quiz. Metric shifts to **µs/token, % HBM bandwidth, accuracy
 vs FP32**.
@@ -183,7 +207,8 @@ vs FP32**.
 - **v10 — GQA M-packing + B300 retune** · B300 · GEMV→GEMM; 160 SMs; drop ex2_emu; % of FP4 peak.
 - **v11 — MLA / speculative decode (stretch)** · B300 · raise AI toward the ridge; FlashMLA-class comparison.
 
-Rent B300 in concentrated bursts at v8/v9/v10; develop everything else cheap.
+Rent B300 in concentrated bursts for the precision/MLA steps (v9/v10/v11 in the reordered plan — see the
+UPDATE banner); develop v6–v8 cheap (T4 / rented A100/H100).
 
 ---
 

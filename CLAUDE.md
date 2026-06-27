@@ -117,22 +117,47 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   **But only ~9–15% of HBM BW (≈7–9× above the decode floor):** roofline got the *location* right
   (HBM, `AI=2/b=1.0`, N-independent) but **magnitude wrong a 5th time** — real limiter is still
   **occupancy/launch** (BH=8 → ~2 blocks/SM + a 2-kernel launch + a tiny under-occupied merge), not
-  bandwidth. So the measurement **reorders the roadmap: next lever is occupancy (batch / GQA M-pack,
-  `AI=2G/b`), not bytes** — FP8/NVFP4 KV (v8/v9 on B300) only pays once actually bandwidth-bound.
+  bandwidth. So the measurement **reorders the roadmap: next lever is occupancy (GQA M-packing → v8,
+  `AI=2G/b`), not bytes** — FP8/NVFP4 KV (now v9/v10 on B300) only pays once actually bandwidth-bound.
   Causal-decode rows are a degenerate-shape artifact (`q` at row 0 → 1 key; SDPA short-circuits, v6
-  doesn't) — a `--decode` query-offset is a v7 harness fix. Opens the decode arc v6→v11
-  (`docs/b300-decode-research.md`). See `docs/results.md`/`decisions.md` Step 6, `interview-prep.md` C8.
+  doesn't) — a `--decode` query-offset is a v7 harness fix. Opens the decode arc v6→v11.
+- **Step 6 deep-research close-out (2026-06-27)** — DONE: a 13-agent verify-and-research pass →
+  `docs/decode-replan.md` (paper-grade synthesis + 5 new diagrams in `docs/diagrams/`). Headline:
+  **focus + REORDER, don't pivot.** The decode/B300/FP4 thesis is sound and the external research
+  strengthens it (B300 HBM BW is **flat 8 TB/s** vs B200 — verified, only capacity grew 192→288 GB; FA4
+  is BF16 prefill/training; cuDNN 9.19 already matches it on BF16 prefill). What v6's 12%-HBM result
+  changes is the build **order**: the occupancy lever **GQA M-packing (now v8: `AI=2/b→2G/b`,
+  GEMV→GEMM, KV read once, tensor cores re-engage)** moves *ahead of* the byte levers **FP8 (v9) /
+  NVFP4 (v10)**. Two corrections: (a) "occupancy before bytes" is **batch-conditional** — the 12% is a
+  `BH=8` micro-bench artifact; split-KV self-disables past `BH≈2·SM` (80 on T4, 320 on B300) so batch
+  alone fills the SMs; that large-batch end-state is *predicted, not measured* → **v7 adds a `--batch`
+  sweep** to pin the crossover. (b) Claim discipline: FA4 is *acquiring* a decode path (Modal upstreamed
+  split-KV+GQA-packing) and FlashInfer/FlashMLA **are** B300-proven, so frame the contribution as "an
+  **open, roofline-documented asymmetric-precision FP4 decode kernel** measured vs FlashInfer/FlashMLA,"
+  **not** "we beat FA4." See `docs/decode-replan.md`, `results.md`/`decisions.md` Step 6,
+  `interview-prep.md` C8–C9.
 
 ## Next steps
 
-1. **Step 7 — paged KV-cache gather (`kernels/v7_*`):** block-table indirection so the KV cache need
-   not be contiguous (the import surface a from-scratch mini-vLLM consumes). Carry v6's split-KV +
-   LSE merge; add a non-contiguous-KV correctness case. Also fold in the **`--decode` causal
-   query-offset** fix (place the query at `N_k−1` so causal decode attends the whole cache, not 1
-   key). Per the Step-6 finding, the occupancy lever (bigger batch / GQA M-packing → `AI=2G/b`) comes
-   before the low-precision-KV lever — v6 reaches only ~12% of HBM, so cutting bytes is premature.
-2. **Backfill Step 5 docs** from `notebooks/step5_run_of_record.ipynb` (results/decisions/status/C-chain).
-3. **GPU host:** **vast.ai** T4 (~$0.10–0.20/hr). Image gotchas confirmed this run: torch installs into
+**The reordered decode arc is `docs/decode-replan.md` §5 (math + per-step deliverable); summary:**
+v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → v9 FP8 KV → v10 NVFP4 + asymmetric
+precision (headline) → v11 MLA/speculative.
+
+1. **Step 7 — paged KV-cache gather (`kernels/v7_*`) + harness fixes:** block-table indirection so the
+   KV cache need not be contiguous (the import surface a from-scratch mini-vLLM consumes; insertion
+   point is the cooperative smem load `splitkv_attention.cu:119-124`). Carry v6's split-KV + LSE merge
+   unchanged; add a non-contiguous-KV correctness case. **Two harness fixes that turn inferences into
+   measurements:** (a) a **`--batch` sweep** (`B∈{16,32,64}`) to watch `%HBM` climb past the crossover
+   `BH≈2·SM` — this *measures* the occupancy→bandwidth story that is currently only predicted; (b) the
+   **`--decode` causal query-offset** (place `q` at `N_k−1` so causal decode attends the whole cache,
+   not 1 key). v7 is occupancy-neutral plumbing — it sets up v8, it doesn't attack the limiter.
+2. **Step 8 — GQA M-packing (the reorder, occupancy lever):** pack the `G` query heads of a GQA group
+   into the CTA's `M` dim → GEMV becomes an `M=G` GEMM (tensor cores re-engage), KV read once, and
+   `AI = 2/b → 2G/b`. Promoted **ahead of** low-precision because v6 is occupancy-bound (12% HBM), so
+   cutting bytes is premature. `[RENT]` A100/H100. Then bytes: v9 FP8 KV, v10 NVFP4 + asymmetric
+   precision `[B300]`. (Diagrams: `gqa-mpacking.svg`, `decode-roofline-crossover.svg`.)
+3. **Backfill Step 5 docs** from `notebooks/step5_run_of_record.ipynb` (results/decisions/status/C-chain).
+4. **GPU host:** **vast.ai** T4 (~$0.10–0.20/hr). Image gotchas confirmed this run: torch installs into
    a **venv** (`/venv/main`) — install with `%pip`/`sys.executable -m pip` and prepend the venv `bin/`
    to `PATH` so `!python -m …` cells resolve (do NOT symlink system python3 over the venv); add
    `numpy`. `notebooks/v6_decode_gate.ipynb` is the standalone Run-All gate. **Counter-free profiling
