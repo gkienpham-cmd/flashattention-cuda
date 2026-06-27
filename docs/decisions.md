@@ -617,8 +617,29 @@ straight steps — so the µs/tok drop + reclaim-SDPA-at-batch are the deliverab
 - **Decision:** ablation arms 2 (multi-group→full M=16) and 3 (CUDA-core-QK + WMMA-PV) are **documented but
   not pursued** — G=16 is already a full tile and still lost 2.1×, so they won't rescue WMMA. Cut 2b (A100
   `mma.m16n8k16` + cp.async) becomes an **open question, not a foregone port**: worth a rental only to test
-  whether load-overlap + finer fragments + occupancy overturn the Turing result. **Default conclusion
-  (pending Cut 2b): the CUDA-core GEMV (Cut 1) is the right decode primitive; v8's deliverable is Cut 1.**
+  whether load-overlap + finer fragments + occupancy overturn the Turing result.
+
+**Measured (Cut 2b PROBE — A100-SXM4-80GB sm_80, 2026-06-28, `notebooks/v8_cut2b_a100_probe_output.ipynb`):
+the verdict did NOT flip — Cut 2 is CLOSED.** Rather than blind-write the hard `mma`+cp.async kernel on a
+weak hypothesis, we probed the *existing* kernels on a rented A100 (per-kernel gencode now sm_75+sm_80 so
+both build/run on Ampere; 38/38 correctness on A100).
+- **WMMA loses HARDER on A100 — 1.8–4.6× slower than the CUDA-core GEMV** (vs 1.2–3.3× on T4). The smoking
+  gun: WMMA **barely moved T4→A100** (G8/d128 42→39 µs/tok) despite ~5× tensor-core throughput + ~6× HBM BW,
+  while the CUDA-core path nearly halved (16.9→9.7). So WMMA is **neither compute- nor bandwidth-bound** —
+  it's pinned by per-CTA scheduling overhead (opaque-fragment smem-softmax round-trip + 1-warp load) that
+  doesn't scale with the GPU. Reclaim-at-batch: Cut 1 beats SDPA **2.5–8.6× all batch on A100**; WMMA
+  **loses to SDPA at B≥8**. (Caveat: A100 start-clocks read 330–1410 MHz, but warmup boosts before timing and
+  the T4→A100 non-scaling is clock-independent.)
+- **Decision: do NOT build the cp.async/`mma.m16n8k16` kernel.** cp.async only fixes the load-starvation
+  half; the opaque-fragment tax is fundamental and the gap *worsened* on the faster GPU. **The GEMV→GEMM
+  fix that won for v5 prefill is the wrong tool for decode — a clean two-architecture negative result.**
+  v8's deliverable is **Cut 1 (CUDA-core GQA M-packing)**. Tensor-core decode would need SOTA scheduling
+  (FlashMLA/FlashInfer), out of scope and irrelevant to the v8 thesis (occupancy, not compute).
+- **What this means for the arc:** v8 is a clean win (Cut 1) + a clean negative (tensor cores). The decode
+  thesis stands: the lever is per-CTA efficiency (G warps + KV-read-once), and the next real lever is
+  **bytes (v9 FP8 / v10 NVFP4)** — but only once a kernel is actually bandwidth-bound, which neither v7
+  (per-CTA) nor v8 (still ≤11% HBM) is. The honest open question carried forward: closing the remaining
+  per-CTA gap on CUDA cores (more warps, better load) before bytes.
 
 **Claim discipline (carried from v7):** frame as "an open, roofline-documented decode kernel measured vs
 FlashInfer/FlashMLA"; op-level ~2.9× single-token decode, NOT end-to-end, NOT "beat FA4" (FA4's decode

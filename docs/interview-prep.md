@@ -745,3 +745,19 @@ too small to pay for the WMMA fragment overhead, so the CUDA-core GEMV is the ri
 the sixth time the roofline-blind-to-schedule story bit me, and the cleanest evidence that v8's win was
 occupancy, not compute. Whether an A100 mma.m16n8k16 + cp.async kernel can overturn it is an open question I'd
 spend rented hours on only because the answer is publishable either way — not because the decode thesis needs it."
+
+### The A100 probe settled it — WMMA loses HARDER on Ampere (the smoking gun)
+Instead of blind-writing the hard mma+cp.async kernel on a weak hypothesis, I spent ~10 min of A100 rental
+on a *probe*: run the kernels I already have on Ampere and ask whether the verdict flips. It didn't — WMMA
+went from 1.2–3.3× slower (T4) to **1.8–4.6× slower (A100)**. The decisive number isn't the ratio, it's the
+*scaling*: WMMA barely moved from T4 to A100 (G8/d128, 42→39 µs/tok) even though the A100 has ~5× the
+tensor-core throughput and ~6× the bandwidth — while the CUDA-core kernel nearly halved (16.9→9.7). A kernel
+that doesn't speed up on a 5×-bigger tensor core **isn't tensor-core-bound** — it's pinned by per-CTA
+scheduling overhead (the opaque-fragment smem round-trip + my 1-warp load) that doesn't scale with the GPU.
+That's the cleanest possible proof that decode's bottleneck is the *schedule*, not the math. Reclaim-at-batch
+agreed: on A100 the CUDA-core kernel beats SDPA 2.5–8.6× at every batch, while the tensor-core one *loses* to
+SDPA past B=8. **Say-this:** "I didn't just measure that tensor cores are slower — I measured that they don't
+*scale*, which tells me *why*: decode is bound by per-CTA scheduling, not compute, so throwing a bigger tensor
+core at it can't help. The probe was the cheap experiment that let me kill the expensive kernel with evidence
+instead of a hunch. v8's deliverable is the CUDA-core M-packing; the tensor-core path is a documented,
+two-architecture dead end — and knowing *why* it's dead is the result."

@@ -734,9 +734,33 @@ tensor cores. Reclaim-at-batch (G=8): tc still beats SDPA **2.1–4.8× across B
 Cut 1's 6.1–9.9× — consistent (tc is worse than Cut 1, still > SDPA). The burden of proof flips:
 tensor cores must now *earn* a decode role — exactly Cut 2b's job.
 
-**Cut 2b (A100 `mma.m16n8k16` + cp.async) — now an OPEN QUESTION, not a foregone port:** `[RENT]`, and
-only worth it to test whether load-overlap (cp.async) + finer fragments + occupancy can overturn the
-Turing result, vs FlashInfer / XQA / vLLM PagedAttention v2. Ablation arms 2 (multi-group-pack → full
-M=16) and 3 (CUDA-core-QK + WMMA-PV) are **likely dead on arrival** — G=16 is already a full tile and
-still lost 2.1×, so packing two groups to M=16 won't help; arm 3's PV is also tiny-M. Documented, not
-pursued unless Cut 2b rescues the tensor-core path.
+**Cut 2b PROBE MEASURED (A100-SXM4-80GB sm_80, 2026-06-28, `notebooks/v8_cut2b_a100_probe_output.ipynb`):
+the verdict did NOT flip — WMMA loses HARDER on Ampere, so Cut 2 is CLOSED (CUDA-core GEMV is v8's
+decode primitive).** Before writing the hard `mma`+cp.async kernel we probed the *existing* kernels on a
+rented A100 (build now targets sm_75+sm_80; both compiled + 38/38 correctness on Ampere). A/B µs/tok
+(N_k=8192, H_q=32, non-causal):
+
+| G | tc µs/tok (d128) | Cut 1 µs/tok (d128) | tc÷cuda | T4 was |
+|---|---|---|---|---|
+| 1  | 263.8 | 57.8 | 4.6× slower | 3.3× |
+| 8  |  38.7 |  9.7 | 4.0× slower | 2.5× |
+| 16 |  18.9 |  7.7 | 2.5× slower | 2.1× |
+| 32 |  18.8 |  7.7 | 2.5× slower | 2.2× |
+
+**The smoking gun (why this is definitive, not a clock fluke):** WMMA **barely moved T4→A100** — G8/d128
+42→39 µs/tok — despite A100's ~5× tensor-core throughput and ~6× HBM BW, **while the CUDA-core path nearly
+halved** (16.9→9.7). So WMMA is **neither tensor-core- nor bandwidth-bound**; it's pinned by per-CTA
+scheduling overhead (the opaque-fragment smem-softmax round-trip + the 1-warp/block load) that doesn't
+scale with the GPU. A bigger tensor core can't speed up a kernel that isn't compute-bound. Reclaim-at-batch
+seals it: on A100 **Cut 1 beats SDPA 2.5–8.6× across all batch**, while **WMMA loses to SDPA at B≥8
+(0.6–0.8×)** — the CUDA-core kernel reclaims the serving regime, the tensor-core one doesn't. (Caveat: the
+A100 start-clock readings varied 330–1410 MHz, but the 10-iter warmup boosts before timing and the
+*mechanistic* T4→A100 non-scaling is clock-independent — the direction is robust.)
+
+**Decision: Cut 2 is closed; the cp.async/`mma.m16n8k16` kernel and ablation arms 2/3 are NOT pursued.**
+cp.async would only fix the load-starvation half of the overhead; the opaque-fragment softmax tax is
+fundamental to WMMA attention and the gap *worsened* on the faster GPU. The from-scratch GEMV→GEMM idea
+that won for v5 *prefill* is the wrong tool for *decode* — and that's the real, two-architecture result.
+**v8's deliverable is Cut 1 (CUDA-core GQA M-packing): 8.6× over no-packing, beats SDPA at all batch, on
+both T4 and A100.** (Making tensor cores win decode needs SOTA-level scheduling — FlashMLA/FlashInfer
+territory — out of scope for a from-scratch single-kernel and irrelevant to the v8 thesis.)

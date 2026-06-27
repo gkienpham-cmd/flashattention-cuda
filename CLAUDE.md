@@ -177,14 +177,15 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   `paged_attention.cu:221-226` + `roofline/model.py:96-99` (both now **corrected**).
 - **Step 8 (v8 GQA M-packing, `kernels/v8_gqa/`)** — **Cut 1 MEASURED (Colab T4, 2026-06-28): Gate 1 ✅
   64/64; G-sweep + reclaim-at-batch captured. Cut 2a (Turing WMMA tensor cores, `kernels/v8_gqa_tc/`)
-  MEASURED (Colab T4, 2026-06-28): correctness ✅ 38/38, but the perf prediction is REFUTED — WMMA is
-  1.4–1.6× SLOWER than Cut 1's CUDA-core GEMV (even at full G=16/32 tiles), because decode `M=G≤16` is too
-  small to amortize the opaque-fragment tax. So Cut 1's win was G-warps + KV-read-once, NOT tensor cores
-  (a prefill tool). Arms 2/3 likely DOA; Cut 2b (A100 mma+cp.async) is now an open question, not a
-  foregone port. Quiz (Gate 2) deferred until Cut 2 closed (Kien's call).** Cut 2 was re-staged: **2a =
-  Turing WMMA on T4** (answered the GEMV→GEMM question cheaply — it loses) before **2b = A100
-  `mma.m16n8k16`+cp.async `[RENT]`** (only if rescuing tensor cores is worth it). Cut 1 headline: G-packing
-  buys **~`G×` wall-clock over no-packing (8.6× at G=8)** and **beats
+  MEASURED (T4 + A100, 2026-06-28): correctness ✅ (38/38 both archs), but the perf prediction is REFUTED
+  on BOTH — WMMA is 1.8–4.6× SLOWER than Cut 1's CUDA-core GEMV (worse on the faster A100). Smoking gun:
+  WMMA barely moved T4→A100 (42→39 µs/tok) despite ~5× TC throughput + ~6× BW, while CUDA-core nearly
+  halved (16.9→9.7) → WMMA is pinned by per-CTA overhead (opaque-fragment smem-softmax + 1-warp load), not
+  compute/BW. So decode's GEMV→GEMM is the WRONG tool (v5's prefill win didn't transfer). **Cut 2 CLOSED
+  via a cheap A100 PROBE (ran the existing kernels on Ampere, build now sm_75+sm_80) — the hard
+  cp.async/`mma` kernel + arms 2/3 are NOT pursued.** v8's deliverable is **Cut 1 (CUDA-core M-packing)**.
+  Quiz (Gate 2) is the last open item. Cut 1 headline: G-packing buys **~`G×` wall-clock over no-packing
+  (8.6× at G=8)** and **beats
   SDPA 6–10× at every batch B=1→64** (v7 lost at B≥8) — on CUDA cores, no tensor cores. `%HBM` stays ≤11%
   (still per-CTA-bound, ~9× headroom for Cut 2). The `AI=2G/b` model got the *speedup magnitude* right (a
   partial roofline win, first in 6 steps) while its absolute floor stays unreached. Built STAGED (Kien's
