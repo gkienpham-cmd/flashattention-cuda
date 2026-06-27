@@ -218,12 +218,18 @@ void launch_partial(const __half* q, const __half* k_pool, const __half* v_pool,
         H, N_q, N_k, num_splits, chunk, page_size, n_logical, q_offset, scale, causal);
 }
 
-// Pick num_splits to fill the SMs (research blind-spot #2) without shrinking chunks below a floor.
+// Pick num_splits to fill the grid without shrinking chunks below a floor.
 // IDENTICAL to v6: at num_splits=1 the grid is (row_tiles, 1, BH) = base_blocks; we raise splits only
 // until the total block count reaches ~2x the SM count. PREFILL (large N_q) already has base_blocks >>
 // target -> 1 split, so v7 reduces to plain attention there too (square-shape tests). At DECODE
-// (N_q=1, small BH) base_blocks is tiny, so we add splits. The whole "occupancy before bytes" reorder
-// rests on this self-disabling at BH >= 2*num_sm. B300 retune = num_sm 40 -> 160.
+// (N_q=1, small BH) base_blocks is tiny, so we add splits. This self-disabling at BH >= 2*num_sm is
+// still the correct grid-sizing logic -- but the v7 --batch sweep (BH=8->512, N_k=8192, T4) REFUTED the
+// occupancy->bandwidth crossover it was meant to enable: %HBM stayed FLAT at 9.4-12.4% across the whole
+// range (no climb even at 12.8 blocks/SM). Filling the grid does NOT make the kernel bandwidth-bound --
+// it stays per-CTA-bound at EVERY batch size: sK+sV=32 KB/block caps residency at 2 blocks/SM (T4
+// 64 KB/SM) regardless of grid, and at N_q=1 only 1 of 8 warps computes. So the "occupancy before bytes"
+// reorder (GQA M-packing -> v8) now rests on per-CTA efficiency (GEMV->GEMM lights up G warps), NOT on
+// "filling the SMs." B300 retune = num_sm 40 -> 160.
 int choose_splits(int64_t BH, int N_q, int N_k, int num_sm = 40) {
     if (N_k <= 0) return 1;
     const int   S_CAP        = 32;     // also the merge kernel's "small num_splits" assumption
