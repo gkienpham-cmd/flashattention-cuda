@@ -103,13 +103,26 @@ the batch alone fills the machine. The crossover **[verified by code-trace]**:
 
 **The bench only ever ran `B=1` (`bench/harness.py --batch` defaults to 1).** So `BH=8` is the
 *single worst-case occupancy corner* — exactly where `%HBM` is minimal. At `BH=512` (B=64) the grid is
-512 blocks = 12.8/SM, well past saturation, and the kernel should reach its HBM ceiling. **That
-end-state is [predicted], not [measured]** — closing it is a concrete v7 deliverable (add `--batch`
-rows; watch `%HBM` climb 12% → ~80%+). See [`diagrams/decode-roofline-crossover.svg`](diagrams/decode-roofline-crossover.svg).
+512 blocks = 12.8/SM, well past saturation, and the kernel *was predicted* to reach its HBM ceiling.
+**That end-state was [predicted]; v7 measured it — and the prediction was WRONG.**
 
-> **Honest framing for the paper:** *occupancy-first* holds for the **latency / small-batch** decode
-> regime (`BH ≲ 2·SM`) that v6 measured; *bytes-first* holds for **throughput / large-batch**. The two
-> are different rooflines on the same algorithm. GQA M-packing is the hedge that wins in **both**.
+> **⛔ MEASURED CORRECTION (v7, 2026-06-27 — this subsection's central claim is REFUTED).** The v7
+> `--batch` sweep (B=1→64, BH=8→512, fixed N_k=8192, T4) shows **`%HBM` FLAT at 9.4–12.4% across the
+> whole range** — *no climb*, even at BH=512 (`num_splits→1`, 12.8 blocks/SM). The occupancy→bandwidth
+> crossover **does not exist for this kernel**, so "occupancy-first is small-batch-only / bytes-first holds
+> at large batch" is **false**: v7 is per-CTA-bound at *every* batch size and never gets within ~8× of the
+> bandwidth wall. **Root cause (code-verified), the term this section missed:** `sK+sV = 32 KB`/block caps
+> residency at **2 blocks/SM** (T4 64 KB/SM) regardless of grid size, and at `N_q=1` only **1 of 8 warps
+> computes** — so batch adds *waves*, not per-SM parallelism. The reorder still stands but the reason
+> changes: **GQA M-packing leads because it fixes per-CTA efficiency (G warps + GEMV→GEMM), not because it
+> "fills the SMs."** Bytes-first (v9/v10) is premature at all batch sizes, not just small. See `results.md`
+> / `decisions.md` Step 7; `diagrams/decode-roofline-crossover.svg` (predicted arc → measured-flat line).
+
+> **~~Honest framing for the paper:~~ [SUPERSEDED by the correction above]** ~~*occupancy-first* holds for
+> the **latency / small-batch** decode regime (`BH ≲ 2·SM`) that v6 measured; *bytes-first* holds for
+> **throughput / large-batch**.~~ Measured: there is no large-batch bytes-first regime for this kernel —
+> it's per-CTA-bound at all batch. The accurate framing is **GEMV→GEMM (per-CTA efficiency) before bytes,
+> at all batch sizes**. GQA M-packing is still the right lead.
 
 ---
 
@@ -308,9 +321,13 @@ See [`diagrams/build-roadmap-v6-v11.svg`](diagrams/build-roadmap-v6-v11.svg).
 
 ## 7. Open questions / what to measure next
 
-1. **[v7] Pin the occupancy→bandwidth crossover empirically.** Sweep `B`; does `%HBM` climb 12% → ~80%+
-   by `BH≈80` (T4)? This converts the central claim from [predicted] to [measured]. *Highest priority —
-   the whole reorder rests on it.*
+1. **[v7] Pin the occupancy→bandwidth crossover empirically.** ✅ **DONE (2026-06-27) — and it
+   REFUTED the prediction.** Swept `B=1→64` (BH=8→512, N_k=8192, T4): `%HBM` stayed **flat at 9.4–12.4%**,
+   no climb even at 12.8 blocks/SM. There is **no crossover** — decode is per-CTA-bound (32 KB smem →
+   2 blocks/SM cap; 1-of-8 warps active at `N_q=1`), not grid-occupancy-bound, at every batch size. The
+   reorder survives but the reason is **per-CTA efficiency (GEMV→GEMM), not "fill the SMs," and it is NOT
+   batch-conditional.** §2.1 corrected. Follow-up: a bare-metal pipe-util read to confirm the
+   smem-residency story directly (counters blocked on cloud).
 2. **[v8] Does GQA M-packing engage tensor cores at `M=G=8`,** and does measured track `AI=2G/b`?
 3. **[v9/v10] FP4 accuracy:** perplexity/logit-error vs FP16 on real shapes, not MSE. Is FP8 enough?
 4. **[roofline honesty]** Either add an explicit occupancy/launch term to `model.py` so the

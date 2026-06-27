@@ -136,6 +136,22 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   **open, roofline-documented asymmetric-precision FP4 decode kernel** measured vs FlashInfer/FlashMLA,"
   **not** "we beat FA4." See `docs/decode-replan.md`, `results.md`/`decisions.md` Step 6,
   `interview-prep.md` C8–C9.
+- **Step 7 (v7 split-KV paged, `kernels/v7_paged/`)** — MEASURED 2026-06-27 (vast.ai T4); **Gate 1
+  cleared (51/51 correctness), quiz/Gate 2 PENDING.** v6's two kernels carried unchanged + ONE new
+  variable: KV reads **gather through a per-sequence block table** (paged pool `[num_blocks,page_size,
+  H,d]`, the vLLM layout a mini-vLLM consumes) via a new `paged_attention()` API; plus two harness
+  fixes (`--batch` sweep, causal query-offset). **The `--batch` sweep REFUTED the predicted
+  occupancy→bandwidth crossover:** at N_k=8192, `%HBM` is **FLAT at 9.4–12.4% from BH=8 to BH=512** (no
+  climb, even at 12.8 blocks/SM) — decode here is **per-CTA-bound, not grid-occupancy-bound, at EVERY
+  batch size.** Code-verified cause: `sK+sV=32 KB`/block caps residency at **2 blocks/SM** (T4 64 KB/SM)
+  and at `N_q=1` only **1 of 8 warps computes** — batch adds waves, not per-SM parallelism. This
+  **corrects the "occupancy before bytes is batch-conditional" claim** (decode-replan §2.1): there is no
+  large-batch bytes-first regime for this kernel; the accurate framing is **GEMV→GEMM (per-CTA
+  efficiency) before bytes, at all batch sizes.** The reorder (GQA M-packing → v8) survives and is
+  *strengthened* — GQA leads because `M=G` lights up G warps + GEMV→GEMM, not because it "fills the SMs."
+  Causal query-offset fix works (causal µs/tok ≈ non-causal). Apparent ~15–25% paging overhead vs v6 at
+  B=1 (dependent block-table load), cross-session clocks unverified. See `results.md`/`decisions.md`
+  Step 7, `interview-prep.md` C10, `decode-replan.md` §2.1/§7 (corrected).
 
 ## Next steps
 
@@ -143,19 +159,19 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → v9 FP8 KV → v10 NVFP4 + asymmetric
 precision (headline) → v11 MLA/speculative.
 
-1. **Step 7 — paged KV-cache gather (`kernels/v7_*`) + harness fixes:** block-table indirection so the
-   KV cache need not be contiguous (the import surface a from-scratch mini-vLLM consumes; insertion
-   point is the cooperative smem load `splitkv_attention.cu:119-124`). Carry v6's split-KV + LSE merge
-   unchanged; add a non-contiguous-KV correctness case. **Two harness fixes that turn inferences into
-   measurements:** (a) a **`--batch` sweep** (`B∈{16,32,64}`) to watch `%HBM` climb past the crossover
-   `BH≈2·SM` — this *measures* the occupancy→bandwidth story that is currently only predicted; (b) the
-   **`--decode` causal query-offset** (place `q` at `N_k−1` so causal decode attends the whole cache,
-   not 1 key). v7 is occupancy-neutral plumbing — it sets up v8, it doesn't attack the limiter.
-2. **Step 8 — GQA M-packing (the reorder, occupancy lever):** pack the `G` query heads of a GQA group
-   into the CTA's `M` dim → GEMV becomes an `M=G` GEMM (tensor cores re-engage), KV read once, and
-   `AI = 2/b → 2G/b`. Promoted **ahead of** low-precision because v6 is occupancy-bound (12% HBM), so
-   cutting bytes is premature. `[RENT]` A100/H100. Then bytes: v9 FP8 KV, v10 NVFP4 + asymmetric
-   precision `[B300]`. (Diagrams: `gqa-mpacking.svg`, `decode-roofline-crossover.svg`.)
+1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — built + MEASURED; only Gate 2 (quiz) remains.**
+   Code done, 51/51 correct, benched. **Quiz Kien before starting v8** (the per-step gate). After the
+   quiz, mark v7 `[x]` in ROADMAP. Optional cleanup carried forward: upgrade
+   `diagrams/decode-roofline-crossover.svg` (predicted arc → measured-flat line); a fully-honest causal
+   `vs sdpa` needs the reference built with a bottom-right mask; bare-metal pipe-util to confirm the
+   smem-residency story directly.
+2. **Step 8 — GQA M-packing (the reorder, NOW the per-CTA-efficiency lever):** pack the `G` query heads
+   of a GQA group into the CTA's `M` dim → GEMV becomes an `M=G` GEMM (tensor cores re-engage), KV read
+   once, `AI = 2/b → 2G/b`, **and G compute-warps/block** (the fix v7 proved is needed). Promoted ahead
+   of low-precision because v7 measured the kernel is per-CTA-bound at **all** batch sizes (flat ~10–12%
+   HBM, BH=8→512), so cutting bytes is premature regardless of batch. `[RENT]` A100/H100. Then bytes: v9
+   FP8 KV, v10 NVFP4 + asymmetric precision `[B300]`. (Diagrams: `gqa-mpacking.svg`,
+   `decode-roofline-crossover.svg`.)
 3. **Backfill Step 5 docs** from `notebooks/step5_run_of_record.ipynb` (results/decisions/status/C-chain).
 4. **GPU host:** **vast.ai** T4 (~$0.10–0.20/hr). Image gotchas confirmed this run: torch installs into
    a **venv** (`/venv/main`) — install with `%pip`/`sys.executable -m pip` and prepend the venv `bin/`

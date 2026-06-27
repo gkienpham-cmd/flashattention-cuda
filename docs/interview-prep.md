@@ -518,10 +518,11 @@ roofline-documented decode kernel vs FlashInfer/FlashMLA — not 'we beat FA4,' 
 
 ---
 
-## C10 — Paged KV + the measurement that earns the reorder (v7)
+## C10 — Paged KV + the measurement that *broke* the reorder's premise (v7)
 
-*(v7 — paged KV gather + decode-harness fixes; the step that converts C9's central claim from predicted
-to measured. Code complete 2026-06-27; GPU gate pending.)*
+*(v7 — paged KV gather + decode-harness fixes. The step that tested C9's central claim against data —
+and the data said no. Measured 2026-06-27, vast.ai T4: 51/51 correct; the `--batch` sweep refuted the
+predicted occupancy→bandwidth crossover.)*
 
 ### Why a whole step for "plumbing"
 A real KV cache isn't contiguous — it's a pool of fixed-size pages plus a per-sequence **block table**
@@ -538,13 +539,30 @@ bytes — so v7 is **byte-neutral and occupancy-neutral by construction.** That'
 did NOT attack the limiter this step. Isolating one variable means any wall-clock change is the gather's,
 and it sets up v8 (GQA, the actual occupancy lever) cleanly.
 
-### The deliverable is a measurement, not a speedup
+### The deliverable was a measurement — and it refuted the prediction
 C9's load-bearing claim — "occupancy before bytes, but batch-conditional" — rested on a *code-trace*:
-`choose_splits` self-disables (`num_splits→1`) once `BH ≥ 2·SM` (=80 on T4), so batch alone should fill
-the SMs and drive `%HBM` from v6's 12% toward saturation. v7's **`--batch` sweep** (B=1→64, BH=8→512 at
-fixed N_k) *measures* that curve. If `%HBM` climbs past BH≈80–160, the crossover is real and the reorder
-is earned empirically. If it stays flat, the limiter is launch/merge (not grid occupancy) and v8.5
-(persistent-kernel merge) moves up — either way the data decides, which is the whole methodology.
+`choose_splits` self-disables (`num_splits→1`) once `BH ≥ 2·SM` (=80 on T4), so batch alone *should*
+fill the SMs and drive `%HBM` from 12% toward saturation. v7's **`--batch` sweep** (B=1→64, BH=8→512 at
+fixed N_k=8192) measured it. **`%HBM` stayed flat at 9.4–12.4% the whole way** — even at BH=512
+(`num_splits→1`, 512 blocks = 12.8/SM, far past full occupancy), per-token cost is constant. **The
+crossover does not exist.** Batch over-fills the grid and bandwidth utilization does not move.
+
+### Why batch can't help — the real limiter is per-CTA (code-verified)
+Two structural caps that batch *replicates* instead of curing: (1) **smem caps residency at 2 blocks/SM**
+— `sK+sV = 32 KB`/block, T4 has 64 KB/SM, so more blocks just means more *waves* at the same per-SM
+occupancy → linear time → flat %HBM; (2) **at `N_q=1` only 1 of 8 warps computes** (warp `w` owns query
+row `w`), so ~2 active compute-warps/SM can't hide the per-key shuffle-reduction latency — the GEMV wall
+again. So decode here was never grid-starved (split-KV already gives 80 blocks at B=1); it's bound by
+what happens *inside* each block.
+
+### What it does to the thesis: sharpens the reorder, kills the hedge
+The reorder (GQA M-packing before bytes) **survives and gets a better reason.** GQA leads not because it
+"fills the SMs" — batch does that and it doesn't help — but because `M = G > 1` activates **G
+compute-warps/block** and turns the GEMV into a tensor-core GEMM with KV read once: it hits the actual
+limiter. And the **batch-conditional hedge is refuted**: bytes-first (FP8/FP4) is premature at *all*
+batch sizes, because v7 never gets within ~8× of the bandwidth wall at any BH — not just at B=1. The
+honest update to C9: "occupancy before bytes" → "**GEMV→GEMM (per-CTA efficiency) before bytes**, at all
+batch sizes."
 
 ### The causal-decode bug I inherited and fixed
 v6's causal decode was degenerate: query at row 0 with mask `j > i` attends *only key 0* (SDPA
@@ -558,9 +576,13 @@ on the *original* dense KV. The shuffle is the test: a kernel that ignored the b
 contiguously) would grab the wrong tokens and fail. Cases include a `page_size` that doesn't divide
 `N_k` (partial last page) and the square-shape `num_splits→1` regression.
 
-**Say-this:** "v7 is paged KV — the block-table indirection a real cache needs — carried on top of v6
-with one changed line and the rest identical, so it's byte- and occupancy-neutral by design. I didn't
-build it to go faster; I built it to *measure*. The batch sweep turns C9's predicted occupancy→bandwidth
-crossover into a curve, and the causal query-offset fixes a degenerate v6 bench. Correctness is proven by
-gathering through a shuffled pool and comparing to dense SDPA — if the kernel ignored the table it'd read
-the wrong tokens and fail."
+**Say-this:** "v7 is paged KV — the block-table indirection a real cache needs — on top of v6 with one
+changed line, so it's byte-neutral by design. I built it to *measure*, not to go faster. The batch sweep
+was supposed to confirm the occupancy→bandwidth crossover; instead it refuted it — %HBM stayed flat at
+~10–12% from BH=8 all the way to BH=512, even with 12.8 blocks per SM. The reason is per-CTA, not the
+grid: 32 KB of smem caps me at 2 blocks/SM, and at N_q=1 only one of eight warps actually computes, so
+adding batch just runs more copies of an inefficient block. That's a *better* argument for GQA
+M-packing — M=G turns the GEMV into a GEMM and lights up G warps — and it kills the 'bytes-first at large
+batch' hedge: I'm 8× from the bandwidth wall at every batch size, so cutting bytes is premature
+regardless. Correctness is a shuffled-pool gather vs dense SDPA — ignore the block table and you read the
+wrong tokens and fail."

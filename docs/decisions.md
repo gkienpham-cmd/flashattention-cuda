@@ -370,9 +370,10 @@ gather (non-contiguous KV correctness) + the `--batch` sweep + the `--decode` ca
 
 ## Step 7 — Paged KV gather + decode-harness fixes (v7)
 
-*Status: code complete + locally validated (2026-06-27); **GPU gate + quiz PENDING** (run
-`notebooks/v7_paged_gate.ipynb`). The decision + prediction are recorded; the measured block fills in
-after the run.*
+*Measured 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124). **51/51 correctness** (Gate 1 ✅);
+quiz (Gate 2) pending. **The headline is a refutation:** the `--batch` sweep shows NO
+occupancy→bandwidth crossover — decode here is per-CTA-bound (smem cap + single-warp GEMV), not
+grid-occupancy-bound, at every batch size. This corrects `decode-replan §2.1`.*
 
 **Bottleneck (predicted): NONE new — v7 is occupancy-neutral.** This is the deliberate design point.
 v6 named the limiter (occupancy/launch at small batch); v7 does not touch it. It isolates one variable
@@ -408,14 +409,40 @@ to the gather alone, and adds two harness fixes that *measure* what v6 could onl
 crossover threshold `BH ≥ 2·num_sm` scales with it (T4 `B≥10`, B300 `B≥40` @ H=8). Paging itself is
 arch-independent (pure indexing); the gather's L1/L2 residency assumption holds across arches.
 
-**Measured (PENDING — paste after the gate run):**
-- Correctness: *N/N* vs SDPA (paged shuffled-pool gather + v6 regression), tol 2e-2.
-- `--batch` crossover at N_k=8192: *did %HBM climb 12% → saturation past BH≈80–160?* — **the answer
-  that confirms or refutes "occupancy before bytes."** This is the load-bearing measurement of the
-  whole reorder.
-- Paging overhead: v7 µs/tok vs v6 at B=1 (expect within noise — byte-neutral).
-- Causal decode now ≈ non-causal per row (the query-offset fix).
+**Measured (2026-06-27):**
+- **Correctness 51/51** vs SDPA (paged shuffled-pool gather + v6 regression), tol 2e-2. The gather
+  indexing is correct; v6 is untouched.
+- **The `--batch` crossover sweep REFUTES the prediction.** At fixed `N_k=8192`, `%HBM` is **flat at
+  9.4–12.4% from BH=8 to BH=512** (per-token cost ~constant, even at B=64 where `num_splits→1` gives
+  12.8 blocks/SM — far past full occupancy). The predicted climb to 60–80%+ by BH≈80–160 **does not
+  happen.** Decode here is **per-CTA-bound, not grid-occupancy-bound**, and batch replicates the
+  inefficiency rather than curing it.
+- **Why (code-verified):** (1) `sK+sV = 32 KB`/block caps residency at **2 blocks/SM** (T4 64 KB/SM),
+  independent of batch/split count — more blocks = more waves at the same per-SM occupancy = linear
+  time = flat %HBM; (2) at `N_q=1` only **1 of 8 warps computes** (warp `w` owns query row `w`), so ~2
+  active compute-warps/SM can't hide the per-key shuffle-reduction latency (v4's GEMV wall).
+- **Causal query-offset fix works:** causal µs/tok ≈ non-causal per row (66.79 vs 66.65 @64/8192) — the
+  query at `N_k−1` does the full-cache scan. (Bench `vs sdpa` for causal is now meaningless in the other
+  direction: SDPA's baseline still uses the degenerate upper-left mask. `vs naive` stays valid.)
+- **Apparent paging overhead:** v7 ~15–25% slower than v6's recorded run at B=1 (dependent block-table
+  load + div/mod per key). Cross-session clocks unverified (`clock~-1/-1`) → indicative, not proven.
 
-**Quiz:** PENDING (Gate 2). **Next (v8 — GQA M-packing):** the occupancy lever — pack `G` query heads
-into `M` (GEMV→`M=G` GEMM, tensor cores re-engage, KV read once, `AI = 2/b → 2G/b`). v7's `--batch`
-data decides whether v8 leads at all batch sizes or only small-batch; `decode-replan §5`.
+**What this measurement reorders (sharpened, and a correction):** the "occupancy before bytes" reorder
+**still holds**, but the data corrects *why* and kills the batch-conditional hedge:
+- **The reason is per-CTA efficiency, not grid occupancy.** GQA M-packing (v8) leads not to "fill the
+  SMs" (batch already over-fills the grid — and it doesn't help) but because `M = G > 1` activates **G
+  compute-warps/block** *and* turns the GEMV into a tensor-core GEMM with KV read once. It attacks the
+  smem-cap + single-warp-GEMV limiter directly.
+- **Bytes-first is premature at *all* batch sizes, not just small batch.** v7 never gets within ~8× of
+  the bandwidth wall at any BH (flat ~10–12%), so FP8/NVFP4 (v9/v10) multiply a term the kernel can't
+  reach. This **refutes `decode-replan §2.1`'s batch-conditional claim** ("at production batch the kernel
+  reaches its HBM ceiling, so bytes-first is right there"). It isn't — not until per-CTA efficiency is
+  fixed. The reordered arc (v7 → **v8 GQA M-packing** → v9 FP8 → v10 NVFP4 → v11 MLA) is unchanged; the
+  justification is now "GEMV→GEMM before bytes," measured at all batch sizes.
+- **Possible v8.5 contingency:** the merge kernel + two-kernel launch were *not* isolated as the limiter
+  (the smem cap + single-warp GEMV dominate), so a persistent/fused merge is lower priority than first
+  thought — but worth a pipe-util read on bare metal to confirm the smem-residency story directly.
+
+**Quiz:** PENDING (Gate 2 — the last gate before v8). **Next (v8 — GQA M-packing):** pack `G` query
+heads into `M` (GEMV→`M=G` GEMM, tensor cores re-engage, KV read once, `AI = 2/b → 2G/b`). v7's data
+says v8 must lead at *all* batch sizes; `decode-replan §5`.

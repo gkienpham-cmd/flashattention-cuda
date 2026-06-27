@@ -391,9 +391,10 @@ says the lever after that is *occupancy* — **GQA M-packing (v8, `AI=2/b→2G/b
 
 ## Step 7 — Paged KV gather + decode-harness fixes (v7)
 
-*Status: code complete + locally validated (2026-06-27); **GPU gate PENDING** (vast.ai T4 — run
-`notebooks/v7_paged_gate.ipynb`). The roofline prediction below is the recorded Step-1 deliverable;
-the measured tables are scaffolds to paste the gate-notebook output into, then flip this to DONE.*
+*Measured 2026-06-27 (vast.ai Tesla T4 sm_75, torch 2.6.0+cu124, `clock~-1/-1`). **51/51 correctness**
+(`-k "v7_paged or v6_splitkv"`: paged shuffled-pool gather + v6 regression). Gate 1 ✅; Gate 2 (quiz)
+pending. **The `--batch` sweep refutes the predicted occupancy→bandwidth crossover** — see below; this
+is the load-bearing finding of the whole reorder.*
 
 **Why this step:** v6's KV was contiguous; a real KV cache is a pool of fixed-size pages plus a
 per-sequence block table (vLLM's layout — the import surface a from-scratch mini-vLLM consumes). v7
@@ -410,44 +411,77 @@ sweep measures. (Caveat, recorded per `decode-replan §7`: `roofline/model.py` h
 it has been magnitude-wrong 5 straight steps — so treat its %HBM as an upper bound of 100% and read
 the 100%→measured gap as the deliverable, not the model's number.)
 
-**THE prediction v7 must test (the crossover):** `choose_splits` collapses `num_splits→1` once
-`base_blocks = BH ≥ 2·num_sm` (= 80 on the T4), so split-KV self-disables and batch *alone* fills the
-SMs. Predicted `%HBM` at fixed `N_k=8192`:
+**THE prediction v7 tested (the crossover):** `choose_splits` collapses `num_splits→1` once
+`base_blocks = BH ≥ 2·num_sm` (= 80 on the T4), so split-KV self-disables and batch *alone* was
+predicted to fill the SMs and drive `%HBM` from ~12% toward 60–80%+ by BH≈80–160. **This prediction is
+measured FALSE (see the sweep below).**
 
-| BH (B @ H=8) | regime | predicted %HBM |
-|---|---|---|
-| 8 (B=1)    | split-KV active, ~2 blocks/SM (v6's corner) | ~12% |
-| 64 (B=8)   | nearing the self-disable threshold          | climbing |
-| 80 (B=10)  | `num_splits→1`; one block per (b,h)         | ~30–50% |
-| 160 (B=20) | ~4 blocks/SM, full Turing occupancy         | toward ceiling |
-| 512 (B=64) | 12.8 blocks/SM, well past saturation        | 60–80%+ |
+**Measured — correctness (Gate 1 ✅): 51/51** (`pytest -k "v7_paged or v6_splitkv"`, 46 s). v7's paged
+cases (shuffled-pool gather; `N_q=1`, `N_k ∈ {4096,8192,8190}`, page_size ∈ {128,256}, d 64/128, causal
+both ways via the query-offset; the `num_splits→1` square regression = 24 + 2) **and** all of v6's cases
+(12 + 1 + 12, untouched) pass at tol 2e-2. The shuffle in `build_paged_kv` is the teeth: a kernel that
+read contiguously instead of through the block table would grab the wrong tokens and fail.
 
-**Measured — correctness (Gate 1 of 2):** *PENDING — `pytest -k "v7_paged or v6_splitkv"`.* Expect
-v7's paged cases (shuffled-pool gather; `N_q=1`, `N_k ∈ {4096,8192,8190}`, page_size ∈ {128,256}, d
-64/128, causal both ways via the query-offset; the `num_splits→1` square regression) **and** all of
-v6's cases (v6 is untouched) green at tol 2e-2. *(fill: "N/N correctness vs SDPA".)*
+**Measured — decode bench (B=1, H=8, non-causal):**
 
-**Measured — `--batch` crossover sweep (the crown jewel), N_k=8192:** *PENDING — paste from gate cell 6.*
+| q×kv | µs/tok | %HBM | vs SDPA | vs naive (v5 @ N_q=1) |
+|---|---|---|---|---|
+| 1x8x1x64/2048   |  24.05 |  6.8% | 1.92× | 4.76× |
+| 1x8x1x128/2048  |  34.04 |  9.6% | 1.22× | 4.57× |
+| 1x8x1x64/8192   |  66.65 |  9.8% | 2.66× | 6.59× |
+| 1x8x1x128/8192  | 107.38 | 12.2% | 1.46× | 5.59× |
+| 1x8x1x64/16384  | 128.01 | 10.2% | 2.75× | 6.81× |
+| 1x8x1x128/16384 | 210.88 | 12.4% | 1.48× | 5.66× |
 
-| B | BH | shape | µs/tok (d=64) | %HBM (d=64) | µs/tok (d=128) | %HBM (d=128) |
-|---|---|---|---|---|---|---|
-| 1  | 8   | … | … | … | … | … |
-| 8  | 64  | … | … | … | … | … |
-| 16 | 128 | … | … | … | … | … |
-| 32 | 256 | … | … | … | … | … |
-| 64 | 512 | … | … | … | … | … |
+v7 reproduces v6's shape (HBM-limiter, beats SDPA 1.2–2.8×, beats v5-naive 4.6–6.8×). It runs **~15–25%
+slower than v6's recorded run** (64/8192: 66.7 vs v6 56.1 µs/tok) — *apparent* gather overhead (the
+per-key block-table lookup is a dependent global load + a div/mod the contiguous read didn't have). The
+roofline says byte-neutral and is right on bytes; the cost is a *schedule* term (dependent-load latency)
+it can't see. **Caveat:** v6 and v7 were separate vast.ai sessions with `clock~-1/-1` (clocks
+unreadable), so the cross-run delta is indicative, not proven — the within-run sweep below is the robust
+signal.
 
-**The question this answers (fill after the run):** *did `%HBM` climb from ~12% toward saturation as
-BH passed ~80–160 — i.e. does the data confirm "occupancy before bytes"?* If yes, the crossover is now
-**measured**, not predicted, and `diagrams/decode-roofline-crossover.svg` gets upgraded accordingly. If
-`%HBM` stays flat (e.g. the merge or two-kernel launch dominates even at large BH), that is itself the
-finding — the limiter is launch/merge, not grid occupancy, and v8.5 (single-/persistent-kernel merge)
-moves up.
+**Measured — causal decode now meaningful (the query-offset fix worked):** causal µs/tok now ≈
+non-causal per row — 64/8192 **66.79** (vs 66.65 non-causal), 128/16384 **210.18** (vs 210.88). The
+single query at logical `N_k−1` attends the whole cache, so causal == the full scan, exactly as
+designed. (`vs sdpa` reads 0.02–0.15× now because the bench's SDPA baseline still uses the *degenerate*
+upper-left causal mask — SDPA computes 1 key, v7 computes all N_k. The column is meaningless here in the
+opposite direction; `vs naive` 4.6–6.8× stays valid. A fully honest causal `vs sdpa` would need the
+reference built with a bottom-right mask — a follow-up.)
 
-**Measured — causal decode now meaningful:** *PENDING.* With the query-offset (`q_offset = N_k − 1`)
-the causal-decode rows do full-cache work (≈ the non-causal latency), replacing v6's degenerate
-0.03–0.28× `vs sdpa`. Expect causal ≈ non-causal per row.
+**Measured — the `--batch` crossover sweep (the crown jewel), N_k=8192:**
 
-**Paging overhead check (prediction):** v7's µs/tok should match v6's at B=1 within noise (the gather
-is byte-neutral); a measurable slowdown would mean the per-key block-table lookup is not L1/L2-resident
-as assumed — a finding to record, not a tolerance to widen.
+| B | BH | µs/tok (d=64) | %HBM (d=64) | µs/tok (d=128) | %HBM (d=128) | vs SDPA | vs naive |
+|---|---|---|---|---|---|---|---|
+| 1  | 8   |  66.83 |  9.8% | 107.78 | 12.2% | 2.65/1.46× | 6.59/5.58× |
+| 8  | 64  |  70.02 |  9.4% | 114.93 | 11.4% | 0.56/0.34× | 2.92/2.12× |
+| 16 | 128 |  69.62 |  9.4% | 114.55 | 11.4% | 0.56/0.35× | 2.93/2.12× |
+| 32 | 256 |  68.93 |  9.5% | 113.26 | 11.6% | 0.51/0.32× | 2.63/1.93× |
+| 64 | 512 |  63.66 | 10.3% | 106.03 | 12.4% | 0.50/0.32× | 2.68/1.96× |
+
+**The answer: NO — the crossover does not happen. `%HBM` is FLAT at 9.4–12.4% from BH=8 to BH=512.**
+Per-token cost is essentially constant (even *slightly better* at B=64, where `num_splits→1` gives 512
+blocks = 12.8/SM, far past the "4 blocks/SM full occupancy" mark). Batch over-fills the grid and `%HBM`
+does not budge. **The predicted occupancy→bandwidth crossover is measured false** — this refutes
+`decode-replan §2.1`'s batch-conditional claim that batch alone would reach the HBM ceiling.
+
+**Why (code-verified) — the limiter is *per-CTA*, not grid occupancy, so batch replicates it:**
+1. **smem caps residency at 2 blocks/SM:** `sK + sV = 2·TN·D·4B = 32 KB`/block (64×64 and 32×128 both),
+   T4 has 64 KB/SM → a hard cap of **2 resident blocks/SM, independent of batch or split count**. More
+   blocks just means more *waves* at the same per-SM occupancy → linear time → flat %HBM.
+2. **At `N_q=1` only 1 of 8 warps computes** (warp `w` owns query row `w`; only `w=0` is active in the
+   score loop — the other 7 do the cooperative load then idle). So ~2 active compute-warps/SM — far too
+   few to hide the per-key warp-shuffle reduction latency (the same GEMV wall v4 hit).
+
+So decode here is bound by **smem-limited residency + single-warp GEMV latency** — a per-block
+structural limit that **batch cannot cure** (it was never grid-starved past split-KV). `vs sdpa` flips
+from 2.65× (B=1, where SDPA's `N_q=1` path is untuned) to 0.3–0.56× at batch (a well-tuned batched
+attention pulls ahead), which independently confirms v7's per-CTA inefficiency.
+
+**What this means for the roadmap (the reorder holds, the *reason* sharpens):** GQA M-packing (v8) leads
+**not** because it "fills the SMs" (batch already over-fills the grid and it doesn't help) but because
+`M = G > 1` activates **G compute-warps/block** *and* turns the GEMV into a tensor-core GEMM with KV read
+once — it attacks the actual binding constraint (per-CTA efficiency). And **bytes-first (FP8/FP4) is
+premature at *all* batch sizes, not just small batch**: v7 never gets within 8× of the bandwidth wall at
+any BH, so cutting bytes multiplies a term it can't reach. `diagrams/decode-roofline-crossover.svg` needs
+the "predicted crossover" arc replaced with the measured-flat line. See `decisions.md` Step 7.
