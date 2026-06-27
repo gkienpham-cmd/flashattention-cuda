@@ -95,8 +95,11 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         # written once. At DECODE (N_q=1) this is the research §4 decode roofline: work = 4*N_k*d
         # FLOPs, traffic = 2*N_k*d*b bytes -> arithmetic intensity AI = 4Nd/(2Nd*b) = 2/b FLOP/byte,
         # INDEPENDENT of N_k -> pure HBM-bound, far below the ridge (the tensor cores idle). The split-
-        # KV schedule (v6) does not change these bytes — it only fills the SMs so the kernel can
-        # actually reach this bound. (Prefill N_q=N_k recovers the old ~3*bh*N_k*d read-once estimate.)
+        # KV schedule (v6) does not change these bytes — it fills the grid but does NOT make the kernel
+        # reach this bound: v7's --batch sweep measured only ~10% of HBM on T4 decode (flat across batch),
+        # because the kernel is per-CTA-bound (GEMV shape + 32 KB smem capping residency at 2 blocks/SM),
+        # not bandwidth-bound. So this t_hbm is a floor the schedule is far from, not one split-KV attains.
+        # (Prefill N_q=N_k recovers the old ~3*bh*N_k*d read-once estimate.)
         # GQA/MLA would raise AI to 2G/b by sharing KV across heads — the v10/v11 lever, not modeled.
         hbm_bytes = 2.0 * bh * N_k * d * nbytes + bh * N_q * d * nbytes + o_write
     t_hbm = hbm_bytes / (arch.hbm_bw_gbps * 1e9)
