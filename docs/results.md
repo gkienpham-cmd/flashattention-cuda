@@ -1080,7 +1080,8 @@ with G, flat across batch), *plus* the durable **2× capacity**. The roadmap cla
 latency until past-L2/bandwidth-bound" was too strong: on this kernel the residual post-v8.7 ceiling was
 *partly* L2→SM load, which bytes do relieve. What FP8 did **not** do is reach the HBM floor or flip the
 limiter — the kernel is still per-CTA/L2-load-bound at ~10% HBM, so Task 1 (and the larger past-L2 /
-B300 long-context win, and v10 NVFP4's *compute* lever) remain the real bandwidth story.
+B300 long-context win, and v10 NVFP4's *compute* lever) remain the real bandwidth story. **Both gates
+cleared (Gate 1 ✅ 76 passed + Gate-2 quiz PASSED 2026-06-28) → Step 9 DONE.**
 
 > **Methodology caveat (fixed post-run):** the v9 `vs sdpa` column in the gate output is **inflated and
 > unusable** — the `sdpa_reference_gqa_fp8` oracle re-quantized K,V *inside* the timed baseline (an amax

@@ -829,6 +829,6 @@ update:** the "bytes won't help latency until past-L2" claim (recurring since v6
 residual post-v8.7 ceiling is *partly* L2→SM load bandwidth, which FP8 relieves. "L2-resident" ≠ "memory
 is free." Task 1 (locked-clock past-L2 sweep) + v10 NVFP4 (a *compute* lever) remain the bandwidth story.
 **Harness fix (post-run):** v9's `vs sdpa` was inflated (the FP8 oracle re-quantized inside the timed
-baseline); now dequantized once outside — trust `vs naive`. Gate-2 quiz pending.
+baseline); now dequantized once outside — trust `vs naive`. **Gate-2 quiz PASSED 2026-06-28 → Step 9 DONE.**
 
 See [`v9-kickoff.md`](v9-kickoff.md), `results.md` Step 9, `interview-prep.md` C13.

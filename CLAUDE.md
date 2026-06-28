@@ -276,8 +276,8 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   is the right next lever.** Wired (load/dispatch/harness 3 tuples/tests, `(7,0)`, tol 2e-2, `GQA_BACKENDS`);
   gate notebook `notebooks/v8_7_score_stationary_gate_output.ipynb` (run-of-record; build ss, 3-way A/B
   Cut1/occ/ss G-sweep + reclaim). See `results.md`/`decisions.md` Step 8.7, `interview-prep.md` C11.6.
-- **Step 9 (v9 FP8 E4M3 KV, `kernels/v9_fp8/`)** — **Task 2 MEASURED (Colab T4, 2026-06-28): Gate 1 ✅
-  76 passed; E4M3 BUILT on sm_75 with NO int8 fallback. The "capacity-only" prediction is REFUTED — FP8
+- **Step 9 (v9 FP8 E4M3 KV, `kernels/v9_fp8/`)** — **Task 2 DONE (Colab T4, 2026-06-28): both gates
+  cleared (Gate 1 ✅ 76 passed + Gate-2 quiz PASSED 2026-06-28). E4M3 BUILT on sm_75 with NO int8 fallback. The "capacity-only" prediction is REFUTED — FP8
   buys a real same-session clock-matched ~1.3× decode-latency win (`vs naive` FP8÷FP16 v8.7 = 0.96–1.52×,
   median ~1.3×, FLAT across batch B=1→64), and it's a LOAD-bandwidth (L2→SM) win: smoking gun = the win
   SHRINKS as G grows (d=64 1.37 G2→0.96 G32) because M-packing amortizes the KV load (load→compute shift);
@@ -286,8 +286,8 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (oracle ~6e-6 = kernel math exact). So "bytes won't help latency until past-L2" (recurring since v6) was
   too strong: the residual post-v8.7 ceiling is PARTLY L2→SM load (bytes relieve it) + partly per-CTA
   compute (they don't). "L2-resident ≠ memory free." Harness fix post-run: v9 `vs sdpa` was inflated (FP8
-  oracle re-quantized inside the timed baseline) → now dequant once outside; trust `vs naive`. Gate-2 quiz
-  pending. Task 1 (locked-clock past-L2 sweep) + v10 NVFP4 (a compute lever) remain the bandwidth story.** Forks
+  oracle re-quantized inside the timed baseline) → now dequant once outside; trust `vs naive`. Task 1
+  (locked-clock past-L2 sweep) + v10 NVFP4 (a compute lever) remain the bandwidth story.** Forks
   `v8_gqa_ss` changing the SINGLE variable **KV storage precision**: the paged K/V pool holds **FP8 E4M3
   (1 byte, uint8)** instead of FP16, dequantized **fused per-tile** at the smem gather (`__nv_cvt_fp8_to_halfraw`,
   software-emulated on sm_75; int8-symmetric is a 1-line fallback if ptxas rejects E4M3) with **per-tensor
