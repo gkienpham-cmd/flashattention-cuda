@@ -7,6 +7,7 @@ phase (SSH/persistent box) can add a setup.py prebuilt path; the public API here
 
 from __future__ import annotations
 
+import glob
 import os
 from functools import lru_cache
 
@@ -79,6 +80,21 @@ def _detect_arch_flags():
     ]
 
 
+def _cuda_lib_includes():
+    """Include dirs for the CUDA-library headers torch's includes pull in (cusparse.h, cublas_v2.h,
+    cusolverDn.h, ...). On a SLIM CUDA image whose /usr/local/cuda ships nvcc but NOT the dev headers
+    (some vast.ai / cloud templates), the build dies with 'cusparse.h: No such file or directory'. The
+    pip `nvidia-*-cu12` wheels that torch depends on DO ship those headers under
+    site-packages/nvidia/<lib>/include, so add them to the include path. Returns [] (harmless) on a full
+    `-devel` toolkit where /usr/local/cuda already has them, or when torch isn't importable."""
+    try:
+        import torch
+        site = os.path.dirname(os.path.dirname(os.path.abspath(torch.__file__)))   # .../site-packages
+    except Exception:
+        return []
+    return sorted(glob.glob(os.path.join(site, "nvidia", "*", "include")))
+
+
 @lru_cache(maxsize=None)
 def build_kernel(name: str):
     """Compile (once) and return the loaded extension module for kernel version `name`.
@@ -101,5 +117,6 @@ def build_kernel(name: str):
         name=f"fa_{name}",
         sources=sources,
         extra_cuda_cflags=["-O3", *arch_flags],
+        extra_include_paths=_cuda_lib_includes(),
         verbose=True,
     )
