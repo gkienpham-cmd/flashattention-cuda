@@ -1022,3 +1022,44 @@ the grid fills it, and every prior measurement (v8.6, v9, Task 1) lived at B=1. 
 dead ends past L2. Double-buffer and ILP stayed dead — good, my 'CLOSED' was right at batch=1. But occupancy
 came back to ~1.4× at batch ≥32, because its extra residency needs a full grid to matter and I'd only ever
 measured batch=1. The lesson I keep relearning: a null is only as broad as the regime you measured it in."
+
+## C15 — NVFP4 KV decode: building the prediction so it survives my own per-CTA verdict (v10 kickoff)
+
+**The setup.** v10 is the paper's core: an NVFP4 (4-bit) KV-cache decode kernel on B300/sm_103. The
+naive pitch writes itself — "4-bit KV → 3.55× fewer bytes → 3.55× faster decode." **My own data kills
+that pitch before I make it.** v9 Task 1 measured, confound-free on a root T4 (clocks locked, L2
+flushed to 537 MB, ncu live), that decode on this kernel is **per-CTA / low-MLP latency-bound, ~28%
+HBM cap — NOT bandwidth-bound** at any context T4 could reach. So cutting bytes relieves a term the
+kernel is nowhere near. **Say-this:** "I built v10's prediction to lose the argument I'd most want to
+win. NVFP4 is a *capacity + accuracy* recipe first — the latency-from-bandwidth story is conditional
+and I have to *measure* whether it even exists on B300, not assume it."
+
+**The one variable, kept honest.** v10 forks v9 changing ONLY the KV storage format — packed E2M1
+nibbles + a per-16 E4M3 micro-scale (0.5625 B/elem, and I count the micro-scale, or my AI is a lie).
+The score-stationary loop, M-packing, split-KV, merge are byte-identical, so it's a clean byte-only
+A/B. The dequant is **fused per-tile** (unpack nibble → ×micro ×scale → FP16 smem), never a prepass —
+a prepass re-reads the cache and eats the saving (QServe). And the Q·Kᵀ score is reconstructed at FP16,
+never a raw FP4 dot, because that error feeds exp and the softmax collapses.
+
+**Why no tensor cores (the v8 lesson generalizes).** Blackwell's 5th-gen FP4 cores gate at **M≥64**
+(M=128 for 100%). N_q=1 decode packs M=G<64 — below the gate. So v10 decode is CUDA-core /
+dequant-to-FP16, and native FP4 *compute* slips to v11 (multi-token, where you pack the query axis to
+reach M≥64). This is exactly v8's measured "tensor cores are the wrong tool for decode," now on
+native-FP4 silicon. **Say-this:** "The 4-bit *storage* and the 4-bit *math* are different levers with
+different shape gates. v10 takes the storage win; the compute win needs a different problem shape."
+
+**The two-layer prediction (recorded before coding).** Pure roofline: HBM-bound, floor 3.55× below
+FP16. Per-CTA-corrected (the real one): capacity ~3.55× is *certain*; the FP4 accuracy delta is the
+*headline number*; a latency win only as a fragile v9-style L2-resident load effect that shrinks as G
+grows and likely flips negative under flush (the dequant ALU tax — same thing that explains v9's
+"flips-negative" result). **The counter-prediction is the prize:** B300 has a ~126 MB L2 (vs T4's
+4 MB), so if I sweep N_k to ~1M and the achieved %HBM finally *climbs* toward the ceiling as the working
+set spills L2, decode becomes bandwidth-bound on sm_103 for the first time and the byte cut converts.
+Find the knee → a real bandwidth result. No knee → the more surprising result: per-CTA-bound to a
+million tokens. **Either sign is publishable, and I wrote the methodology (clock-lock / L2-flush /
+counter-free / ncu) precisely so I can tell which regime I'm in.**
+
+**Scope honesty.** FlashInfer already ships NVFP4 KV decode; vLLM published GB300 NVFP4 decode. I'm not
+"first to run." The contribution is the **open, roofline-documented, prediction-vs-measured sm_103
+decode study with an asymmetric FP4 recipe and a confound-free per-CTA methodology — complementing, not
+beating, FlashInfer/FlashMLA.** The per-CTA-bound verdict is the spine, not a caveat I bury.

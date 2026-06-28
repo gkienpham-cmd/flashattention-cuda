@@ -358,6 +358,32 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (now in-repo, hand-authored — the notebook's matplotlib version was Colab-host-only) +
   `diagrams/v9-fp8-win-anatomy.svg`. Plan to paste: [`docs/v10-kickoff.md`](docs/v10-kickoff.md).
   See `results.md`/`decisions.md` Step 9 close-out, `interview-prep.md` C14.
+- **Step 10 (v10 NVFP4 KV decode, `kernels/v10_nvfp4/`)** — **KICKOFF LANDED on the author machine
+  (2026-06-29, following `docs/v10-kickoff.md`); BOTH GPU GATES PENDING.** Forks v9 (`fp8_attention.cu`)
+  changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
+  E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
+  FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host
+  **byte-identical** → clean byte-only A/B vs v9 *and* v8.7. Fused per-tile dequant (`dequant_nvfp4`:
+  nibble → `kE2M1[8]` → sign → ×E4M3 micro ×scale → FP16 sK/sV); Q·Kᵀ reconstructed at FP16, never a
+  raw FP4 dot. **No FP4 tensor cores** — N_q=1 decode packs M=G<64, below Blackwell's tcgen05 M≥64 gate
+  → native FP4 *compute* is v11 (multi-token); v10 is CUDA-core/dequant-to-FP16. New `nvfp4_attention()`
+  API + `build_paged_kv_nvfp4` (packed + micro-scale pools, shared perm) + `quantize_nvfp4`/
+  `dequantize_nvfp4` + `sdpa_reference_gqa_nvfp4` oracle (tol 5e-2); 3 v10 tests (decode G∈{1,2,4,8} ×
+  non-mult N_k × causal, **seed-varied** to close v9's single-seed gap; idle-warp G=3 + multi-tile G=16;
+  square). Wired (`load.py`, `dispatch.py` `(7,0)`, harness + regime `v10_nvfp4` branches with
+  **b=0.5625 counting the micro-scale**, `__all__`). **Roofline (Task 1) recorded BEFORE coding** (`python
+  -m roofline.predict --arch sm_103 --precision nvfp4`): decode AI = 2G/b rises to **G=8: 28.4**
+  (vs FP8 16.0, FP16 8.0), **HBM-bound, ~3.55× lower floor than FP16, ~11–66× below the fp16/FP4 ridges**.
+  **Two-layer prediction:** pure roofline 3.55× floor cut; **per-CTA-corrected (the real one): capacity
+  ~3.55× certain, FP4 accuracy delta = the headline, latency win only fragile-L2-resident (shrinks with
+  G, likely flips negative under flush) OR in a B300 long-context regime IFF one exists** (the T3
+  knee-hunt). **Counter-prediction (the prize): %HBM climbs past the ~126 MB L2 → bandwidth-bound on
+  sm_103 → byte cut converts.** Built STAGED (Kien's call): **Gate 1 = T4-emulated** (store 4-bit, unpack
+  in-kernel — free Colab; correctness + capacity + accuracy ONLY, latency NOT valid — emulated unpack is
+  more ALU than v9's E4M3) → **latency/regime/sm_103-exp deliverables = `[RENT root B300]`** (the paper's
+  measured core). **Author machine can't compile `.cu`** → build + Gate-1 correctness/capacity/accuracy +
+  bench + quiz (Gate 2) are the outstanding GPU work. Gate notebook `notebooks/v10_nvfp4_gate.ipynb`. See
+  `results.md`/`decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`.
 
 ## Next steps
 

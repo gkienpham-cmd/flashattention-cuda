@@ -25,7 +25,10 @@ from dataclasses import dataclass
 
 from .archs import Arch
 
-_BYTES = {"fp32": 4, "fp16": 2, "bf16": 2, "int8": 1, "fp8": 1, "int4": 0.5}
+# nvfp4 = 0.5625 B/elem = 4.5 b/elem: a 4-bit E2M1 nibble PLUS one E4M3 micro-scale per 16 elems
+# (8 b / 16 = 0.5 b/elem). Counting the micro-scale matters — a naive "4 b -> 0.5 B" undercounts the
+# byte traffic and overstates the AI (v10 trap). int4 stays the scale-free 0.5 for the old callers.
+_BYTES = {"fp32": 4, "fp16": 2, "bf16": 2, "int8": 1, "fp8": 1, "nvfp4": 0.5625, "int4": 0.5}
 
 
 @dataclass
@@ -70,7 +73,12 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         peak = arch.fp32_cuda_flops
     elif precision == "int8":
         peak = arch.int8_tc_ops
-    else:  # fp16 / bf16
+    else:  # fp16 / bf16 / fp8 / nvfp4
+        # fp8 and nvfp4 are STORAGE formats here: v9/v10 decode dequantizes the KV to FP16 in smem
+        # and runs the matmuls on the fp16 path (CUDA-core GEMV at N_q=1, M=G<64 keeps tensor cores
+        # dark). So they intentionally take the fp16 peak, NOT arch.fp4_tc_flops — the FP4 tensor-core
+        # ridge (B300: 15e15/8e12 = 1875 FLOP/B) is a separate observation that native-FP4 *compute*
+        # (v11, M>=64 multi-token) would invoke, not v10 decode. Decode stays far below either ridge.
         peak = arch.fp16_tc_flops if use_tensor_core else arch.fp32_cuda_flops
     t_mma = mma_flops / peak
 

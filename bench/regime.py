@@ -140,14 +140,19 @@ def time_ms_l2flush(fn, flush_buf=None, *, warmup: int = 10, iters: int = 50) ->
 # The sweep.
 # --------------------------------------------------------------------------------------------------
 def _build_ours(backend, q, k, v, page_size, q_off):
-    """Construct the timed decode-kernel lambda for `backend`, plus a human note. FP8 pools are uint8."""
-    from fa_kernels import fp8_attention, gqa_attention
-    from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8
+    """Construct the timed decode-kernel lambda for `backend`, plus a human note. FP8 pools are uint8;
+    NVFP4 pools are packed nibbles + per-16 E4M3 micro-scales (both uint8)."""
+    from fa_kernels import fp8_attention, gqa_attention, nvfp4_attention
+    from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8, build_paged_kv_nvfp4
 
     if backend == "v9_fp8":
         kp, vp, bt, nk, sk, sv = build_paged_kv_fp8(k, v, page_size)
         return lambda: fp8_attention(q, kp, vp, bt, page_size, nk, sk, sv,
                                      causal=False, q_offset=q_off, backend=backend)
+    if backend == "v10_nvfp4":
+        kp, km, vp, vm, bt, nk, sk, sv = build_paged_kv_nvfp4(k, v, page_size)
+        return lambda: nvfp4_attention(q, kp, km, vp, vm, bt, page_size, nk, sk, sv,
+                                       causal=False, q_offset=q_off, backend=backend)
     kp, vp, bt, nk = build_paged_kv(k, v, page_size)
     return lambda: gqa_attention(q, kp, vp, bt, page_size, nk,
                                  causal=False, q_offset=q_off, backend=backend)
@@ -164,7 +169,10 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
     from roofline.archs import get_arch
 
     is_fp8 = backend == "v9_fp8"
-    b_bytes = 1 if is_fp8 else 2
+    is_nvfp4 = backend == "v10_nvfp4"
+    # KV bytes/elem: FP16=2, FP8=1, NVFP4=0.5625 (4-bit nibble + per-16 E4M3 micro-scale — count the
+    # scale, or the working-set/eff_bw/%HBM numbers and the L2-crossing point are wrong).
+    b_bytes = 0.5625 if is_nvfp4 else (1 if is_fp8 else 2)
     dev = torch.device("cuda")
     cap = torch.cuda.get_device_capability()
     sm = f"sm_{cap[0]}{cap[1]}"
@@ -179,7 +187,8 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
     flush = _l2_flush_buf() if l2_flush else None
     name = torch.cuda.get_device_name()
     print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  "
-          f"KV={'fp8' if is_fp8 else 'fp16'}  l2_flush={l2_flush}  gqa_group={gqa_group}")
+          f"KV={'nvfp4' if is_nvfp4 else ('fp8' if is_fp8 else 'fp16')}  l2_flush={l2_flush}  "
+          f"gqa_group={gqa_group}")
     print(f"# {'shape(BxHq x1x d /Nk) Hkv':>27} | {'us/tok':>8} | {'eff_bw':>9} | {'%HBM':>6} | "
           f"{'WS(MB)':>8} | {'L2res?':>6} | {'L2served':>8}")
 
@@ -247,7 +256,8 @@ def profile_one(backend: str, B: int, H_kv: int, N: int, d: int, *, gqa_group: i
 def main() -> None:
     p = argparse.ArgumentParser(description="v9 Task 1 — clock-locked, L2-flushed decode regime sweep.")
     p.add_argument("--backend", default="v8_gqa_ss",
-                   help="decode kernel to characterize (v8_gqa_ss = FP16, v9_fp8 = FP8 KV).")
+                   help="decode kernel to characterize (v8_gqa_ss = FP16, v9_fp8 = FP8 KV, "
+                        "v10_nvfp4 = NVFP4 KV).")
     p.add_argument("--kv-lens", type=int, nargs="+", dest="kv_lens",
                    default=[1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
                    help="KV lengths to sweep (crosses the 4 MB L2 around N_k=8192 for B1/H_kv1/d128).")

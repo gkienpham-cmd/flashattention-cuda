@@ -1339,3 +1339,59 @@ the 4-blocks/SM residency into v10's serving-regime kernel). v10 NVFP4 (capacity
 proceeds. Figure: `diagrams/v8_5_v8_6_pastL2.svg`; data of record: `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`.
 
 ---
+
+## Step 10 — NVFP4 KV decode (v10_nvfp4) — PREDICTION (recorded before coding, 2026-06-29)
+
+v10 forks v9 (FP8 E4M3 KV) changing **one variable — KV storage format**: FP8's 1 B/elem → **NVFP4's
+0.5625 B/elem** (a 4-bit E2M1 nibble + one E4M3 micro-scale per 16 elems = 4.5 b/elem; *count the
+micro-scale* or the AI is overstated). Everything downstream of the smem gather (score-stationary inner
+loop, M-packing grid, split-KV partial, LSE merge, host) is byte-identical, so this stays a clean
+byte-only A/B vs v9 (FP8) and v8.7 (FP16). The fused per-tile dequant unpacks the nibble → E2M1 value
+→ × E4M3 micro-scale × per-tensor scale → FP16 sK/sV (the Q·Kᵀ score is reconstructed at FP16, never a
+raw FP4 dot). **No FP4 tensor-core MMA** — N_q=1 decode packs M=G<64, below Blackwell's tcgen05 M≥64
+gate, so the cores stay dark; native FP4 *compute* is v11.
+
+### The recorded roofline (decode AI = 2G/b, `python -m roofline.predict --arch sm_103 ... --precision nvfp4`)
+
+| precision | b (B/elem) | AI G=1 | AI G=8 | AI G=16 |
+|---|---|---|---|---|
+| FP16 | 2 | 1.0 | 8.0 | 16.0 |
+| FP8 (v9) | 1 | 2.0 | 16.0 | 32.0 |
+| **NVFP4 (v10)** | **0.5625** | **3.6** | **28.4** | **56.8** |
+
+Verified on B300/sm_103: NVFP4 G=8 → **AI 28.4, LIMITER HBM**, fp16 ridge 312.5 (so ~11× below the
+fp16 ridge, and ~66× below the *FP4* ridge 15e15/8e12 = 1875 — FP4 tensor cores idle on intensity
+grounds **and** dark on the M<64 shape grounds). NVFP4 cuts the HBM floor **~3.55× vs FP16** (28.4/8.0).
+
+### Two-layer prediction (the honesty constraint — v9 Task 1 measured decode is per-CTA-bound, ~28% HBM cap)
+
+- **Pure roofline:** HBM-bound, floor ~3.55× below FP16, ~11–66× below the relevant ridges.
+- **Per-CTA-corrected (the REAL prediction):** the model is BLIND to the per-CTA/MLP wall, the dequant
+  tax, and the L2. On a decode micro-bench at the occupancy/context v9 Task 1 characterized, NVFP4 will
+  **NOT** convert 3.55× fewer bytes into 3.55× µs/tok — it relieves a term the kernel is far from.
+  Expect: **capacity win (~3.55× vs FP16) certain; the FP4 accuracy delta = the headline number;** a
+  latency win only as a fragile v9-style L2-resident load effect (shrinks as G grows, likely flips
+  negative under L2-flush — the dequant ALU tax), plus a genuine bandwidth-bound long-context regime
+  **iff one exists on B300** (the T3 knee-hunt, deferred to a root B300 rental).
+- **Counter-prediction (the prize):** if past-L2 on B300 the achieved %HBM **climbs toward the ceiling**
+  as the working set spills the ~126 MB L2 (the knee that was *absent* on T4's 4 MB L2), decode finally
+  becomes bandwidth-bound on sm_103 → NVFP4's byte cut converts. Either sign is publishable.
+
+### Gates — PENDING (author-machine kickoff landed 2026-06-29; GPU work outstanding)
+
+- **Author machine (no GPU):** roofline recorded ✅; kernel `kernels/v10_nvfp4/` + binding written ✅;
+  Python wiring (paged.py quant helpers + `nvfp4_attention`, dispatch, load, reference oracle, harness,
+  regime) ✅; tests (`test_v10_nvfp4_*`, seed-varied) ✅; syntax + CPU-import validated ✅. (torch
+  round-trip of the quantizer + correctness defer to GPU — torch isn't installed locally.)
+- **Gate 1 — T4-emulated (free Colab), PENDING:** build via JIT, `-k v10_nvfp4` correctness (oracle
+  `sdpa_reference_gqa_nvfp4` at 5e-2), **capacity** (`max_memory_allocated`, ~3.55× vs FP16 — close
+  v9's asserted-not-measured gap), **accuracy** RMSE ladder vs fp16 AND vs fp8. ⚠️ T4-emulated latency
+  is NOT valid (software FP4 unpack is *more* ALU than v9's E4M3, which already power-capped the clock).
+- **Deferred — root B300 (~$5/hr), the paper's measured core:** the T3 past-L2 knee-hunt (carry
+  `bench/regime.py`, sweep N_k to 256K–1M past the ~126 MB L2, clock-locked + ncu), the sm_103 2×-exp
+  ablation, FlashInfer/FlashMLA comparators. Then the asymmetric granularity ablation (per-token V,
+  per-channel K) + the FP4-everything softmax-collapse figure.
+
+See `decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`.
+
+---

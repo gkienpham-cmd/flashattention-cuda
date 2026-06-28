@@ -944,3 +944,66 @@ the NVFP4 uplift; **L2 size UNCONFIRMED** (~126 MB B200, likely same die → mea
 
 See [`v10-kickoff.md`](v10-kickoff.md), `results.md` Step 9 close-out, `interview-prep.md` C14,
 `b300-decode-research.md` (v10 banner).
+
+## Step 10 — NVFP4 KV cache (v10_nvfp4) — kickoff (prediction recorded before coding, 2026-06-29)
+
+**The single variable: KV storage format.** v10 forks v9 (`fp8_attention.cu`) changing ONLY the paged
+K/V pool format — FP8 E4M3 (1 B/elem) → **NVFP4: a packed 4-bit E2M1 nibble + one E4M3 micro-scale per
+16 elems + a per-tensor FP32 scale = 0.5625 B/elem.** The score-stationary inner loop, M-packing grid,
+split-KV partial, LSE merge, `[B,H_q,N_q,S,*]` workspace, `choose_splits`, and host launch are carried
+byte-identical. The fused per-tile dequant (`dequant_nvfp4`: nibble → `kE2M1[8]` magnitude → sign →
+× E4M3 micro × per-tensor scale → FP16) writes the same FP16 sK/sV — so this is a clean byte-only
+ablation vs v9 *and* v8.7. Q·Kᵀ is reconstructed at FP16 from the dequant (sK is FP16), never a raw FP4
+dot (which would amplify into the softmax). **Decode uses NO FP4 tensor cores** — M=G<64 at N_q=1 is
+below Blackwell's tcgen05 M≥64 gate, so native FP4 compute is **v11** (multi-token); v10 is CUDA-core /
+dequant-to-FP16, byte-identical to v9 except storage.
+
+**Why NVFP4 now (the ranked thesis, governed by v9 Task 1's per-CTA verdict).**
+- **T1 (primary, limiter-independent): capacity + accuracy.** ~3.55× more resident context/batch vs
+  FP16 (arch-independent arithmetic); the asymmetric-precision recipe is the research content. This is
+  the durable headline regardless of whether bytes are ever the decode wall.
+- **T2 (the sm_103 hook): the 2×-exp/SFU softmax delta** (B300 5→10.7 TExp/s) — a measurable
+  prediction-vs-measured number, the cleanest sm_103-vs-sm_100 wedge.
+- **T3 (conditional, the ONE bandwidth claim — only if earned): does a bandwidth-bound decode regime
+  exist on B300's ~126 MB L2 at all?** T4 stayed per-CTA-bound even past its 4 MB L2; B300's L2 pushes
+  the spill to N_k in the 100Ks–millions. Find the knee → NVFP4 wins there. No knee → the stronger,
+  more surprising result (per-CTA-bound to 1M tokens on sm_103). Either sign publishable.
+- **T4 (DEFERRED to v11): native FP4 tensor-core compute** — gated at M≥64, needs query-axis packing
+  (speculative/multi-token), which generalizes v8's "tensor cores are the wrong tool for decode."
+
+**The recorded prediction (before coding).** Decode AI = 2G/b: NVFP4 G=8 = 28.4 (vs FP8 16.0, FP16
+8.0), **HBM-bound, ~3.55× lower floor than FP16, far below every ridge.** Per-CTA-corrected: capacity
+certain, accuracy = the headline, latency win only fragile-L2-resident (shrinks with G, likely flips
+negative under flush) OR in a B300 long-context regime IFF one exists (T3). Counter: %HBM climbs past
+the ~126 MB L2 → bandwidth-bound on sm_103 → byte cut converts.
+
+**The asymmetric-precision recipe (the deliverable; kickoff implements the standard rung, ablation
+follows Gate 1).** Standard NVFP4 = per-tensor FP32 + per-16 E4M3 micro-scale (the "native 1×16" rung),
+kept clean for the single-variable A/B. The accuracy ladder layered in after Gate 1:
+
+| Tensor | v10 decision (FP4 *storage* + dequant; no FP4 matmul) | Why |
+|---|---|---|
+| **V (cache)** | NVFP4, **per-token** scale *(granularity ablation)* | post-softmax convex combo → FP4 error averages out; biggest byte-saver |
+| **K (cache)** | NVFP4 storage, **per-channel** scale, **score ≥ FP16** | score fragility is K-driven (KVTuner); reconstruct Q·Kᵀ at ≥FP16 |
+| **Q** | FP16 | tiny O(d); never degrade the query that gates softmax |
+| **scores / softmax / O / merge** | FP32 (hardware exp2 on B300) | dodges the FA-3 FP8-accum cliff |
+
+⚠️ The *compute* asymmetry (Attn-QAT keeps P·V in BF16, only Q·Kᵀ in FP4, because quantizing P piles
+`cvt` onto the softmax bottleneck) is **moot for v10** (no FP4 matmul) and a **v11** concern — recorded
+now so v11 inherits the framing. The FP4-everything ablation (show the softmax collapse) justifies the
+asymmetry as a paper figure.
+
+**Hardware staging (Kien's call: no-rental correctness first).** Gate 1 on **T4-emulated** (store 4-bit,
+unpack in-kernel — free Colab; correctness + capacity + accuracy ONLY, latency NOT valid — emulated
+software unpack is more ALU than v9's E4M3). The latency/regime/sm_103 deliverables run on a **root
+B300** (`_MIN_CAPABILITY="v10_nvfp4":(7,0)` is the emulated fallback; the record target is sm_103).
+
+**Novelty (adversarially narrowed, timestamped June 2026).** FlashInfer `trtllm-gen` already ships
+NVFP4 KV decode; vLLM published reproducible GB300 NVFP4 decode; FA4 roofs B200 prefill. What survives:
+**no open, roofline-documented, prediction-vs-measured DECODE study on sm_103 with an asymmetric FP4 KV
+recipe + a confound-free per-CTA-vs-bandwidth methodology.** Frame: **complementing, not beating**
+FlashInfer/FlashMLA. The per-CTA-bound finding (v9 Task 1) is the contribution.
+
+**Status: kickoff landed on the author machine (roofline + kernel + wiring + tests + docs);** both GPU
+gates (Gate 1 T4-emulated correctness/capacity/accuracy, then Gate 2 quiz) are PENDING. See
+[`v10-kickoff.md`](v10-kickoff.md), `results.md` Step 10, `interview-prep.md` C15.

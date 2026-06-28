@@ -37,6 +37,12 @@ _MIN_CAPABILITY = {
     "v9_fp8": (7, 0),     # v9: forks v8.7 + FP8 E4M3 KV storage (1 byte) with fused per-tile dequant. E4M3
                           # conversion is software-emulated on sm_75/T4 (cuda_fp8.h); decode uses no tensor
                           # cores, so (7, 0) holds. The byte lever (decode AI = 2G/b -> doubled).
+    "v10_nvfp4": (7, 0),  # v10: forks v9 + NVFP4 KV storage (0.5625 byte: packed E2M1 nibble + per-16 E4M3
+                          # micro-scale) with fused per-tile dequant-to-FP16. RECORD target is sm_103 (B300);
+                          # (7, 0) is the T4-EMULATED fallback (store 4-bit, unpack in-kernel) for no-rental
+                          # correctness + capacity + accuracy ONLY — emulated software unpack is MORE ALU than
+                          # v9's E4M3, so T4 latency is NOT valid. Decode uses no FP4 MMA (M=G<64), so (7, 0)
+                          # compiles. The byte lever (decode AI = 2G/b -> ~3.55x vs FP16).
 }
 
 

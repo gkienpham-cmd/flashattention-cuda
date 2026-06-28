@@ -63,6 +63,24 @@ def sdpa_reference_gqa_fp8(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return sdpa_reference_gqa(q, k_hat, v_hat, causal=causal, scale=scale)
 
 
+def sdpa_reference_gqa_nvfp4(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                             *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
+    """Apples-to-apples NVFP4 oracle for v10: dequantize the SAME NVFP4 bytes the kernel reads (packed
+    E2M1 nibbles + per-16 E4M3 micro-scales + per-tensor scale), then run GQA SDPA. Isolates the
+    kernel's math from the quantization error (the latter is reported separately as RMSE vs the original
+    fp16 `sdpa_reference_gqa`). `k, v` are the dense FP16 KV; we round-trip them through NVFP4 exactly as
+    `build_paged_kv_nvfp4` did, so the oracle sees the kernel's actual operands. (No scale args — the
+    per-tensor scale is recomputed inside `quantize_nvfp4`, identical to the build path.)
+    """
+    from .paged import quantize_nvfp4, dequantize_nvfp4
+
+    kp, km, sk = quantize_nvfp4(k)
+    vp, vm, sv = quantize_nvfp4(v)
+    k_hat = dequantize_nvfp4(kp, km, sk).to(k.dtype)
+    v_hat = dequantize_nvfp4(vp, vm, sv).to(v.dtype)
+    return sdpa_reference_gqa(q, k_hat, v_hat, causal=causal, scale=scale)
+
+
 def fp64_reference(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                    *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
     """Ground-truth attention in float64. Used to measure quantization RMSE in Phase 3.

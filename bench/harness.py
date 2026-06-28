@@ -19,9 +19,9 @@ import subprocess
 
 import torch
 
-from fa_kernels import attention, fp8_attention, gqa_attention, paged_attention
-from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, dequantize_fp8_e4m3,
-                             quantize_fp8_e4m3)
+from fa_kernels import attention, fp8_attention, gqa_attention, nvfp4_attention, paged_attention
+from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_nvfp4,
+                             dequantize_fp8_e4m3, dequantize_nvfp4, quantize_fp8_e4m3, quantize_nvfp4)
 from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
 from roofline.archs import get_arch
 from roofline.model import estimate
@@ -103,9 +103,10 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
     # `gqa_groups` (v8 only) sweeps the GQA group factor G = H_q/H_kv: H stays the query-head count and
     # H_kv = H//G shrinks as G grows, so KV bytes drop by G and decode AI = 2/b -> 2G/b. The v8 analogue
     # of the --batch sweep: it MEASURES the GEMV->GEMM (per-CTA efficiency) win as G activates G warps.
-    paged = backend in ("v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8")
-    is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8")
+    paged = backend in ("v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8", "v10_nvfp4")
+    is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8", "v10_nvfp4")
     is_fp8 = backend == "v9_fp8"   # v9: GQA-class shapes/sweep, but FP8 pools + scales + a quantizing oracle
+    is_nvfp4 = backend == "v10_nvfp4"   # v10: GQA-class, but NVFP4 packed pools + micro-scales + scales
     groups = gqa_groups or [1]
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
@@ -162,6 +163,18 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 base = lambda: sdpa_reference_gqa(q, k_hat, v_hat, causal=causal)
                 ours = lambda: fp8_attention(q, kf, vf, bt_f, page_size, nkf, sk, sv,
                                              causal=causal, q_offset=q_off, backend=backend)
+            elif is_nvfp4:
+                # v10 reads NVFP4 packed pools (nibbles + per-16 E4M3 micro-scales) + per-tensor scales.
+                # Oracle = SDPA on the SAME dequantized NVFP4 bytes, dequantized ONCE outside the timed
+                # `base` lambda (the v9 lesson: a re-quantizing oracle inflates the baseline).
+                kp, km, vp, vm, bt_n, nkn, sk, sv = build_paged_kv_nvfp4(k, v, page_size)
+                kpb, kmb, skb = quantize_nvfp4(k)
+                vpb, vmb, svb = quantize_nvfp4(v)
+                k_hat = dequantize_nvfp4(kpb, kmb, skb).to(k.dtype)   # exact bytes the kernel reads
+                v_hat = dequantize_nvfp4(vpb, vmb, svb).to(v.dtype)
+                base = lambda: sdpa_reference_gqa(q, k_hat, v_hat, causal=causal)
+                ours = lambda: nvfp4_attention(q, kp, km, vp, vm, bt_n, page_size, nkn, sk, sv,
+                                               causal=causal, q_offset=q_off, backend=backend)
             elif is_gqa:
                 # v8 reads a PAGED GQA KV (H_kv heads); the oracle expands KV by G (repeat_interleave).
                 base = lambda: sdpa_reference_gqa(q, k, v, causal=causal)
@@ -204,6 +217,8 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # doubles vs fp16). Other FP16-KV backends use fp16 regardless of the input dtype.
                 if is_fp8:
                     rp = "fp8"
+                elif is_nvfp4:
+                    rp = "nvfp4"   # KV stored as 0.5625 B/elem -> decode AI = 2G/b (~3.55x vs fp16)
                 elif backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss"):
                     rp = "fp16"
                 else:
@@ -221,7 +236,9 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # re-reads its KV head, G times the bytes) — the cleanest same-session isolation of
                 # M-packing's one variable. For v6/v7 it stays the naive seqlen_q=1 loop (v5 @ N_q=1).
                 us_tok = o_p50 * 1e3 / tokens
-                kv_b = 1 if is_fp8 else 2                      # FP8 KV is 1 byte/elem, FP16 is 2
+                # KV bytes/elem: FP16=2, FP8=1, NVFP4=0.5625 (4-bit nibble + per-16 E4M3 micro-scale —
+                # count the scale, or the %HBM is overstated).
+                kv_b = 0.5625 if is_nvfp4 else (1 if is_fp8 else 2)
                 if arch is not None:
                     kv_bytes = 2.0 * B * H_kv * N * d * kv_b   # K and V; H_kv KV heads
                     eff_bw = kv_bytes / (o_p50 / 1e3)          # achieved bytes/s on the KV read
@@ -229,9 +246,10 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 else:
                     hbm_pct = float("nan")
                 try:
-                    if is_fp8:
-                        # v9 baseline = v8.7 (score-stationary, FP16 KV) on the SAME GQA shape, so the
-                        # A/B isolates the ONE variable: KV storage precision (FP8 vs FP16). Same packing.
+                    if is_fp8 or is_nvfp4:
+                        # v9/v10 baseline = v8.7 (score-stationary, FP16 KV) on the SAME GQA shape, so the
+                        # A/B isolates the ONE variable: KV storage precision (FP8/NVFP4 vs FP16). Same
+                        # packing. (The gate notebook also runs a v10-vs-v9 byte-only A/B for the FP4 step.)
                         kp8, vp8, bt8, nk8 = build_paged_kv(k, v, page_size)
                         naive = lambda: gqa_attention(q, kp8, vp8, bt8, page_size, nk8,
                                                       causal=causal, q_offset=q_off, backend="v8_gqa_ss")
