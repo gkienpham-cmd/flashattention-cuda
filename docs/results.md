@@ -1089,4 +1089,47 @@ cleared (Gate 1 ✅ 76 passed + Gate-2 quiz PASSED 2026-06-28) → Step 9 DONE.*
 > v8.7's 1.03× at the same shape). `bench/harness.py` now dequantizes once **outside** the timed `base`.
 > Trust **`vs naive`** (same-session FP8-vs-FP16 isolation), not v9's `vs sdpa`, in that output.
 
+### Step 9 — Task 1: regime characterization (v8_gqa_ss / v9_fp8)
+
+*Tooling code-complete (`bench/regime.py` + `notebooks/v9_task1_regime.ipynb`); **root-T4 gate pending**.
+The measurement that finally earns — or overturns — the "per-CTA-bound, ~10% HBM" verdict recurring since
+v6. Task 2 (FP8) showed a real L2-load-bandwidth component exists; Task 1 names the limiter confound-free.*
+
+**Why it's needed (the C12 confound).** Every decode %HBM was measured where bandwidth physically couldn't
+appear: the KV cache fit in the T4's 4 MB L2 (so the DRAM counter reads low even if the kernel is
+memory-bound — bound by the *wrong* memory), and free Colab never locked clocks (CUR swung 360–1590 MHz).
+So "10% HBM" was never an earned bandwidth verdict.
+
+**Method (`bench/regime.py`).** (1) **Lock clocks** (`nvidia-smi --lock-gpu-clocks/--lock-memory-clocks`,
+root) so wall-times are comparable. (2) **Flush L2 between timed iters** — zero a ≥2×L2 buffer before each
+launch, outside the CUDA-event window (the jan.ai technique), so the kernel's KV reads actually miss L2.
+(3) **Sweep N_k 1K→128K** so the working set crosses 4 MB (isolation B=1/H_kv=1/d=128 → crossing at
+N_k≈8192; FP8 halves the set → crossing at ~2× N_k, a built-in cross-check). (4) **Counter-free L2 test:**
+`eff_bw = kv_bytes/time`; if it exceeds the 320 GB/s HBM peak the data came from L2 (flagged `L2!`),
+proving %HBM is not a boundedness metric there. (5) Optional **ncu** L2-hit-rate / DRAM% cross-check on a
+root box (skips on `ERR_NVGPUCTRPERM`).
+
+**Roofline prediction (recorded before the run).** The model says decode is AI=2/b, **HBM-bound at every
+N_k** — but it's **blind to L2** (assumes all traffic hits HBM). **Prediction:** if the kernel is truly
+memory-bound, %HBM stays low/flat while WS ≤ 4 MB (L2-resident), then **climbs toward the achievable
+ceiling (~65–75% of 320 GB/s) once N_k pushes the KV past L2.** **Counter-prediction (the C12 survivor):**
+if %HBM stays ~10% even past L2 with `L2served=False` and the large-batch sweep stays flat, it's genuinely
+**per-CTA/launch-bound** — bytes are not the wall, and the lever becomes persistent-kernel/megakernel, not
+precision.
+
+**Decision criteria (which outcome we're reading for):**
+
+| Outcome | Signature in the plot / table | Verdict |
+|---|---|---|
+| Memory-bound past L2 | %HBM climbs toward ~70% as N_k passes the L2 crossing | decode IS bandwidth-bound once KV spills L2 → FP8/NVFP4 byte cuts pay off; 6-step "per-CTA" was an L2 artifact |
+| Per-CTA-bound (confound-free) | %HBM flat ~10% past L2; `L2served=False`; batch sweep flat | genuinely launch/per-CTA-bound; bytes not the wall → persistent-kernel lever; FP8 stays capacity+accuracy |
+| L2-resident (confound shown) | `L2!` fires (eff_bw > HBM peak) while WS ≤ 4 MB | confirms C12 directly — %HBM was never a boundedness metric at those sizes |
+
+**Measured (pending — root T4):** _to fill at the gate;_ decisive figure → `diagrams/v9-task1-regime.svg`.
+
+| config | N_k at L2 crossing | %HBM below L2 | %HBM past L2 | `L2served`? | verdict |
+|---|---|---|---|---|---|
+| v8_gqa_ss d=128 H_kv=1 | ~8192 | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+| v9_fp8 d=128 H_kv=1 | ~16384 | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+
 ---

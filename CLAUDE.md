@@ -301,9 +301,24 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   coding (confirmed via `roofline.model.estimate`):** FP8 DOUBLES AI (G8: 8.0→16.0) and HALVES the HBM floor
   (13.12→6.56 µs), limiter STAYS HBM (16 ≪ T4 fp16 ridge 203) — **blind to dequant latency + the L2
   confound. Prediction: capacity-only (no µs/tok win) on the L2-resident micro-bench; latency win only
-  past-L2/under-load (v9 Task 1 territory).** **Task 1 (locked-clock/L2-flush regime sweep that earns the
-  bandwidth verdict) DEFERRED** (scope decision). See `results.md`/`decisions.md` Step 9, `interview-prep.md`
+  past-L2/under-load (v9 Task 1 territory).** See `results.md`/`decisions.md` Step 9, `interview-prep.md`
   C13, `docs/v9-kickoff.md`.
+- **Step 9 Task 1 (regime characterization) — TOOLING CODE-COMPLETE (2026-06-28); root-T4 gate pending.**
+  The measurement that earns/overturns the "per-CTA-bound, ~10% HBM" verdict recurring since v6 (Task 2
+  showed an L2-load-bandwidth component exists; Task 1 names the limiter confound-free). NOT a new kernel
+  — characterizes the existing `v8_gqa_ss`/`v9_fp8`. New `bench/regime.py` (`python -m bench.regime`):
+  `lock_clocks()`/`reset_clocks()` (root; loud warn + continue if not), an **L2-flushing CUDA-event timer**
+  (zero a ≥2×L2 buffer outside the timed window — the jan.ai technique), a `sweep()` returning structured
+  rows with the **counter-free L2 test** (`eff_bw = kv_bytes/time > 320 GB/s ⇒ L2-served`, flagged `L2!`)
+  + OOM guard, and a `--profile B,H_kv,N_k,d` mode so `ncu` can attach to one shape. Gate notebook
+  `notebooks/v9_task1_regime.ipynb` (clock-lock → roofline recap → build → **isolation sweep** N_k 1K→128K
+  L2-flushed, both kernels → **the decisive matplotlib plot** %HBM-vs-N_k → `diagrams/v9-task1-regime.svg`
+  → large-batch confirmation → optional ncu → reset → verdict). **Roofline prediction recorded:** decode
+  AI=2/b HBM-bound but BLIND to L2 → %HBM should climb past the 4 MB L2 crossing (N_k≈8192 d128 fp16; ~2×
+  for fp8) IF memory-bound; counter (the C12 survivor): flat ~10% past L2 with `L2served=False` → per-CTA-
+  bound confound-free. Degrades gracefully (counter-free sweep runs on Colab; clock-lock+ncu need root T4 —
+  vast.ai ~$0.10–0.20/hr). Decisive read + criteria in `results.md` Step 9 Task 1. See `docs/v9-kickoff.md`
+  Task 1, `interview-prep.md` C12.
 
 ## Next steps
 
