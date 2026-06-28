@@ -31,6 +31,9 @@ _MIN_CAPABILITY = {
                           # occupancy lever to hide the reduction latency (single-variable vs Cut 1).
     "v8_gqa_ilp": (7, 0), # v8.6 Arm 2: GQA M-packing + KU=4-unrolled key loop (pipeline independent shfl
                           # reductions). The ILP lever (FP32 smem, 2 blocks/SM unchanged) vs Cut 1.
+    "v8_gqa_ss": (7, 0),  # v8.7: GQA M-packing + SCORE-STATIONARY inner loop (lane=key full dot, no per-key
+                          # reduction; per-32-key-group softmax; PV transpose). FP16 transposed smem. The
+                          # lever that REMOVES (not hides) the v8.6-measured reduction wall.
 }
 
 

@@ -214,8 +214,13 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   `notebooks/v8_gqa_gate.ipynb` all landed. **Author machine can't compile `.cu`** → build + correctness
   (Gate 1) + bench + quiz (Gate 2) are the outstanding GPU work. See `results.md`/`decisions.md` Step 8,
   `interview-prep.md` C11, `docs/v8-kickoff.md`.
-- **Step 8.6 (v8.6 hide the reduction latency, `kernels/v8_gqa_occ/` + `kernels/v8_gqa_ilp/`)** — **CODE
-  COMPLETE, T4 gate PENDING (2026-06-28).** v8.5's null pinned the decode floor to the **per-key warp-shuffle
+- **Step 8.6 (v8.6 hide the reduction latency, `kernels/v8_gqa_occ/` + `kernels/v8_gqa_ilp/`)** — **MEASURED
+  2026-06-28 (Colab T4): 190/190 correct, BOTH arms NULL on the clock-robust `%HBM` (flat ~8–10% at every
+  G/batch; clocks swung 360–1590 MHz so µs/tok is unusable cross-backend). Occupancy never engaged at the
+  micro-bench batch (split-KV already emits ~80 blocks = 2/SM → no spare block for the 4-block ceiling; only a
+  ~1% nudge at large batch); ILP tracked Cut 1 exactly. COUNTER-PREDICTION LANDED: the floor is the per-row
+  serial online-softmax recurrence — unhideable by TLP or ILP. Fourth consecutive negative → mandate for
+  v8.7.** v8.5's null pinned the decode floor to the **per-key warp-shuffle
   reduction + serial online-softmax recurrence** (compute-latency-bound at ~10% HBM, NOT load/bytes). v8.6 is
   a **2-arm single-variable ablation** to *hide* that latency, both CUDA-core/T4, both fork Cut 1 changing ONE
   thing: **Arm 1 `v8_gqa_occ`** = FP16 smem single-buffer (16 KB → **4 blocks/SM**, 2× resident warps; the
@@ -230,8 +235,29 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   the serial recurrence itself → score-stationary redesign (a future v8.7) is the real fix, and v9 FP8 stays
   premature.** Wired (load/dispatch/harness/tests, both `(7,0)`, tol 2e-2, added to `GQA_BACKENDS`); gate
   notebook `notebooks/v8_6_reduction_gate.ipynb` (fork of v8.5's, builds both arms, `-k "v8_gqa_occ or
-  v8_gqa_ilp or v8_gqa"`, 3-way A/B G-sweep + reclaim-at-batch). **Outstanding GPU work:** run the gate (T4),
-  fill the measured A/B, then quiz. See `results.md`/`decisions.md` Step 8.6, `interview-prep.md` C11.5.
+  v8_gqa_ilp or v8_gqa"`, 3-way A/B G-sweep + reclaim-at-batch). See `results.md`/`decisions.md` Step 8.6,
+  `interview-prep.md` C11.5. (Gate-2 quiz for v8.6 deferred — folded into v8.7's quiz per Kien.)
+- **Step 8.7 (v8.7 score-stationary inner loop, `kernels/v8_gqa_ss/`)** — **CODE COMPLETE, T4 gate PENDING
+  (2026-06-28).** v8.6's fourth negative mandated REMOVING (not hiding) the wall. Single variable = the
+  inner-loop LAYOUT: flip from Cut 1's output-stationary GEMV (lane splits head-dim → per-key `__shfl_xor`
+  butterfly + serial recurrence) to **score-stationary: lane = key** — lane `l` computes the FULL dot product
+  q·k_c in its own registers (**no per-key cross-lane reduction**); softmax runs **once per 32-key group** (one
+  `warp_reduce_max` + one `warp_reduce_sum` → recurrence **32× shorter**); PV is a transpose `O[d]=Σ_c p_c·V[c][d]`
+  via single-hop `__shfl` broadcasts of `p_c` that **pipeline** (vs Cut 1's serial chain). The layout INVERTS
+  Cut 1 (QK reduction-free, cross-lane traffic moves to the 2-per-group softmax + PV fan). **smem staged FP16**
+  (sQ per-warp + K **transposed `[d][key]`+1-pad** for bank-conflict-free lane=key reads + V natural; ~18 KB →
+  ~3 blocks/SM) to HOLD occupancy — FP32 + the new sQ/pad would drop T4 to 1 block/SM and confound the layout
+  variable (v8.6 measured FP16 smem is perf-neutral); bonus: `v8_gqa_ss` vs `v8_gqa_occ` differ in ONLY the
+  layout → clean isolated A/B. Prologue/epilogue/host/merge/choose_splits **byte-identical** to Cut 1; added
+  `warp_reduce_max`; reused the ilp fork's monotone `c_lim`; traps handled (warp-uniform reductions on masked
+  lanes via s=-inf/p=0, idle-warp barrier participation, fully-future split → (m=-inf,l=0,O=0), three distinct
+  smem strides sQ/`(TN+1)`/D). **Roofline BLIND** (AI=2G/b unchanged). **Prediction recorded BEFORE the run:
+  µs/tok drops, best at d=64; d=128 at RISK of flipping to smem-read-BW-bound (full-D sK reads/key);
+  counter-prediction: if µs/tok drops but %HBM stays ~10% → floor is per-CTA LOAD latency → v9 FP8 (capacity)
+  is the right next lever.** Wired (load/dispatch/harness 3 tuples/tests, `(7,0)`, tol 2e-2, `GQA_BACKENDS`);
+  gate notebook `notebooks/v8_7_score_stationary_gate.ipynb` (build ss, `-k "v8_gqa_ss or v8_gqa"`, 3-way A/B
+  Cut1/occ/ss G-sweep + reclaim). **Outstanding GPU work:** run the gate (T4), fill the A/B, then the combined
+  v8.6+v8.7 quiz. See `results.md`/`decisions.md` Step 8.7, `interview-prep.md` C11.6.
 
 ## Next steps
 

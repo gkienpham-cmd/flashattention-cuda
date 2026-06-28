@@ -66,12 +66,16 @@ _TOL = {
     # math (Arm 1 converts FP16->FP32 at read time like v8.5; Arm 2 keeps FP32 smem) -> same 2e-2 band.
     "v8_gqa_occ": (2e-2, 2e-2),
     "v8_gqa_ilp": (2e-2, 2e-2),
+    # v8.7 score-stationary (lane=key full dot, per-32-key-group softmax, PV transpose). Same
+    # FP16-in/FP32-accum precision class; the per-tile online softmax is FP32-rounding-equal to the
+    # per-key form (max/sum associativity), not bit-identical -> same 2e-2 band.
+    "v8_gqa_ss": (2e-2, 2e-2),
 }
 
 # GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core), Cut 2a (Turing WMMA), and v8.5
 # (double-buffered). All go through gqa_attention(..., backend=...) with an identical contract, so one
 # test body covers all three.
-GQA_BACKENDS = ["v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp"]
+GQA_BACKENDS = ["v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss"]
 
 
 def tol_for(backend: str):

@@ -102,8 +102,8 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
     # `gqa_groups` (v8 only) sweeps the GQA group factor G = H_q/H_kv: H stays the query-head count and
     # H_kv = H//G shrinks as G grows, so KV bytes drop by G and decode AI = 2/b -> 2G/b. The v8 analogue
     # of the --batch sweep: it MEASURES the GEMV->GEMM (per-CTA efficiency) win as G activates G warps.
-    paged = backend in ("v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp")
-    is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp")
+    paged = backend in ("v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss")
+    is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss")
     groups = gqa_groups or [1]
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
@@ -184,7 +184,7 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # v5/v6/v7/v8 read FP16 KV regardless of the input dtype (they cast in the kernel),
                 # so the roofline byte count uses fp16. For v8, G>1 -> the decode bound is AI=2G/b.
                 tile_m, tile_n = _roofline_tile(backend, d)
-                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp") else precision
+                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss") else precision
                 est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
                                materialize_s=backend in ("v1_naive", "v2_tiled"),
                                tile_m=tile_m, tile_n=tile_n, G=(G if is_gqa else 1))

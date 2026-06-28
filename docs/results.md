@@ -842,6 +842,64 @@ finding): if BOTH are null → the floor is the serial online-softmax recurrence
 occupancy nor ILP can hide → the real fix is a parallel-across-keys (score-stationary) redesign that
 *removes* the per-key reduction (a future "v8.7"), and v9 FP8 stays premature until then.
 
-**Measured:** *pending T4 run-of-record (`notebooks/v8_6_reduction_gate.ipynb`).* Fill the per-arm/per-G A/B
-vs Cut 1 (µs/tok + %HBM) and the reclaim-at-batch rows, then state which lever (if any) moved %HBM toward
-the floor and whether the residual floor is the serial recurrence.
+**Measured (2026-06-28, Colab T4, `notebooks/v8_6_reduction_gate_output.ipynb`): correctness ✅ 190 passed
+(both arms + Cut 1 regression), but BOTH levers are NULL — neither moved `%HBM` off ~10%. The
+counter-prediction landed: the floor is the serial online-softmax recurrence.**
+
+⚠️ The six bench runs read wildly different SM clocks (`360/435/540` MHz in the G-sweep, `480/1590/1590` in
+reclaim), so **µs/tok is not comparable across backends**; the clock-robust read is `%HBM`. G-sweep d=128:
+
+| G (d=128) | Cut 1 %HBM (360MHz) | occ %HBM (435MHz) | ilp %HBM (540MHz) |
+|---|---|---|---|
+| 2  | 11.2% | 10.8% | 10.9% |
+| 8  |  9.6% |  9.7% |  9.9% |
+| 32 |  3.6% |  3.1% |  3.4% |
+
+`%HBM` is flat within ~0.5% at every G — and the same in reclaim (~8–10% across all three at every batch).
+Two things make it airtight rather than "no signal": (1) **occupancy never engaged at small batch** — at
+BH=32/G=8 split-KV already emits ~80 partial blocks = exactly 2 blocks/SM on 40 SMs, so Arm 1's 4-block
+*ceiling* has no 3rd/4th block to schedule; the one place spare blocks exist (reclaim B=64, d=64) shows occ
+**8.2% vs Cut 1's 7.3%** — a real but ~1% nudge, nowhere near the floor. (2) **ILP tracks Cut 1's %HBM
+almost exactly** (reclaim B=32/64 d=64: ilp 6.5%/7.4% vs Cut 1 6.5%/7.3%) — pipelining the reductions bought
+nothing. **Both null → the floor is the per-row serial recurrence** (`m_cur/l_cur/o_reg`, dependent on the
+previous key): neither more warps (TLP) nor more in-flight reductions (ILP) can hide a chain that is
+inherently sequential within a row. This is the **fourth** consecutive negative (Cut 2 / v8.5 / v8.6 occ /
+v8.6 ilp), all converging: the decode kernel is pinned at ~10% HBM by the serial inner loop, not by memory,
+compute throughput, load latency, or reduction latency. **Mandate for v8.7:** *remove* the per-key reduction
++ shorten the recurrence with a score-stationary relayout — the only decode-side lever left before bytes.
+
+## Step 8.7 — score-stationary decode inner loop (v8_gqa_ss)
+
+*Roofline-first recorded; T4 gate pending (`notebooks/v8_7_score_stationary_gate.ipynb`). v8.6's fourth
+negative mandated this: stop hiding the per-key reduction wall and REMOVE it.*
+
+**Why:** every prior decode cut kept Cut 1's output-stationary GEMV inner loop — one warp owns one query
+row, 32 lanes split head-dim, and per key it pays a 5-deep `__shfl_xor` butterfly + a serial
+`(m,l,O)` update. v8.6 proved that latency is unhideable. v8.7 changes the **inner-loop layout** (the single
+variable): **lane = key** — lane `l` computes the *full* dot product q·k_c, so the score lives in its own
+register with **no per-key cross-lane reduction**; softmax runs **once per 32-key group** (one
+`warp_reduce_max` + one `warp_reduce_sum`), shortening the serial recurrence **32×**; and PV becomes a
+transpose `O[d]=Σ_c p_c·V[c][d]` done with single-hop `__shfl` broadcasts of `p_c` that pipeline (vs Cut 1's
+serial chain). The layout inverts Cut 1: QK is now reduction-free, the cross-lane traffic moves to the
+2-per-group softmax reductions + the PV broadcast fan.
+
+**smem held FP16 (the locked decision):** Cut 1's FP32 smem + the new `sQ` + a bank-conflict pad would drop
+the T4 to 1 block/SM and confound the layout variable; staging K/V/Q as FP16 (~18 KB → ~3 blocks/SM) holds
+occupancy (v8.6 measured FP16 smem is correctness-safe + perf-neutral). K is staged **transposed `[d][key]`
++ 1-pad** so the lane=key read is bank-conflict-free; V natural `[key][d]`; Q per-warp in `sQ`. This makes
+the inner-loop **layout** the only difference vs `v8_gqa_occ` (also FP16-smem GEMV) → a clean layout-only A/B.
+
+**Roofline prediction (the gate — still BLIND):** `AI=2G/b`, the HBM floor, and the limiter are **identical
+to Cut 1** (the byte-model can't see the inner-loop layout; G=8 → AI=8.0, HBM-bound, 0.105 ms). The
+deliverable is the **measured µs/tok**, not a roofline shift.
+
+**Mechanistic prediction (recorded before the run):** v8.7 should finally **drop µs/tok** — strongest at
+**d=64**. **d=128 is at risk** (R2): QK now reads the full D from `sK` per key (more smem-read traffic than
+Cut 1's EPT), so d=128 could flip to **smem-bandwidth-bound** and show a smaller win or a null. **Counter-
+prediction (also a finding): if µs/tok drops but %HBM still sits at ~10%**, the new floor is per-CTA **load**
+latency, not compute — which finally makes **v9 FP8 (capacity + fewer bytes)** the right next lever. Either
+outcome closes the decode-schedule investigation.
+
+**Measured:** *pending T4 run-of-record (`notebooks/v8_7_score_stationary_gate.ipynb`).* Fill the 3-way A/B
+(`v8_gqa` Cut 1, `v8_gqa_occ` layout-isolated, `v8_gqa_ss`) µs/tok + %HBM per G + reclaim-at-batch, then
+state whether removing the reduction moved the floor (and at which d), and whether %HBM finally climbed.

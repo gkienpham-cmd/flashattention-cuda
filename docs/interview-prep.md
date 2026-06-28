@@ -797,3 +797,46 @@ a two-arm ablation — occupancy vs ILP — to test whether that latency is hide
 being the stronger lever and to a falsifiable counter-prediction: if neither moves %HBM, the bottleneck is
 the online-softmax recurrence, which means the fix is an algorithmic relayout, not a knob. That's the
 discipline — isolate one variable, predict the mechanism, and let the null result point at the next kernel."
+
+### v8.6 measured — both arms null, the counter-prediction landed
+The run confirmed the counter-prediction. Correctness 190/190; on the clock-robust `%HBM` (the SM clocks
+swung 360–1590 MHz across runs, so µs/tok was unusable for cross-backend comparison) **both arms were flat at
+~10%.** Two clinching details: occupancy *never engaged* at the micro-bench batch — split-KV already emits
+~80 blocks = exactly 2/SM on the T4, so Arm 1's 4-block ceiling had no third block to schedule (it only
+showed a ~1% nudge in the one large-batch corner where spare blocks existed); and ILP tracked Cut 1's %HBM
+to the decimal. **Say-this:** "Both levers were null, exactly as the counter-prediction said they might be —
+which is the *informative* outcome: it proves the floor is the per-row serial recurrence, not a knob I forgot
+to turn. And I caught a subtle confound — occupancy can't help when the grid doesn't even have enough blocks
+to fill the higher ceiling. Four straight negatives (tensor cores, double-buffer, occupancy, ILP) all
+triangulate the same serial inner loop. That earns the next kernel: stop hiding, relayout."
+
+## C11.6 — Removing the wall: the score-stationary relayout (v8.7)
+Four negatives said the per-key warp-shuffle reduction + serial online-softmax recurrence is the decode
+floor and it's unhideable. So v8.7 *removes* it instead of hiding it, by flipping the inner-loop layout to
+the textbook FlashDecoding form. Cut 1 is **output-stationary**: one warp owns a query row, the 32 lanes
+split the head dim, and each key costs a 5-deep `__shfl_xor` butterfly (to assemble the scalar score across
+lanes) plus a serial `(m,l,O)` update. v8.7 is **score-stationary**: assign **lane = key** — lane `l`
+computes the *whole* dot product q·k_c itself, so the score lives in its own register with **no cross-lane
+reduction in QK at all**. The softmax then runs **once per 32-key group** (one `warp_reduce_max`, one
+`warp_reduce_sum`), so the serial recurrence — the actual wall — gets **32× shorter**. The cost that moves is
+PV: now `O[d]=Σ_c p_c V[c][d]` needs `p_c` (held in lane `c`) spread across the output dims, done with a
+single-hop `__shfl` broadcast per key — but those broadcasts are *independent*, so they pipeline, unlike the
+recurrence they replace. The layout literally inverts where the cross-lane traffic lives (Cut 1: reduction in
+QK, free PV; v8.7: free QK, broadcasts in PV).
+
+Two engineering subtleties worth saying out loud: (1) **bank conflicts** — with lane=key, 32 lanes read
+`sK[key][d]` at stride D (a multiple of 32) → 32-way conflict, so I stage K **transposed `[d][key]` + a
+1-element pad** to make the read (and the transposed write) conflict-free. (2) **holding occupancy fixed** —
+the relayout needs extra smem (the query in smem + that pad), which in FP32 would drop the T4 from 2→1
+block/SM and *confound* a null result with lost occupancy. Since v8.6 already proved FP16 smem is
+perf-neutral, I stage everything FP16 (~18 KB → ~3 blocks/SM) so the inner-loop layout is the *only* variable
+— and as a bonus `v8_gqa_ss` differs from `v8_gqa_occ` (also FP16-smem) in nothing but the layout, a clean
+isolated A/B. **The honest prediction:** wins at d=64; d=128 is at risk because each key now reads the full D
+from smem (more smem-read traffic than Cut 1's D/32) and could flip to smem-BW-bound. And the counter that
+keeps me honest: if µs/tok finally drops but %HBM *stays* ~10%, the floor was per-CTA **load** latency, and
+that's the result that finally licenses v9 FP8 (capacity). **Say-this:** "v8.7 is the first decode kernel
+where I changed the *algorithm's* data layout, not a scheduling knob — lane-per-key removes the per-key
+reduction and shortens the softmax recurrence 32×. I predicted it wins at d=64 and flagged d=128 as a
+smem-bandwidth risk *before* running, and I deliberately held occupancy fixed with FP16 smem so a null
+couldn't be blamed on residency. Whatever the number, it's decisive: either removing the reduction was the
+fix, or the floor was load latency all along and bytes are finally the right lever."

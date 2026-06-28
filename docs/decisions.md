@@ -678,4 +678,41 @@ lever's ceiling (Arm 1 should help more there); the ILP lever is arch-insensitiv
 On a genuinely bandwidth-bound regime (N_k past L2, or large batch saturating HBM) the whole question flips
 and bytes (v9) finally pay — neither holds on this T4 micro-bench.
 
-**Measured:** *pending T4 run-of-record (`notebooks/v8_6_reduction_gate.ipynb`).*
+**Measured (2026-06-28, Colab T4): correctness ✅ 190 passed; BOTH levers NULL on the clock-robust `%HBM`
+(flat ~8–10% at every G/batch — clocks varied 360–1590 MHz so µs/tok is unreliable). Occupancy never even
+engaged at small batch (split-KV already fills 2 blocks/SM → no spare block for the 4-block ceiling); ILP
+tracked Cut 1 exactly. The counter-prediction landed: the floor is the per-row serial online-softmax
+recurrence — unhideable by TLP or ILP. Fourth consecutive negative → mandate for v8.7 (remove, don't hide).
+See `results.md` Step 8.6 + `decisions.md`/`results.md` Step 8.7.**
+
+## Step 8.7 — score-stationary decode inner loop (v8_gqa_ss)
+
+**Bottleneck (now four-times measured):** the per-row serial online-softmax recurrence + the per-key
+warp-shuffle reduction in Cut 1's output-stationary GEMV inner loop. Unhideable (Cut 2 / v8.5 / v8.6 occ /
+v8.6 ilp all null). The only move left is to **remove** it.
+
+**Options:**
+1. **Score-stationary relayout (lane=key)** — full per-lane dot product (no per-key reduction), per-32-key-group
+   softmax (recurrence 32× shorter), PV transpose via pipelined `__shfl` broadcasts. The textbook
+   FlashDecoding inner loop. → **chosen (v8.7).**
+2. **Thread-group (>1 lane/key, tunable group size)** — vLLM-style; balances per-lane dot length vs a tiny
+   group reduction. More tunable but more complex → **deferred to v8.8** if pure 1-lane/key is smem-BW-bound at d=128.
+3. **Bytes (v9 FP8)** — premature: the kernel is per-CTA-bound at ~10% HBM, not bandwidth-bound, so cutting
+   bytes can't help latency (v8.5/v8.6 proved it). Gated on whether v8.7 makes it load/bandwidth-bound.
+
+**Choice + the smem sub-decision:** pure score-stationary, single-variable vs Cut 1 (inner-loop layout only).
+**smem staged FP16 to HOLD occupancy** — the layout forces extra smem (`sQ` + a bank-conflict pad on the
+transposed K); in FP32 that would drop the T4 from 2→1 block/SM and confound a null with lost residency. v8.6
+already measured FP16 smem is correctness-safe + perf-neutral, so FP16 (~18 KB → ~3 blocks/SM) holds
+occupancy and *also* makes `v8_gqa_ss` differ from `v8_gqa_occ` in **only** the inner-loop layout → a clean
+layout-isolated A/B (headline stays vs Cut 1).
+
+**Prediction (before measuring):** roofline blind (AI=2G/b unchanged). µs/tok should drop, best at d=64;
+d=128 at risk of flipping to smem-read-BW-bound (full-D `sK` reads per key). Counter: if µs/tok drops but
+%HBM stays ~10%, the floor is per-CTA load latency → v9 FP8 (capacity) becomes the right next lever.
+
+**What changes on another arch:** A100/H100 have far more smem-read bandwidth + bigger register files, so the
+d=128 smem-BW risk (R2) shrinks and the score-stationary win should be cleaner there; the layout itself is
+arch-independent (it's the standard decode primitive FlashInfer/FlashMLA use).
+
+**Measured:** *pending T4 run-of-record (`notebooks/v8_7_score_stationary_gate.ipynb`).*
