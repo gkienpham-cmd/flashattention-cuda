@@ -1,0 +1,81 @@
+<svg width="100%" viewBox="0 0 760 440" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v9 FP8 anatomy — the clock-matched latency win is real but regime-specific (shrinks with G, flips negative under L2-flush); capacity and accuracy are the durable wins</title>
+<desc>Left: the measured FP8-over-FP16 vs-naive speedup at d=128, clock-matched same-session, L2-resident. It is largest at G=1 (1.52x) and falls monotonically to 1.05x at G=32, crossing toward the 1.0 break-even. The win is entangled because raising the GQA group G also lowers H_kv occupancy and shrinks the working set, so compute-amortization and occupancy cannot be separated from this sweep; and ncu shows L2 throughput under 3 percent, so it is a bytes-sensitive load-latency effect, not L2 bandwidth saturation. Right: the verdict. Capacity 2x is durable by construction. Accuracy per-tensor E4M3 RMSE about 7e-4 is durable. Latency is fragile: positive 1.2 to 1.3x only when L2-resident and high occupancy, and it flips negative under L2-flush because the software E4M3 dequant ALU tax dominates once bytes stop being the bottleneck. Net: FP8 and NVFP4 are a capacity plus accuracy play for a per-CTA-bound decode kernel, not a decode-latency play.</desc>
+<rect x="0" y="0" width="760" height="440" fill="#ffffff"/>
+<text x="30" y="28" font-size="15" font-weight="600" fill="#2C2C2A">v9 FP8 KV — the win is real, but it's capacity + accuracy, not latency</text>
+<text x="30" y="46" font-size="11" fill="#888780">clock-matched same-session A/B (FP8 ÷ FP16 v8.7), L2-resident — the latency win shrinks with G and flips negative under L2-flush</text>
+
+<!-- LEFT: the measured win plot -->
+<text x="40" y="74" font-size="12" font-weight="600" fill="#5F5E5A">The measured FP8 latency win (d=128, vs naive)</text>
+<rect x="95" y="80" width="250" height="170" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+<!-- y ticks -->
+<line x1="95" y1="250" x2="345" y2="250" stroke="#C9322B" stroke-width="1.2" stroke-dasharray="3 3"/><text x="90" y="253" font-size="9" fill="#C9322B" text-anchor="end">1.0×</text>
+<line x1="95" y1="193.3" x2="345" y2="193.3" stroke="#EFEEE9" stroke-width="1"/><text x="90" y="197" font-size="9" fill="#888780" text-anchor="end">1.2×</text>
+<line x1="95" y1="136.7" x2="345" y2="136.7" stroke="#EFEEE9" stroke-width="1"/><text x="90" y="140" font-size="9" fill="#888780" text-anchor="end">1.4×</text>
+<text x="90" y="84" font-size="9" fill="#888780" text-anchor="end">1.6×</text>
+<text x="44" y="170" font-size="9" fill="#888780" text-anchor="middle" transform="rotate(-90 44 170)">FP8 ÷ FP16 speedup</text>
+<!-- break-even label -->
+<text x="341" y="244" font-size="8" fill="#C9322B" text-anchor="end">break-even</text>
+<!-- the win line -->
+<polyline points="95,102.7 145,145.2 195,159.3 245,179.2 295,235.8 345,235.8" fill="none" stroke="#185FA5" stroke-width="2.4"/>
+<g fill="#185FA5">
+<circle cx="95" cy="102.7" r="3"/><circle cx="145" cy="145.2" r="3"/><circle cx="195" cy="159.3" r="3"/><circle cx="245" cy="179.2" r="3"/><circle cx="295" cy="235.8" r="3"/><circle cx="345" cy="235.8" r="3"/>
+</g>
+<text x="95" y="96" font-size="9" fill="#185FA5" text-anchor="middle">1.52</text>
+<text x="245" y="173" font-size="9" fill="#185FA5" text-anchor="middle">1.25</text>
+<text x="345" y="230" font-size="9" fill="#185FA5" text-anchor="end">1.05</text>
+<!-- x ticks: G -->
+<text x="95" y="265" font-size="9" fill="#888780" text-anchor="middle">G1</text>
+<text x="145" y="265" font-size="9" fill="#888780" text-anchor="middle">G2</text>
+<text x="195" y="265" font-size="9" fill="#888780" text-anchor="middle">G4</text>
+<text x="245" y="265" font-size="9" fill="#888780" text-anchor="middle">G8</text>
+<text x="295" y="265" font-size="9" fill="#888780" text-anchor="middle">G16</text>
+<text x="345" y="265" font-size="9" fill="#888780" text-anchor="middle">G32</text>
+<text x="220" y="280" font-size="10" fill="#5F5E5A" text-anchor="middle">GQA group G  (↑G ⟺ ↓H_kv occupancy ⟺ ↓working set)</text>
+<!-- entanglement note -->
+<rect x="95" y="290" width="250" height="46" rx="4" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="0.8"/>
+<text x="103" y="304" font-size="9" fill="#5F5E5A">Win shrinks with G — but G entangles compute-</text>
+<text x="103" y="316" font-size="9" fill="#5F5E5A">amortization with occupancy/WS. ncu L2 thrpt &lt;3% →</text>
+<text x="103" y="328" font-size="9" fill="#993C1D">bytes-sensitive load-LATENCY, not L2 bandwidth.</text>
+
+<!-- flip-under-flush callout -->
+<rect x="95" y="346" width="250" height="64" rx="4" fill="#FAECE7" stroke="#D85A30" stroke-width="0.9"/>
+<text x="103" y="362" font-size="10" font-weight="600" fill="#993C1D">…and it FLIPS NEGATIVE under L2-flush</text>
+<text x="103" y="376" font-size="9" fill="#993C1D">Task 1 (L2 flushed, forced HBM): FP8 ≈ 1.2× SLOWER</text>
+<text x="103" y="388" font-size="9" fill="#993C1D">(clock-corrected). Once bytes aren't the shared wall,</text>
+<text x="103" y="400" font-size="9" fill="#993C1D">the software E4M3 dequant ALU tax dominates.</text>
+
+<!-- divider -->
+<line x1="380" y1="70" x2="380" y2="412" stroke="#E3E1DA" stroke-width="1"/>
+
+<!-- RIGHT: the verdict cards -->
+<text x="400" y="74" font-size="12" font-weight="600" fill="#5F5E5A">The verdict — what's durable vs what's fragile</text>
+
+<!-- Capacity card -->
+<rect x="400" y="84" width="335" height="62" rx="6" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1"/>
+<text x="412" y="104" font-size="12" font-weight="600" fill="#226B40">✓ Capacity — DURABLE (2×, by construction)</text>
+<text x="412" y="121" font-size="10" fill="#2C2C2A">1 byte (E4M3) vs 2 (FP16) → 2× KV cache at fixed HBM.</text>
+<text x="412" y="136" font-size="10" fill="#5F5E5A">Arch-independent. (NVFP4 → ~3.55× vs FP16. v10.)</text>
+
+<!-- Accuracy card -->
+<rect x="400" y="154" width="335" height="62" rx="6" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1"/>
+<text x="412" y="174" font-size="12" font-weight="600" fill="#226B40">✓ Accuracy — DURABLE (~7e-4 RMSE)</text>
+<text x="412" y="191" font-size="10" fill="#2C2C2A">per-tensor E4M3 quant RMSE ~6–7e-4 vs fp16 KV;</text>
+<text x="412" y="206" font-size="10" fill="#5F5E5A">oracle ~6e-6 → kernel math exact (softmax averages keys).</text>
+
+<!-- Latency card -->
+<rect x="400" y="224" width="335" height="74" rx="6" fill="#FAECE7" stroke="#D85A30" stroke-width="1"/>
+<text x="412" y="244" font-size="12" font-weight="600" fill="#993C1D">~ Latency — FRAGILE / CONDITIONAL</text>
+<text x="412" y="261" font-size="10" fill="#2C2C2A">+1.2–1.3× ONLY when L2-resident + high occupancy;</text>
+<text x="412" y="276" font-size="10" fill="#2C2C2A">flips NEGATIVE under L2-flush (dequant tax).</text>
+<text x="412" y="291" font-size="10" fill="#5F5E5A">Not L2-BW-saturated. No HBM-floor approach.</text>
+
+<!-- tie to per-CTA -->
+<rect x="400" y="306" width="335" height="68" rx="6" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
+<text x="412" y="325" font-size="11" font-weight="600" fill="#3C3489">Why: decode is per-CTA / low-MLP bound (~28% cap)</text>
+<text x="412" y="341" font-size="10" fill="#2C2C2A">Task 1 (ncu): not bandwidth-bound → cutting bytes can't</text>
+<text x="412" y="356" font-size="10" fill="#2C2C2A">buy latency at reachable occupancy. Bytes ≠ the wall.</text>
+<text x="412" y="369" font-size="9" fill="#5F5E5A">→ FP8/NVFP4 = capacity + accuracy; latency is a B300-long-context question.</text>
+
+<text x="400" y="396" font-size="10" font-style="italic" fill="#888780">"L2-resident doesn't mean memory is free — but it isn't the decode wall either."</text>
+</svg>
