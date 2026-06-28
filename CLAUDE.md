@@ -365,7 +365,14 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (no win, NVFP4 ≤ FP8, %HBM falls to 3% → per-CTA-bound reconfirmed a 7th time on FP4, not
   bandwidth-bound). Prediction-vs-measured 4/4. Still pending: Gate 2 quiz; T4 asymmetric-recipe
   ablation; root-B300 measured core (T3 knee-hunt + sm_103 exp + FlashInfer/FlashMLA). Data of record:
-  `notebooks/v10_nvfp4_gate_output.ipynb`.** Forks v9 (`fp8_attention.cu`)
+  `notebooks/v10_nvfp4_gate_output.ipynb`.** **Asymmetric-recipe ablation Stage A (synthetic, 2026-06-29):
+  hypothesis REFUTED — on i.i.d. Gaussian KV, asymmetric K=ch/V=tok (2.98e-3) is WORSE than standard
+  block16 (2.43e-3) and no NVFP4 granularity reaches the FP8 floor (~3.5× gap). Substrate problem, not a
+  recipe defeat: per-channel-K/per-token-V need outlier STRUCTURE (KIVI/KVQuant) that Gaussian lacks →
+  block16 (finest) wins by default. → test on REAL KV (`notebooks/v10_realkv_ablation.ipynb`, GPT-2);
+  Stage B kernel deferred until real KV earns it. Clean positive: FP4-everything demo blew up RMSE 4.6–6.6×
+  (score-quant collapses softmax) → score ≥ FP16 justified (already in-kernel). Tool:
+  `fa_kernels/nvfp4_recipes.py`.** Forks v9 (`fp8_attention.cu`)
   changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
   E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
   FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host

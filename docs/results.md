@@ -1414,6 +1414,28 @@ win → **≤ FP8, %HBM→3% ✅**; model blind to the dequant tax → **FP4 tax
 The per-CTA-bound thesis holds on FP4: bytes are not the decode wall on this regime; NVFP4's value here
 is **capacity (measured) + accuracy-recovery-via-asymmetry (TODO)**, not micro-bench latency.
 
+### Asymmetric-precision ablation — Stage A (synthetic, 2026-06-29): hypothesis REFUTED on Gaussian KV
+
+Pure-PyTorch fake-quant study (`fa_kernels/nvfp4_recipes.py`, `notebooks/v10_asymmetric_ablation_output.ipynb`)
+— the K×V scale-granularity matrix on **i.i.d. unit-normal** KV, attention-output RMSE vs fp16:
+
+| recipe (d=128 G=8) | RMSE | × FP8 floor |
+|---|---|---|
+| tensor / tensor | 3.58e-3 | 5.15× |
+| **block16 / block16 (the gate recipe)** | **2.43e-3** | **3.49×** |
+| asymmetric K=channel / V=token | 2.98e-3 | 4.28× |
+| FP8 floor | 6.96e-4 | 1.00× |
+
+**The asymmetric recipe is *worse* than standard block16, and no NVFP4 cell reaches the FP8 floor**
+(best ~2.4e-3 ≈ 3.5×). **Why (the methodology point, not a defeat):** per-channel-K / per-token-V exist
+to exploit *outlier structure* (KIVI/KVQuant: real K has huge channels, real V has huge sink tokens);
+**i.i.d. Gaussian has none**, so a coarse axis-aligned scale just inflates the amax while block16
+(finest: `N_k·d/16` groups) wins. The recipe is **untestable on synthetic data** → the honest test is
+**real model KV** (`notebooks/v10_realkv_ablation.ipynb`, Stage A′). **Clean POSITIVE:** the
+FP4-everything demo blew up RMSE **4.6–6.6×** when the score P was quantized to FP4 on top of FP4 KV →
+**score ≥ FP16 justified** (already true in the kernel). So Stage B (kernel per-channel/per-token) is
+**deferred until real KV earns it.**
+
 ### Still PENDING — Gate 2 (quiz) + the paper's measured core
 
 - **Gate 2 — quiz:** not yet taken (the per-step loop gates the next step on it).

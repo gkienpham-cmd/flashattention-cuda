@@ -1013,3 +1013,14 @@ time, not bandwidth-bound).** Prediction-vs-measured 4/4. **Still pending: Gate 
 asymmetric-recipe ablation; the root-B300 measured core** (T3 knee-hunt + sm_103 exp + FlashInfer/
 FlashMLA). See [`v10-kickoff.md`](v10-kickoff.md), `results.md` Step 10, `interview-prep.md` C15,
 `notebooks/v10_nvfp4_gate_output.ipynb`.
+
+**Asymmetric-recipe ablation — Stage A (synthetic) DONE 2026-06-29: hypothesis REFUTED, but
+informatively.** On i.i.d. Gaussian KV the asymmetric K=channel/V=token recipe is *worse* than standard
+block16 (2.98e-3 vs 2.43e-3), and no NVFP4 granularity reaches the FP8 floor (~3.5× gap). **This is a
+substrate problem, not a recipe defeat:** per-channel-K / per-token-V exploit outlier *structure*
+(KIVI/KVQuant) that Gaussian noise lacks, so block16 (the finest granularity) wins by default. **Decision:
+the recipe must be tested on REAL model KV** (`notebooks/v10_realkv_ablation.ipynb` — GPT-2 capture +
+outlier diagnostic + the same matrix); **Stage B (kernel per-channel/per-token scales) is deferred until
+real KV earns it.** Clean positive: the FP4-everything demo confirmed score-quantization collapses softmax
+(4.6–6.6× RMSE blow-up) → **score ≥ FP16 justified** (already in the kernel). Tooling:
+`fa_kernels/nvfp4_recipes.py` (model-agnostic fake-quant). See `results.md` Step 10 asymmetric subsection.
