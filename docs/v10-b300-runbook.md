@@ -30,6 +30,39 @@ The **counter-free `%HBM` / `L2!` sweep still runs without ncu** (intra-run, clo
 non-privileged box still yields the headline verdict; ncu only *corroborates* it. But the paper wants
 the ncu L2-hit-rate, so hunt for a privileged host.
 
+## 0b. If you can't get a privileged container — bare-metal providers + the `nsys` fallback
+
+**Update (2026-06-29):** the B200 dev-rung already answered the T3 question **confound-free without ncu** —
+at N_k=2M the working set (1 GB) is ~8× the measured 132.6 MB L2, and %HBM stayed flat ~0.5%, so the
+"L2-resident vs HBM" question ncu would settle is **already answered by the working-set size**. So ncu is
+now **belt-and-suspenders corroboration, not a missing piece**. Two ways to still get it (or a partial):
+
+**(A) A box where you control the driver module (the real fix).** Bare-metal GPU providers give you a
+host where you set the profiling param yourself: **Crusoe, Nebius, CoreWeave, DataCrunch, Hyperstack,
+Oblivus, Lambda bare-metal** (and some vast.ai bare-metal/VM offers). On such a box, once:
+```bash
+sudo sh -c 'echo "options nvidia NVreg_RestrictProfilingToAdminUsers=0" > /etc/modprobe.d/nvidia-prof.conf'
+sudo rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null && sudo modprobe nvidia   # or reboot
+ncu --version && nvidia-smi   # confirm, then the §0 probe should now PASS
+```
+Then run the regime notebook §10 (ncu) for the sm_103 record + L2-hit-rate in one session.
+
+**(B) `nsys` — container-friendly, no permission gate (partial).** Nsight Systems does timeline/trace
+profiling via CUPTI and **works in an unprivileged container** (no `ERR_NVGPUCTRPERM`). It gives the
+**kernel-time breakdown** (corroborates the per-CTA *schedule*: the partial kernel ~100% of GPU time + a
+sliver of LSE-merge) but **NOT hardware counters** — there is no L2-hit-rate / DRAM% from `nsys`
+(`nsys --gpu-metrics-device` *does* need the same perm; only the trace is free). Install + run it from the
+notebook's **§10b cell** (added 2026-06-29), or by hand:
+```bash
+apt-get update && apt-get install -y nsight-systems      # unprivileged-OK
+nsys profile -o /tmp/v10_nsys --stats=true --trace=cuda \
+  python -m bench.regime --profile 1,1,1048576,128 --backend v10_nvfp4
+```
+
+**Bottom line:** the verdict (per-CTA-bound, no knee) is confound-free on the L2 axis *already*. Use `nsys`
+(§10b) for a free schedule corroboration on any box; do one short **bare-metal** session only if you want
+the ncu L2-hit-rate in the paper.
+
 ## 1. Hardware path (decided): B200 dev-rung → B300 record
 
 | Step | GPU | ~Cost | Purpose |
