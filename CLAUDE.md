@@ -358,8 +358,14 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (now in-repo, hand-authored — the notebook's matplotlib version was Colab-host-only) +
   `diagrams/v9-fp8-win-anatomy.svg`. Plan to paste: [`docs/v10-kickoff.md`](docs/v10-kickoff.md).
   See `results.md`/`decisions.md` Step 9 close-out, `interview-prep.md` C14.
-- **Step 10 (v10 NVFP4 KV decode, `kernels/v10_nvfp4/`)** — **KICKOFF LANDED on the author machine
-  (2026-06-29, following `docs/v10-kickoff.md`); BOTH GPU GATES PENDING.** Forks v9 (`fp8_attention.cu`)
+- **Step 10 (v10 NVFP4 KV decode, `kernels/v10_nvfp4/`)** — **Gate 1 MEASURED GREEN (Colab T4,
+  2026-06-29): correctness ✅ 146 passed; capacity MEASURED 3.56× vs FP16 / 1.78× vs FP8; accuracy =
+  the finding (standard NVFP4 ~4× more RMSE than FP8, ~2.4e-3 vs ~6e-4 — E2M1's 1-bit mantissa, NOT a
+  bug → asymmetric per-token-V/per-channel-K recipe is the recovery lever); latency prediction LANDED
+  (no win, NVFP4 ≤ FP8, %HBM falls to 3% → per-CTA-bound reconfirmed a 7th time on FP4, not
+  bandwidth-bound). Prediction-vs-measured 4/4. Still pending: Gate 2 quiz; T4 asymmetric-recipe
+  ablation; root-B300 measured core (T3 knee-hunt + sm_103 exp + FlashInfer/FlashMLA). Data of record:
+  `notebooks/v10_nvfp4_gate_output.ipynb`.** Forks v9 (`fp8_attention.cu`)
   changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
   E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
   FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host

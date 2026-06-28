@@ -1004,6 +1004,12 @@ NVFP4 KV decode; vLLM published reproducible GB300 NVFP4 decode; FA4 roofs B200 
 recipe + a confound-free per-CTA-vs-bandwidth methodology.** Frame: **complementing, not beating**
 FlashInfer/FlashMLA. The per-CTA-bound finding (v9 Task 1) is the contribution.
 
-**Status: kickoff landed on the author machine (roofline + kernel + wiring + tests + docs);** both GPU
-gates (Gate 1 T4-emulated correctness/capacity/accuracy, then Gate 2 quiz) are PENDING. See
-[`v10-kickoff.md`](v10-kickoff.md), `results.md` Step 10, `interview-prep.md` C15.
+**Status: kickoff landed + Gate 1 MEASURED GREEN (Colab T4, 2026-06-29).** Correctness ✅ 146 passed;
+**capacity MEASURED 3.56× vs FP16 / 1.78× vs FP8** (closes v9's asserted-not-measured gap); **accuracy =
+the finding — standard NVFP4 costs ~4× more RMSE than FP8** (~2.4e-3 vs ~6e-4; expected from E2M1's
+1-bit mantissa, NOT a bug → the asymmetric per-token-V/per-channel-K recipe is the lever to recover it);
+**latency prediction landed — no win, NVFP4 ≤ FP8, %HBM falls to 3% (per-CTA-bound reconfirmed a 7th
+time, not bandwidth-bound).** Prediction-vs-measured 4/4. **Still pending: Gate 2 quiz; the T4
+asymmetric-recipe ablation; the root-B300 measured core** (T3 knee-hunt + sm_103 exp + FlashInfer/
+FlashMLA). See [`v10-kickoff.md`](v10-kickoff.md), `results.md` Step 10, `interview-prep.md` C15,
+`notebooks/v10_nvfp4_gate_output.ipynb`.

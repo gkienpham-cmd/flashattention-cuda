@@ -1377,21 +1377,53 @@ grounds **and** dark on the M<64 shape grounds). NVFP4 cuts the HBM floor **~3.5
   as the working set spills the ~126 MB L2 (the knee that was *absent* on T4's 4 MB L2), decode finally
   becomes bandwidth-bound on sm_103 → NVFP4's byte cut converts. Either sign is publishable.
 
-### Gates — PENDING (author-machine kickoff landed 2026-06-29; GPU work outstanding)
+### Gate 1 — T4-emulated, MEASURED (Colab T4, 2026-06-29) — GREEN, and the prediction LANDED
 
-- **Author machine (no GPU):** roofline recorded ✅; kernel `kernels/v10_nvfp4/` + binding written ✅;
-  Python wiring (paged.py quant helpers + `nvfp4_attention`, dispatch, load, reference oracle, harness,
-  regime) ✅; tests (`test_v10_nvfp4_*`, seed-varied) ✅; syntax + CPU-import validated ✅. (torch
-  round-trip of the quantizer + correctness defer to GPU — torch isn't installed locally.)
-- **Gate 1 — T4-emulated (free Colab), PENDING:** build via JIT, `-k v10_nvfp4` correctness (oracle
-  `sdpa_reference_gqa_nvfp4` at 5e-2), **capacity** (`max_memory_allocated`, ~3.55× vs FP16 — close
-  v9's asserted-not-measured gap), **accuracy** RMSE ladder vs fp16 AND vs fp8. ⚠️ T4-emulated latency
-  is NOT valid (software FP4 unpack is *more* ALU than v9's E4M3, which already power-capped the clock).
-- **Deferred — root B300 (~$5/hr), the paper's measured core:** the T3 past-L2 knee-hunt (carry
-  `bench/regime.py`, sweep N_k to 256K–1M past the ~126 MB L2, clock-locked + ncu), the sm_103 2×-exp
-  ablation, FlashInfer/FlashMLA comparators. Then the asymmetric granularity ablation (per-token V,
-  per-channel K) + the FP4-everything softmax-collapse figure.
+Data of record: `notebooks/v10_nvfp4_gate_output.ipynb`. Build clean (E4M3 micro-scale compiled on
+sm_75 — **no int8 fallback needed**). **Correctness ✅ 146 passed** (`-k "v10_nvfp4 or v9_fp8 or
+v8_gqa_ss"`, 316 deselected); apples-to-apples oracle RMSE **~7e-6** (the kernel reproduces the
+dequantized NVFP4 bytes near-exactly — the fork is correct, everything else is the quantizer's job).
 
-See `decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`.
+**Capacity (T1, the durable headline) — MEASURED, exactly as predicted.** KV-pool footprint for
+[1,8,65536,128]: FP16 **268.44 MB** → FP8 **134.22 MB (2.00×)** → NVFP4 **75.50 MB (3.56× vs FP16,
+1.78× vs FP8)**, i.e. **0.5625 B/elem** (the notebook's "1.125 B/elem" is the K+V-combined label; the
+*ratios* are the headline and they're dead-on). Closes v9's "asserted-2×-but-never-measured" gap.
+
+**Accuracy — the important finding: standard NVFP4 costs ~4× more error than FP8.** Quantization RMSE
+vs the original fp16 KV is **~2.1–2.7e-3** across every shape/seed (d∈{64,128}, G∈{1,8}, seed∈{9,17}),
+vs FP8's **~6–7e-4** — a consistent **~3.5–4× penalty**, so the `verdict` reads `FP8 floor?` everywhere.
+**Expected, not a bug:** E2M1 has a 1-bit mantissa vs E4M3's 3 bits; the per-16 micro-scale can't fully
+recover 2 lost mantissa bits. The honest result: *"FP8 is the accuracy floor; standard NVFP4 buys 1.78×
+more capacity at a measured ~4× RMSE cost."* **Caveat (the open lever):** this is *standard* NVFP4
+(per-tensor + per-16) on *unit-normal synthetic* KV — the **asymmetric recipe (per-token V, per-channel
+K)** is exactly the lever meant to recover this, and real KV has outlier channels where per-channel K
+scaling helps far more than on i.i.d. Gaussian data. So 2.4e-3 is the accuracy *floor*, not the verdict.
+
+**Latency / %HBM — the prediction LANDED: no latency win, per-CTA-bound reconfirmed (a 7th time).**
+Clock-matched within-process `vs naive` (NVFP4 ÷ v8.7-FP16) ≈ **1.1–1.35×, and NVFP4 does NOT beat
+FP8** despite halving the bytes again (d128 G8: FP8 1.27× vs NVFP4 1.14×) — the extra FP4-unpack ALU
+offsets the extra byte cut. The tell: **%HBM *falls* monotonically** FP16→FP8→NVFP4 (d128 G8: 10.4% →
+6.3% → **3.0%**), i.e. the kernel is **not bandwidth-bound** — cutting bytes shrinks the numerator
+without speeding anything up. ⚠️ Absolute µs/tok is clock-confounded (v9/v10 throttled to 585 MHz,
+v8.7 ran 1365 standalone) AND invalid on the emulated path; the *shape* (no win, %HBM drops) is robust
+because `vs naive` runs its FP16 baseline in the same process at the same clock.
+
+**Prediction-vs-measured (the per-step deliverable) — 4/4 landed:** capacity 3.55× → **3.56× ✅**;
+accuracy = the headline → **~2.4e-3, ~4× worse than FP8 ✅ (a cost, not a win)**; no L2-resident latency
+win → **≤ FP8, %HBM→3% ✅**; model blind to the dequant tax → **FP4 tax > FP8 tax, so FP4 ≤ FP8 ✅**.
+The per-CTA-bound thesis holds on FP4: bytes are not the decode wall on this regime; NVFP4's value here
+is **capacity (measured) + accuracy-recovery-via-asymmetry (TODO)**, not micro-bench latency.
+
+### Still PENDING — Gate 2 (quiz) + the paper's measured core
+
+- **Gate 2 — quiz:** not yet taken (the per-step loop gates the next step on it).
+- **T4, no rental — the asymmetric-precision ablation** (per-token V, per-channel K vs the standard
+  per-tensor+per-16) to recover the ~4× accuracy gap, + the FP4-everything softmax-collapse figure.
+- **Root B300 (~$5/hr), the paper's measured core:** the T3 past-L2 knee-hunt (carry `bench/regime.py`,
+  sweep N_k to 256K–1M past the ~126 MB L2, clock-locked + ncu), the sm_103 2×-exp ablation,
+  FlashInfer/FlashMLA comparators. (T4-emulated latency is NOT valid — confirmed by the 585 MHz throttle.)
+
+See `decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`,
+`notebooks/v10_nvfp4_gate_output.ipynb`.
 
 ---
