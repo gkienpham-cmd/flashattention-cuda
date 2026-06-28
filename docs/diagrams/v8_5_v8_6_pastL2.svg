@@ -1,0 +1,76 @@
+<svg width="100%" viewBox="0 0 820 450" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v8.5/v8.6 past-L2 re-test: latency-hiding is dead at B=1 (only the score-stationary relayout helps), but occupancy revives ~1.4x at large batch</title>
+<desc>Clock-robust speedup vs the Cut-1 CUDA-core M-packing baseline (time(Cut-1)/time(arm)), root-ish Colab T4, L2-flushed. LEFT: B=1 sweep at H_kv=1 d=128, N_k 1K to 128K. The score-stationary relayout (ss, v8.7) holds ~1.45x across the whole sweep including deep past the 4 MB L2 crossing; double-buffer (db, v8.5), occupancy (occ, v8.6) and ILP (ilp, v8.6) all sit flat at ~1.0 past L2 -- confirmed dead ends, the v8.5/v8.6 nulls were NOT L2-resident artifacts. RIGHT: batch sweep at N_k=32768 (past L2), H_kv=1. db and ilp stay ~1.0 at every batch, but the occupancy arm JUMPS to 1.47x at B=32 and 1.38x at B=64 -- occupancy is a live lever in the large-batch serving regime that the B=1-only v8.6 measurement missed. So the residual is the serial online-softmax recurrence at B=1 (only the relayout removes it), and partly occupancy at large batch.</desc>
+<rect x="0" y="0" width="820" height="450" fill="#ffffff"/>
+<text x="28" y="26" font-size="15" font-weight="600" fill="#2C2C2A">v8.5/v8.6 past-L2 re-test — latency-hiding is dead at B=1; occupancy revives at large batch</text>
+<text x="28" y="44" font-size="11" fill="#888780">clock-robust speedup vs Cut-1 = time(Cut-1)/time(arm), L2-flushed, Colab T4. Only ss (relayout) wins at B=1; occ (v8.6) returns at B≥32.</text>
+
+<!-- ===================== LEFT PANEL: B=1 N_k sweep ===================== -->
+<text x="48" y="72" font-size="12" font-weight="600" fill="#5F5E5A">B=1 sweep (H_kv=1, d=128) — dead ends confirmed PAST L2</text>
+<rect x="70" y="80" width="310" height="300" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+<!-- y grid 0.7..1.9: 1.0(295) 1.4(195) 1.9(70). draw 0.8,1.0(break-even),1.2,1.4,1.6 -->
+<line x1="70" y1="320" x2="380" y2="320" stroke="#EFEEE9" stroke-width="1"/><text x="65" y="323" font-size="8" fill="#888780" text-anchor="end">0.8</text>
+<line x1="70" y1="295" x2="380" y2="295" stroke="#C9322B" stroke-width="1" stroke-dasharray="3 3"/><text x="65" y="298" font-size="8" fill="#C9322B" text-anchor="end">1.0</text>
+<line x1="70" y1="245" x2="380" y2="245" stroke="#EFEEE9" stroke-width="1"/><text x="65" y="248" font-size="8" fill="#888780" text-anchor="end">1.2</text>
+<line x1="70" y1="195" x2="380" y2="195" stroke="#EFEEE9" stroke-width="1"/><text x="65" y="198" font-size="8" fill="#888780" text-anchor="end">1.4</text>
+<line x1="70" y1="145" x2="380" y2="145" stroke="#EFEEE9" stroke-width="1"/><text x="65" y="148" font-size="8" fill="#888780" text-anchor="end">1.6</text>
+<text x="36" y="230" font-size="10" fill="#5F5E5A" text-anchor="middle" transform="rotate(-90 36 230)">speedup vs Cut-1</text>
+<!-- L2 crossing at N_k~7812 -> x~200 -->
+<line x1="200" y1="80" x2="200" y2="380" stroke="#2C2C2A" stroke-width="1" stroke-dasharray="4 3" opacity="0.55"/>
+<text x="204" y="94" font-size="8" fill="#2C2C2A">L2 crossing (4 MB)</text>
+<text x="204" y="105" font-size="8" fill="#993C1D">→ flat across it</text>
+<!-- x ticks N_k 1K..128K at x 70..380 -->
+<g font-size="8" fill="#888780" text-anchor="middle">
+<text x="70" y="394">1K</text><text x="114" y="394">2K</text><text x="159" y="394">4K</text><text x="203" y="394">8K</text><text x="247" y="394">16K</text><text x="291" y="394">32K</text><text x="336" y="394">64K</text><text x="380" y="394">128K</text></g>
+<text x="225" y="410" font-size="10" fill="#5F5E5A" text-anchor="middle">N_k (log) →   (everything right of the dotted line is past L2)</text>
+<!-- ss line: 1.44,1.45,1.44,1.39,1.45,1.46,1.49,1.46 -> y -->
+<polyline points="70,180 114,178 159,180 203,192 247,178 291,177 336,170 380,177" fill="none" stroke="#226B40" stroke-width="2.4"/>
+<g fill="#226B40"><circle cx="70" cy="180" r="2.4"/><circle cx="203" cy="192" r="2.4"/><circle cx="380" cy="177" r="2.4"/></g>
+<text x="376" y="166" font-size="9" fill="#226B40" text-anchor="end">ss ≈ 1.45</text>
+<!-- db: 1.00,0.99,1.00,1.01,1.01,1.01,1.00,0.99 ~ y295 -->
+<polyline points="70,295 114,296 159,295 203,294 247,294 291,294 336,295 380,296" fill="none" stroke="#185FA5" stroke-width="1.8"/>
+<!-- occ: 1.00,0.98,0.98,1.01,0.94,1.01,1.00,1.00 -->
+<polyline points="70,295 114,298 159,298 203,294 247,303 291,294 336,295 380,295" fill="none" stroke="#D8862F" stroke-width="1.8"/>
+<!-- ilp: 0.81,0.99,0.99,1.01,1.01,1.00,1.00,0.99 (0.81 dip at 1K) -->
+<polyline points="70,318 114,296 159,296 203,294 247,294 291,295 336,295 380,296" fill="none" stroke="#993C1D" stroke-width="1.8"/>
+<text x="376" y="290" font-size="9" fill="#5F5E5A" text-anchor="end">db / occ / ilp ≈ 1.0</text>
+
+<!-- ===================== RIGHT PANEL: batch sweep ===================== -->
+<text x="450" y="72" font-size="12" font-weight="600" fill="#5F5E5A">batch sweep (N_k=32768, past L2) — occupancy REVIVES</text>
+<rect x="470" y="80" width="300" height="300" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+<line x1="470" y1="320" x2="770" y2="320" stroke="#EFEEE9" stroke-width="1"/><text x="465" y="323" font-size="8" fill="#888780" text-anchor="end">0.8</text>
+<line x1="470" y1="295" x2="770" y2="295" stroke="#C9322B" stroke-width="1" stroke-dasharray="3 3"/><text x="465" y="298" font-size="8" fill="#C9322B" text-anchor="end">1.0</text>
+<line x1="470" y1="245" x2="770" y2="245" stroke="#EFEEE9" stroke-width="1"/><text x="465" y="248" font-size="8" fill="#888780" text-anchor="end">1.2</text>
+<line x1="470" y1="195" x2="770" y2="195" stroke="#EFEEE9" stroke-width="1"/><text x="465" y="198" font-size="8" fill="#888780" text-anchor="end">1.4</text>
+<line x1="470" y1="145" x2="770" y2="145" stroke="#EFEEE9" stroke-width="1"/><text x="465" y="148" font-size="8" fill="#888780" text-anchor="end">1.6</text>
+<line x1="470" y1="95" x2="770" y2="95" stroke="#EFEEE9" stroke-width="1"/><text x="465" y="98" font-size="8" fill="#888780" text-anchor="end">1.8</text>
+<!-- x: B=1,8,32,64 at 470,570,670,770 -->
+<g font-size="9" fill="#888780" text-anchor="middle"><text x="470" y="394">B=1</text><text x="570" y="394">B=8</text><text x="670" y="394">B=32</text><text x="770" y="394">B=64</text></g>
+<text x="620" y="410" font-size="10" fill="#5F5E5A" text-anchor="middle">batch B (BH = B, H_kv=1) →</text>
+<!-- occ: 0.98,1.00,1.47,1.38 -> y 300,295,177.5,200 -->
+<polyline points="470,300 570,295 670,178 770,200" fill="none" stroke="#D8862F" stroke-width="2.6"/>
+<g fill="#D8862F"><circle cx="470" cy="300" r="3"/><circle cx="570" cy="295" r="3"/><circle cx="670" cy="178" r="3.4"/><circle cx="770" cy="200" r="3"/></g>
+<text x="670" y="170" font-size="10" font-weight="600" fill="#B5701E" text-anchor="middle">occ 1.47×</text>
+<!-- ss: 1.43,1.30,1.84,1.37 -> y 188,220,85,203 -->
+<polyline points="470,188 570,220 670,85 770,203" fill="none" stroke="#226B40" stroke-width="2" stroke-dasharray="5 2"/>
+<g fill="#226B40"><circle cx="470" cy="188" r="2.4"/><circle cx="670" cy="85" r="2.4"/><circle cx="770" cy="203" r="2.4"/></g>
+<text x="688" y="84" font-size="8" fill="#226B40">ss (spiky)</text>
+<!-- db: 0.98,0.99,0.99,0.99 ~295 ; ilp 0.99,1.03,0.98,0.98 -->
+<polyline points="470,300 570,298 670,298 770,298" fill="none" stroke="#185FA5" stroke-width="1.8"/>
+<polyline points="470,298 570,288 670,300 770,300" fill="none" stroke="#993C1D" stroke-width="1.8"/>
+<text x="560" y="313" font-size="9" fill="#5F5E5A">db / ilp stay ≈ 1.0</text>
+<!-- callout -->
+<rect x="486" y="110" width="186" height="40" rx="4" fill="#FBF1E5" stroke="#D8862F" stroke-width="0.8"/>
+<text x="494" y="125" font-size="9" fill="#945B16">occ = 4 blocks/SM (vs Cut-1's 2):</text>
+<text x="494" y="137" font-size="9" fill="#945B16">no help until the grid fills it →</text>
+<text x="494" y="147" font-size="9" fill="#945B16">a live lever only at B≥32 past L2.</text>
+
+<!-- legend -->
+<g font-size="10">
+<rect x="150" y="430" width="16" height="3" fill="#226B40"/><text x="170" y="434" fill="#5F5E5A">ss (v8.7 relayout)</text>
+<rect x="290" y="430" width="16" height="3" fill="#185FA5"/><text x="310" y="434" fill="#5F5E5A">db (v8.5)</text>
+<rect x="385" y="430" width="16" height="3" fill="#D8862F"/><text x="405" y="434" fill="#5F5E5A">occ (v8.6)</text>
+<rect x="485" y="430" width="16" height="3" fill="#993C1D"/><text x="505" y="434" fill="#5F5E5A">ilp (v8.6)</text>
+<line x1="585" y1="431" x2="601" y2="431" stroke="#C9322B" stroke-width="1" stroke-dasharray="3 2"/><text x="605" y="434" fill="#5F5E5A">Cut-1 = 1.0 (baseline)</text>
+</g>
+</svg>

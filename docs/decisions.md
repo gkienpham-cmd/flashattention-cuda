@@ -860,9 +860,15 @@ kernel that isn't bytes-bound doesn't care where the bytes live.
 - **The counter-free %HBM method is validated** against ncu DRAM% (13.8% vs 12.85% at the same shape) — so
   every prior counter-free decode reading is retroactively trustworthy *as a throughput proxy*; what was
   missing was the L2-vs-HBM discriminator, which only ncu (or the now-known one-sided `L2!` test) provides.
-- **Reopener (not acted on):** v8.5 double-buffer + v8.6 occupancy/ILP nulls were measured at L2-resident
-  sizes; past L2 there is real 29%→70% headroom where latency-hiding could bite, so those nulls may be L2
-  artifacts. Logged for a future revisit, not a v10 blocker.
+- **Reopener — RESOLVED (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test):** re-ran v8.5 (double-buffer)
+  + v8.6 (occ/ILP) through `bench.regime` **past L2** (clock-robust speedup-vs-Cut-1). **db & ILP are dead even
+  at N_k=131072** (the L2-artifact hypothesis is REFUTED — the floor is the serial recurrence, only the v8.7
+  *relayout* removes it; "decode-schedule CLOSED" is confirmed confound-free at B=1). **One amendment:** the
+  **occupancy arm (`occ`) revives to ~1.4× at B≥32 past L2** (4 blocks/SM only pays once the grid fills it —
+  invisible at the B=1 micro-bench every prior measurement used). So occupancy is a **live serving-regime lever**
+  the B=1-only v8.6 run missed → **candidate v8.8 (confirm + ship), or fold the 4-blocks/SM residency into v10's
+  kernel.** ncu bonus (this run had counters): db moves byte-identical traffic to Cut-1 (DRAM ~7.6%, L2-hit ~1%)
+  → confirms it does nothing. Not a v10 blocker; v10 NVFP4 (capacity+accuracy) proceeds.
 
 **What changes on another arch:** the per-CTA cap is a *schedule* limit (1 active warp at N_q=1), so it's
 arch-independent in shape; bigger-L2 archs (A100 40 MB … B300 192 MB) just push the L2-spill N_k far higher,

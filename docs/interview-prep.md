@@ -1009,3 +1009,16 @@ latency-bound, capped ~28%' once I noticed my batch sweep *declines* past B=8 �
 not occupancy. The payoff is for the B300 paper: if decode is per-CTA-bound, FP4 is a capacity-plus-accuracy
 recipe, not a bandwidth play — the opposite of what most FP4-KV work assumes, and that honest finding is the
 contribution."
+
+**Closing the loop (2026-06-29 — the one experiment C14 flagged).** I'd flagged "re-test v8.5/v8.6 past L2"
+as the cheap way to settle whether the residual is latency or occupancy. I ran it (clock-robust
+speedup-vs-Cut-1, L2-flushed; the runtime even locked clocks + ran ncu — though it still power-capped under
+load, which is *why* I trust the back-to-back ratio not the absolute %HBM). **Double-buffer and ILP are dead
+even at N_k=131072** — so the B=1 floor really is the serial recurrence, only the relayout removes it, and the
+"nulls were an L2 artifact" worry is refuted. **But the surprise that makes it a good story:** the occupancy
+arm was dead at B=1 yet **revives to ~1.4× at B≥32 past L2** — because its 4-blocks/SM residency only pays once
+the grid fills it, and every prior measurement (v8.6, v9, Task 1) lived at B=1. So I'd been calling occupancy a
+"dead end" on the strength of a regime that structurally couldn't show it. **Say-this:** "I re-tested my own
+dead ends past L2. Double-buffer and ILP stayed dead — good, my 'CLOSED' was right at batch=1. But occupancy
+came back to ~1.4× at batch ≥32, because its extra residency needs a full grid to matter and I'd only ever
+measured batch=1. The lesson I keep relearning: a null is only as broad as the regime you measured it in."

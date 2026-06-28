@@ -345,8 +345,9 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   d=128, the clean monotone case); (4) "decode-schedule CLOSED" → **"CLOSED for the L2-resident regime"**;
   (5) median is **1.205** (G-sweep) not 1.3, capacity 2× is **by construction** (unmeasured), accuracy is
   single-seed, and there is **no trustworthy v9-vs-SDPA number** (the gate's `vs sdpa` is the pre-fix
-  inflated oracle). **Highest-value cheap follow-up (one notebook, settles 1+2+4):** re-run **v8.5/v8.6
-  past L2** (N_k≥32K, locked) — Task 1 shows 29%→70% headroom where latency-hiding could finally bite.
+  inflated oracle). **Highest-value cheap follow-up — DONE 2026-06-29 (past-L2 re-test, below):** db/ILP dead
+  even at N_k=131072 → reopener RESOLVED, "CLOSED" confound-free at B=1; **surprise = occupancy revives ~1.4×
+  at B≥32 past L2** (a live serving-regime lever, candidate v8.8).
   **v10 course-corrections (data/research-driven):** NVFP4 reframed to **capacity + accuracy + the sm_103
   2×-exp softmax delta**, bandwidth-latency **conditional** on a B300 long-context regime to be *measured*;
   ⚠️ Blackwell `tcgen05` gate is **M≥64** (M=128=100%) **not M≥16** → native FP4 *compute* slips to **v11**
@@ -366,18 +367,24 @@ v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV
 FP4 compute (B300)**. **v10 plan to paste into a fresh session: [`docs/v10-kickoff.md`](docs/v10-kickoff.md)**
 (supersedes the now-complete `v9-kickoff.md`).
 
-**Immediate cheap experiment before v10 (from the v9 close-out — one T4 notebook, settles three open
-threads):** re-run **v8.5 (double-buffer) + v8.6 (occupancy/ILP) through `bench/regime.py` PAST L2**
-(N_k≥32K, clocks locked, L2-flushed). Their nulls were measured only at L2-resident sizes; Task 1 shows
-real 29%→70% headroom past L2 where latency-hiding could finally bite. If double-buffer lifts %HBM there,
-"decode-schedule CLOSED" reopens and the residual limiter is *latency* (not occupancy) — which retargets
-the next schedule lever. Run it, record it, then start v10 (or fold it into v10's opening cell).
+**Cheap pre-v10 experiment — DONE (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test; figure
+`diagrams/v8_5_v8_6_pastL2.svg`; data `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`).** Re-ran v8.5
+(double-buffer) + v8.6 (occ/ILP) past L2 (clock-robust speedup-vs-Cut-1, L2-flushed; this Colab even locked
+clocks + ran ncu — 2nd ncu-validated run). **Result: db & ILP dead even at N_k=131072 → the v8.5/v8.6 nulls
+were NOT L2 artifacts; the B=1 floor is the serial recurrence (only the v8.7 relayout removes it). The
+v9-close-out reopener is RESOLVED — "CLOSED" is confound-free at B=1.** **Surprise (the one update): the
+occupancy arm `occ` REVIVES to ~1.4× at B≥32 past L2** (4 blocks/SM only pays once the grid fills it —
+invisible at B=1) → occupancy is a **live serving-regime lever** the B=1-only v8.6 missed → candidate v8.8
+(confirm + ship) OR fold the 4-blocks/SM residency into v10's kernel. ncu confirms db moves byte-identical
+traffic to Cut-1 (DRAM ~7.6%, L2-hit ~1%). v10 NVFP4 (capacity+accuracy) unaffected.
 
-**Decode-SCHEDULE chapter CLOSED (2026-06-28, Steps 8/8.6/8.7 all DONE).** The two real decode levers are
-**M-packing (Cut 1, per-CTA/occupancy)** + **score-stationary (v8.7, inner-loop)** — together they beat
-SDPA 8–16× and v7-no-packing many×, on CUDA cores. Measured dead ends: tensor cores (Cut 2), double-buffer
-(v8.5), occupancy & key-ILP (v8.6) — the decode floor was a serial dependency chain you relayout, not a knob
-you tune.
+**Decode-SCHEDULE chapter CLOSED (2026-06-28, Steps 8/8.6/8.7 all DONE; amended 2026-06-29).** The two real
+decode levers are **M-packing (Cut 1, per-CTA/occupancy)** + **score-stationary (v8.7, inner-loop)** — together
+they beat SDPA 8–16× and v7-no-packing many×, on CUDA cores. Measured dead ends: tensor cores (Cut 2),
+double-buffer (v8.5), key-ILP (v8.6) — the B=1 decode floor was a serial dependency chain you relayout, not a
+knob you tune. **Amendment (past-L2 re-test):** occupancy (v8.6 `occ`) is NOT a dead end — it was null only at
+B=1; at **B≥32 past L2 it's a real ~1.4× lever** (the serving regime). So the chapter is closed for B=1; the
+one live remaining schedule lever is occupancy-at-large-batch.
 
 **✅ The limiter diagnosis is now RESOLVED, confound-free (v9 Task 1, 2026-06-28).** The "per-CTA-bound,
 NOT bandwidth-bound" verdict (recurring + hedged since **v6**) was confounded because the bench KV fit in

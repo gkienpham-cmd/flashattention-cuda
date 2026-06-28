@@ -195,18 +195,20 @@ confound-free per-CTA-vs-bandwidth methodology.*** FA4 is confirmed BF16-prefill
 pieces only in in-progress repo PRs (CLAUDE.md framing is accurate). **Frame: "complementing, not beating"
 FlashInfer/FlashMLA, timestamped "as of June 2026."** The per-CTA-bound finding is the contribution.
 
-## 8. Before v10 — the cheap experiment the v9 close-out demands (do this first)
-The adversarial pass found the highest-value follow-up is **NOT v10** — it's a one-notebook re-test that
-settles three open threads at once (is the residual limiter latency or occupancy? is "decode-schedule
-CLOSED" premature? does FP8 flip negative because of flush or occupancy?):
-> **Re-run v8.5 (double-buffer) and v8.6 (occupancy/ILP) through `bench/regime.py` PAST L2** (N_k≥32K,
-> clocks locked, L2-flushed). They were measured NULL only at **L2-resident sizes** — the exact confound
-> Task 1 exists to kill. Task 1 shows real 29%→70% headroom past L2 where latency-hiding could finally
-> bite. If double-buffer lifts %HBM past L2, "decode-schedule CLOSED" reopens and the limiter is *latency*
-> (→ deeper pipelining / persistent kernel), not pure occupancy. The kernels already exist; it's one
-> notebook (`notebooks/v8_5_v8_6_pastL2_regime.ipynb`).
-This is a T4 job (no rental beyond the root T4 already used for Task 1). Run it, record the result, *then*
-start v10 — or fold it into v10's opening as the limiter-confirmation cell.
+## 8. Before v10 — the cheap experiment the v9 close-out demanded → DONE (2026-06-29)
+The pre-v10 re-test is **complete** (`notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`, fig
+`diagrams/v8_5_v8_6_pastL2.svg`; `results.md` Step 8.5/8.6). Past-L2, clock-robust speedup-vs-Cut-1:
+> **db (v8.5) and ILP (v8.6) are dead even at N_k=131072** → the nulls were NOT L2-resident artifacts; the
+> B=1 floor is the serial recurrence (only the v8.7 *relayout* removes it). "decode-schedule CLOSED" is
+> **confound-free at B=1.** **The surprise:** the **occupancy arm (`occ`) revives to ~1.4× at B≥32 past L2**
+> (4 blocks/SM only pays once the grid fills it). ncu (this run had counters) confirms db moves
+> byte-identical traffic to Cut-1. So the residual is *not* pipelineable load latency (db dead) — at B=1
+> it's the recurrence, at large batch it's partly occupancy.
+
+**What this means for v10:** (a) the byte/precision arc is unblocked — bytes were never the wall, confirmed;
+(b) **fold the occ `4-blocks/SM` residency into v10's kernel** for the serving regime (or ship a quick v8.8
+to confirm the ~1.4× on a dedicated batch×N_k sweep first — it's 2 points today); (c) v9 FP8's
+"flips-negative-under-flush" is explained (dequant ALU tax, not hideable load latency).
 
 ## 9. Traps (carried from v8/v9 + new)
 - Causal mask uses **`i_q`** not `m_row`. GQA oracle uses **`repeat_interleave(G)`** not `repeat`.

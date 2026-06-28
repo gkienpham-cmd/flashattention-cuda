@@ -22,6 +22,12 @@ background) — open in a browser, macOS Preview/Quick Look, or VS Code and it r
 | `v9-task1-regime.svg` | **The bandwidth verdict, EARNED (per-CTA-bound).** Achieved %HBM vs N_k (log-x, **L2-flushed, clocks LOCKED 1590 MHz, root T4**, d=128). `v8_gqa_ss` FP16 plateaus at a hard **~28% cap at high occupancy (H_kv=8)** and ~14% at low occupancy (H_kv=1) — **no bandwidth knee at the 4 MB L2 crossing**, never near the ~70% achievable ceiling; `v9_fp8` sits ~10% (fewer bytes over a per-CTA-bound time). The ncu callout (DRAM 12.85% / L2-hit 1.1% past L2, matching the counter-free 13.8%) settles it: **HBM-served yet 13% busy → per-CTA / low-MLP bound, not bandwidth-bound.** (The notebook's matplotlib `savefig` ran on the Colab host and was never committed; this is the committed hand-authored version of the same data.) |
 | `v9-fp8-win-anatomy.svg` | **The FP8 win, anatomized honestly.** Left: the clock-matched `vs naive` (FP8÷FP16) speedup at d=128 is real but shrinks monotonically 1.52×(G1)→1.05×(G32), the mechanism entangled (↑G ⟺ ↓H_kv ⟺ ↓working set) and **not L2-BW-saturated** (ncu L2 thrpt <3%) → a bytes-sensitive load-*latency* effect that **flips negative under L2-flush** (the sm_75 dequant ALU tax). Right: the verdict cards — **capacity (2×, by construction) and accuracy (~7e-4 RMSE) are DURABLE; latency is FRAGILE/CONDITIONAL** because decode is per-CTA-bound (~28% cap). FP8/NVFP4 = capacity + accuracy, not a decode-latency play. |
 
+**v8.5/v8.6 past-L2 re-test figure (2026-06-29 — hand-authored from `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`):**
+
+| File | What it shows |
+|---|---|
+| `v8_5_v8_6_pastL2.svg` | **The reopener, resolved + the one surprise.** Clock-robust speedup vs Cut-1 (`time(Cut-1)/time(arm)`, L2-flushed). LEFT (B=1, H_kv=1 N_k sweep): `ss` (v8.7 relayout) holds ~1.45× across the whole sweep incl. deep past the 4 MB L2 crossing, while `db` (v8.5), `occ` (v8.6) and `ilp` (v8.6) sit **flat at ~1.0 past L2** → the v8.5/v8.6 nulls were **not** L2 artifacts; the B=1 floor is the serial recurrence. RIGHT (batch sweep, N_k=32768 past L2): `db`/`ilp` stay ~1.0 but the **occupancy arm jumps to 1.47× at B=32 / 1.38× at B=64** — occupancy revives as a live serving-regime lever the B=1-only v8.6 measurement missed (4 blocks/SM only pays once the grid fills it). |
+
 **v7 deep-research close-out figures (2026-06-27 — accompany [`../v7-deep-research.md`](../v7-deep-research.md)):**
 
 | File | What it shows |

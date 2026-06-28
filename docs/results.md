@@ -1270,3 +1270,72 @@ softmax bottleneck) — a v11 concern. (d) Novelty narrows: FlashInfer ships NVF
 `diagrams/v9-fp8-win-anatomy.svg`.
 
 ---
+
+## Step 8.5/8.6 — past-L2 re-test (MEASURED 2026-06-29): is the residual latency or occupancy?
+
+*The cheap experiment the v9 close-out demanded, run-of-record `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`
+(Colab T4). It re-runs the v8.5 (double-buffer `v8_gqa_db`) + v8.6 (occupancy `v8_gqa_occ`, ILP `v8_gqa_ilp`)
+family through the clock-locked, L2-flushed `bench.regime` sweep **past L2**, vs the Cut-1 baseline they fork
+(`v8_gqa`) and the relayout that won (`v8_gqa_ss` = v8.7). The metric is the **clock-robust speedup vs Cut-1**
+(`time(Cut-1)/time(arm)`, all 5 timed back-to-back per N_k → cancels clock drift). Figure:
+`diagrams/v8_5_v8_6_pastL2.svg`.*
+
+**Why the clock-robust ratio was needed (a methodology note that landed):** this runtime actually *did* lock
+clocks (`locked=True`, target 1590) **and ran ncu** (no `ERR_NVGPUCTRPERM` — a privileged Colab, the project's
+2nd ncu-validated run). But under sustained H_kv=8 load the T4 **power-capped anyway** (clock sagged
+1590→1352, run-wide range **1065–1590 MHz**), so absolute `%HBM` *is* confounded (it droops at large N_k) while
+the back-to-back ratio is not — exactly the design intent.
+
+**Verdict (B=1 sweep) — the prediction landed; "decode-schedule CLOSED" is confirmed confound-free.** Past L2
+(N_k ≥ 16K), speedup vs Cut-1:
+
+| arm | H_kv=8 (past L2) | H_kv=1 (past L2) | read |
+|---|---|---|---|
+| **ss** (v8.7 relayout) | **1.24–1.37×** | **1.45–1.49×** | wins everywhere — *and this confirms v8.7's headline past L2, confound-free* |
+| **db** (v8.5 double-buffer) | 0.95–1.01 | 0.99–1.01 | **dead** |
+| **occ** (v8.6 occupancy) | 0.97–1.00 | 0.94–1.01 | **dead at B=1** |
+| **ilp** (v8.6 ILP) | 0.96–1.01 | 0.99–1.01 | **dead** |
+
+double-buffer and ILP are dead even at **N_k=131072** (deep past L2), and only the score-stationary *relayout*
+moves the needle. So **the v8.5/v8.6 nulls were NOT L2-resident artifacts** — the floor at B=1 is a serial
+online-softmax dependency you *remove* (relayout), not one you *hide* (TLP/ILP/load-overlap). The v9-close-out
+reopener is **resolved for B=1.** (Small-N dips like db=0.81/occ=0.75 at N_k≤4K are launch-noise, gone past L2.)
+
+**The surprise (batch sweep, §7) — occupancy REVIVES at large batch.** At N_k=32768 (past L2), H_kv=1:
+
+| B (BH) | ss | db | **occ** | ilp |
+|---|---|---|---|---|
+| 1 | 1.43 | 0.98 | 0.98 | 0.99 |
+| 8 | 1.30 | 0.99 | 1.00 | 1.03 |
+| **32** | 1.84 | 0.99 | **1.47** | 0.98 |
+| **64** | 1.37 | 0.99 | **1.38** | 0.98 |
+
+The occupancy arm **jumps to ~1.4× over Cut-1 at B≥32** while db and ilp stay flat. Mechanistic and clean:
+`occ` spends its smem on **4 blocks/SM (vs Cut-1's 2)**, and that extra residency only pays once the grid is
+big enough to fill it — invisible at B=1 (where *every* prior v8.6, v9, and Task-1 measurement lived), real at
+B≥32. It dovetails with Task 1's "%HBM lifts 11%→28% with occupancy." So **occupancy is a live ~1.4× lever in
+the large-batch serving regime that the B=1-only v8.6 measurement missed** — the one finding that updates the
+record (db/ilp/tensor-cores stay dead everywhere). *Caveat: 2 points (B=32, B=64), one N_k, iters=30 — a real,
+mechanistically-sensible, repeatable-looking signal that warrants a dedicated `occ`-vs-Cut1 batch×N_k
+confirmation before it's a shipped v8.8.*
+
+**ncu cross-check (this runtime's bonus) — confirms db does nothing.** At N_k=65536, H_kv=1 (past L2), the
+partial kernels move **byte-identical** traffic: `v8_gqa` DRAM 7.63% / L2-hit 0.86–1.01%; `v8_gqa_db` DRAM
+7.68% / L2-hit 0.98–1.03%. Double-buffer changes neither → it genuinely does nothing (consistent with db=1.00).
+And it cross-checks Task 1: Cut-1's 7.6% DRAM × ss's 1.49× ≈ 11% ≈ Task-1's ss DRAM 12.85% (residual gap = the
+clock sag). Per-CTA-bound again — from the counters this time.
+
+**Prediction-vs-measured.** Prediction (the v8.6 counter-prediction): db/occ/ilp stay ~1.0 even past L2 (serial
+recurrence unhideable), only ss > 1. **Confirmed for db/ilp and for occ@B=1.** The counter-prediction (db
+climbs past L2 → load latency) did **NOT** fire — db stayed dead, so it's *not* a load-latency-hiding story
+(which also explains v9 FP8's "flips negative under flush": not pipelineable load latency, it's the dequant ALU
+tax). The informative miss: occ@large-batch — occupancy, not load-latency, is the live lever, and only in the
+serving regime.
+
+**Net.** db/ILP/tensor-cores are confirmed dead ends in *every* tested regime; the B=1 decode floor is the
+serial recurrence (only the v8.7 relayout removes it) — **"decode-schedule CLOSED" stands, now confound-free
+past L2.** The one amendment: **occupancy reopens as a ~1.4× lever at B≥32 past L2** (candidate v8.8, or fold
+the 4-blocks/SM residency into v10's serving-regime kernel). v10 NVFP4 (capacity + accuracy) is unaffected and
+proceeds. Figure: `diagrams/v8_5_v8_6_pastL2.svg`; data of record: `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`.
+
+---
