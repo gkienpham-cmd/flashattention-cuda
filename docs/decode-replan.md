@@ -341,6 +341,19 @@ See [`diagrams/build-roadmap-v6-v11.svg`](diagrams/build-roadmap-v6-v11.svg).
   the small-N_k bench → the latency win surfaces only once N_k is pushed past the now-larger footprint.
 
 ### v10 — NVFP4 + asymmetric precision (the headline + the paper) · **[B300]** (GB300, sm_103) — THE FINAL GOAL
+
+> **▶ CORRECTION (2026-06-28, v9 close-out — actionable plan is now [`v10-kickoff.md`](v10-kickoff.md)).**
+> This section pre-dates v9 Task 1, which measured decode is **per-CTA / low-MLP latency-bound, NOT
+> bandwidth-bound** (confound-free: ncu L2-hit 1.1% / DRAM 12.85% past L2, ~28% achieved-BW cap). So
+> **strike "on a now-bandwidth-bound kernel" (line ~36) and "the long-context KV that pushes decode into
+> the bandwidth-bound regime" (below)** — that regime did **NOT** appear on T4 even past L2; whether it
+> appears on B300 is a v10 *question to measure*, not a premise. **NVFP4 is reframed: capacity + accuracy +
+> the sm_103 2×-exp delta; the bandwidth-latency win is conditional.** Two research fixes: the Blackwell
+> `tcgen05` gate is **M≥64** (not M≥16) → native FP4 *compute* is **v11** (multi-token); the
+> asymmetric recipe is **storage** (V→FP4 per-token, K→FP4 per-channel + score≥FP16) — "P·V cheap to FP4"
+> is refuted for *compute*. Novelty: FlashInfer ships NVFP4 KV decode now → **complement, not beat.** Full
+> detail: `decisions.md`/`results.md` Step 9 close-out, `v10-kickoff.md`.
+
 - **The publication goal (2026-06-28, the project's north star):** **B300 / GB300 (sm_103, Blackwell
   Ultra) is the final target and the paper's novelty** — no published FlashAttention *paper* has
   characterized a B300 (FA4 stops at B200 / sm_100). **Honest scoping (so it survives a reviewer):**

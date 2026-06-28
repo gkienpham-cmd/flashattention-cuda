@@ -333,13 +333,45 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   bound confound-free. Degrades gracefully (counter-free sweep runs on Colab; clock-lock+ncu need root T4 —
   vast.ai ~$0.10–0.20/hr). Decisive read + criteria in `results.md` Step 9 Task 1. See `docs/v9-kickoff.md`
   Task 1, `interview-prep.md` C12.
+- **Step 9 deep-research close-out (2026-06-28)** — DONE: a 7-agent verify+research pass (2 notebook
+  forensics + code audit + adversarial red-team + 2 web-research B300/NVFP4 + planning). **v9 VERIFIED**
+  (code audit: fused dequant, byte-identical A/B, in-session `vs naive`, `vs sdpa` fix all confirmed; both
+  notebooks clean). Headlines survive; wording sharpened + three v10 assumptions corrected. **Refinements
+  (in `results.md`/`decisions.md` Step 9 close-out):** (1) "per-CTA-bound" → **"per-CTA / low-MLP
+  latency-bound, ~28% cap"** (the batch-sweep *decline* at B≥64, 29.3→25.4%, is a latency/MLP fingerprint,
+  not occupancy); (2) the FP8 win is a **bytes-sensitive load-LATENCY** effect (ncu L2 thrpt <3%, NOT
+  L2-bandwidth) that is **regime-specific — flips NEGATIVE under L2-flush** (sm_75 dequant ALU tax), so
+  byte-cuts are NOT a decode-latency lever; (3) the G-sweep **confounds G with H_kv/occupancy** (lead with
+  d=128, the clean monotone case); (4) "decode-schedule CLOSED" → **"CLOSED for the L2-resident regime"**;
+  (5) median is **1.205** (G-sweep) not 1.3, capacity 2× is **by construction** (unmeasured), accuracy is
+  single-seed, and there is **no trustworthy v9-vs-SDPA number** (the gate's `vs sdpa` is the pre-fix
+  inflated oracle). **Highest-value cheap follow-up (one notebook, settles 1+2+4):** re-run **v8.5/v8.6
+  past L2** (N_k≥32K, locked) — Task 1 shows 29%→70% headroom where latency-hiding could finally bite.
+  **v10 course-corrections (data/research-driven):** NVFP4 reframed to **capacity + accuracy + the sm_103
+  2×-exp softmax delta**, bandwidth-latency **conditional** on a B300 long-context regime to be *measured*;
+  ⚠️ Blackwell `tcgen05` gate is **M≥64** (M=128=100%) **not M≥16** → native FP4 *compute* slips to **v11**
+  (multi-token); asymmetric recipe is **storage** (V→FP4 per-token, K→FP4 per-channel + score≥FP16), the
+  "P·V-cheap-to-FP4" intuition **refuted for compute** (v11 concern); novelty narrows (FlashInfer ships
+  NVFP4 KV decode now) → **"open roofline-documented prediction-vs-measured sm_103 decode + asymmetric FP4
+  recipe, complementing not beating FlashInfer/FlashMLA."** New v9 figures `diagrams/v9-task1-regime.svg`
+  (now in-repo, hand-authored — the notebook's matplotlib version was Colab-host-only) +
+  `diagrams/v9-fp8-win-anatomy.svg`. Plan to paste: [`docs/v10-kickoff.md`](docs/v10-kickoff.md).
+  See `results.md`/`decisions.md` Step 9 close-out, `interview-prep.md` C14.
 
 ## Next steps
 
 **The reordered decode arc is `docs/decode-replan.md` §5 (math + per-step deliverable); summary:**
-v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV + regime-fix (T4)** → **v10
-NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper)** → **v11 MLA/speculative (B300)**. **v9
-plan to paste into a fresh session: [`docs/v9-kickoff.md`](docs/v9-kickoff.md).**
+v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV + regime-fix (T4) — DONE** →
+**v10 NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper)** → **v11 MLA/speculative + native
+FP4 compute (B300)**. **v10 plan to paste into a fresh session: [`docs/v10-kickoff.md`](docs/v10-kickoff.md)**
+(supersedes the now-complete `v9-kickoff.md`).
+
+**Immediate cheap experiment before v10 (from the v9 close-out — one T4 notebook, settles three open
+threads):** re-run **v8.5 (double-buffer) + v8.6 (occupancy/ILP) through `bench/regime.py` PAST L2**
+(N_k≥32K, clocks locked, L2-flushed). Their nulls were measured only at L2-resident sizes; Task 1 shows
+real 29%→70% headroom past L2 where latency-hiding could finally bite. If double-buffer lifts %HBM there,
+"decode-schedule CLOSED" reopens and the residual limiter is *latency* (not occupancy) — which retargets
+the next schedule lever. Run it, record it, then start v10 (or fold it into v10's opening cell).
 
 **Decode-SCHEDULE chapter CLOSED (2026-06-28, Steps 8/8.6/8.7 all DONE).** The two real decode levers are
 **M-packing (Cut 1, per-CTA/occupancy)** + **score-stationary (v8.7, inner-loop)** — together they beat
@@ -370,7 +402,11 @@ regime and Task 2 measures it. **Hardware: v9 on T4 (no rental — decode GEMV u
 is storage bytes); v10/v11 NVFP4 + MLA on B300 / GB300 (sm_103) — the FINAL goal and the paper's novelty**
 (no published FA paper has characterized a B300; FA4 stops at B200). B200 (sm_100) is an optional cheaper dev
 rung; the record runs on B300. B300-only levers the paper uses: 2× exp/SFU throughput (softmax MUFU term),
-288 GB (long-context KV → the bandwidth-bound regime), NVFP4 15 PF.
+288 GB (long-context KV → the regime where bandwidth *could* matter — **to be measured; T4 stayed
+per-CTA-bound even past L2**, so this is the v10 T3 question, not an assumption), NVFP4 15 PF.
+**[v9 DONE — the close-out above CORRECTS this prediction's optimism: FP8's measured latency win is
+L2-resident-only and flips negative under L2-flush; decode stayed per-CTA-bound past L2 on T4. v10's
+bandwidth-latency claim is conditional on a B300 long-context regime that must be measured.]**
 
 1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — DONE (both gates, 2026-06-27).** Deep-research
    close-out applied (`docs/v7-deep-research.md` + `docs/v8-kickoff.md`); `diagrams/decode-roofline-crossover.svg`

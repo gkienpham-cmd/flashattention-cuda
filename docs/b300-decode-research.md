@@ -25,6 +25,35 @@ Markings: **[fact]** = primary-source verified; **[infer]** = reasoned from the 
 > - **Verified [fact]:** B300 HBM bandwidth is **flat 8 TB/s** vs B200 (only capacity grew 192→288 GB);
 >   decode `AI = 2/b` is N-independent and memory-bound; the 2× MUFU.EX2 exp doubling is real.
 
+> **▶ UPDATE 2026-06-28 (v9 close-out — read [`v10-kickoff.md`](v10-kickoff.md) + `decisions.md` Step 9
+> close-out first).** v9 Task 1 measured decode **per-CTA / low-MLP latency-bound, NOT bandwidth-bound**
+> (ncu: L2-hit 1.1% / DRAM 12.85% past L2; ~28% achieved-BW cap). That + a 7-agent research pass **correct
+> this doc's framing on four points:**
+> - **⚠️ The Blackwell tensor-core gate is M ≥ 64 (M=128 = 100% datapath), NOT M ≥ 16** [fact: two
+>   SemiAnalysis pieces + arXiv 2512.02189]. `tcgen05.mma` needs M≥64; the legacy `mma.sync m16n8k` path is
+>   where M≥16 came from. A single GQA-8 group packs to **M=8 — below both gates** → N_q=1 decode keeps the
+>   5th-gen FP4 cores dark. So **native FP4 *compute* is a v11 (multi-token/speculative) lever, not v10**;
+>   this *generalizes* v8's measured "tensor cores are the wrong decode tool" onto native-FP4 silicon.
+> - **L2 size is UNCONFIRMED:** the widely-copied "192 MB" appears only in third-party aggregators, **not
+>   NVIDIA docs** (even the DGX B300 User Guide omits it). B200 is **~126 MB total / ~63 MB per-die**
+>   (NVIDIA Tuning Guide); B300 is the same die → likely ~126 MB. **Plan ~126 MB; measure on first rent.**
+>   (The §4 `AI*_BF16 ≈ 437.5` rests on an **unconfirmed 3.5 PF BF16**; if BF16 = 2.25 PF (= B200, the
+>   defensible default) then `AI*_BF16 ≈ 281`. Treat as a **281–437 range** pending on-chip measurement.)
+> - **The asymmetric-precision intuition is REFRAMED:** "P·V is the cheap one to FP4 (convex combination)"
+>   holds for **V *storage*** (V→FP4 per-token), but is **refuted for *compute*** — quantizing post-softmax
+>   P piles `cvt`/scale onto the softmax bottleneck and *slows* the kernel (Attn-QAT keeps P·V in BF16 on
+>   B200). The real fragile tensor is **K** (drives score error — KVTuner) → K→FP4 *per-channel* with the
+>   score reconstructed at ≥FP16. **B300's 2× exp may flip the "keep P·V BF16" call** — center the roofline
+>   novelty on the exp/SFU term and measure it (a v11 lead).
+> - **Novelty / title discipline:** this doc's title ("beating FA4 on B300") is **dead** — FlashInfer's
+>   `trtllm-gen` is the default sm_103 decode backend and **ships NVFP4 KV decode today**; vLLM published
+>   GB300 NVFP4 decode (Feb 2026). The surviving contribution is **"open, roofline-documented,
+>   prediction-vs-measured sm_103 decode + asymmetric FP4 recipe + the per-CTA-bound methodology,
+>   COMPLEMENTING (not beating) FlashInfer/FlashMLA," timestamped June 2026.**
+> - **Confirmed-correct here [fact]:** this doc's **FP8 = 5 PF** and **exp = 10.7 TExp/s** are *more*
+>   precise than most third-party tables (which wrongly say 7 PF FP8). B300 also **trades away INT8 + most
+>   FP64** (FP64 ≈ 1.25 TF) for the NVFP4 uplift; toolchain floor **CUDA 12.9 / PTX 8.8**.
+
 ---
 
 ## 0. Thesis

@@ -872,3 +872,69 @@ regime only appears at very long context where even ~28% of 8 TB/s is large in a
 
 See [`v9-kickoff.md`](v9-kickoff.md) Task 1, `results.md` Step 9 Task 1, `interview-prep.md` C12 (the
 ncu-validation story), `notebooks/v9_task1_regime_output.ipynb`.
+
+## Step 9 — deep-research close-out + Step 10 (v10 NVFP4) reframe
+
+**A 7-agent verify-and-research pass (2026-06-28) confirmed v9 ran and is code-honest, then sharpened the
+wording and — importantly — corrected three v10 design assumptions the data/research now refute.** Full
+record in `results.md` Step 9 close-out; decision-relevant deltas:
+
+**Verified (no decision change):** code audit confirmed fused dequant / byte-identical A/B / in-session
+`vs naive` / the `vs sdpa` fix; the not-bandwidth-bound verdict is ncu-validated and stands.
+
+**Decision-relevant refinements (locked into the record):**
+- **Limiter name:** "per-CTA-bound" → **"per-CTA / low-MLP latency-bound, occupancy-lifted to a hard ~28%
+  cap."** ncu proves *not bandwidth*; the batch-sweep decline at B≥64 (29.3→25.4%) is a latency/MLP tell,
+  not occupancy starvation. **Consequence:** the *next* schedule lever, if one is wanted, is latency-hiding
+  (deeper pipelining), not "fill the SMs" — which reopens v8.5/v8.6 **past L2** as the cheap experiment that
+  settles it (kernels exist, one notebook). "Decode-schedule CLOSED" is **CLOSED for the L2-resident
+  regime** only.
+- **FP8 latency claim:** the ~1.3× is a **regime-specific, bytes-sensitive load-latency** win (NOT
+  L2-bandwidth — ncu L2 throughput <3%), and it **flips negative under L2-flush** (software-dequant ALU tax
+  on sm_75). This *strengthens* the operative decision "FP8/NVFP4 = capacity + accuracy; latency is
+  conditional," and it means **byte-cuts are NOT a decode-latency lever on a per-CTA-bound kernel.**
+
+**Step 10 (v10 = NVFP4 + asymmetric-precision KV, B300/sm_103) — decision recorded BEFORE coding.** Full
+plan: [`docs/v10-kickoff.md`](v10-kickoff.md). The reframe vs the old "bytes → ~3.5× faster" framing:
+
+- **Bottleneck the step attacks:** capacity (KV cache size at fixed HBM) + accuracy (FP4 KV recipe), **not**
+  decode latency — because v9 Task 1 proved decode is per-CTA-bound, so cutting bytes cannot buy latency at
+  reachable occupancy. Latency relevance is **conditional** on a B300 long-context bandwidth-bound regime
+  that v10 must *measure* (carry the Task-1 method to B300's ~126 MB L2 → sweep N_k 256K–1M).
+- **Options + choices:**
+  1. **NVFP4 storage + fused per-tile dequant to FP16, CUDA-core score-stationary loop** (byte-identical to
+     v9 except storage format) → **chosen for v10.** Clean byte-only A/B vs v9/v8.7.
+  2. **Native FP4 tensor-core compute** → **deferred to v11.** ⚠️ Correction: the Blackwell `tcgen05.mma`
+     gate is **M ≥ 64** (M=128 = 100% datapath), not M≥16 (that's the legacy `mma.sync` path). N_q=1 decode
+     packs only M=G<64, so the 5th-gen FP4 cores stay dark — engaging them needs query-token packing
+     (speculative/multi-token decode) = v11. This *generalizes* v8's measured "tensor cores are the wrong
+     decode tool" onto native-FP4 silicon.
+  3. **Asymmetric precision (the recipe):** **storage** = V→NVFP4 per-token (convex-combo-safe), K→NVFP4
+     per-channel with the **score reconstructed at ≥FP16** (K drives score fragility — KVTuner). The
+     project's old "P·V is the cheap one to FP4" intuition is **refuted for *compute*** (quantizing
+     post-softmax P piles cvt onto the softmax bottleneck and *slows* the kernel — Attn-QAT keeps P·V in
+     BF16) — but that only bites when FP4 *matmul* engages (v11), so v10 (FP4-storage, no FP4 matmul) is
+     unaffected. Q stays FP16; softmax/O/merge FP32 (+ hardware exp2 on B300).
+  4. **The sm_103 novelty hook = the softmax/exp term** (B300's 2× exp, 5→10.7 TeraExp/s) — center the
+     roofline there and ablate it; it's the cleanest sm_103-vs-sm_100 delta and may flip the "keep P·V
+     BF16" decision on B300 (a v11 lead).
+- **Prediction before measuring:** roofline says NVFP4 doubles AI vs FP8 (G8: 16→28.4), HBM floor ~3.55×
+  below FP16, limiter stays HBM (AI 28–57 ≪ FP4 ridge 1875), **but the model is blind to the per-CTA wall**
+  → expect capacity (certain) + accuracy (headline) + only a fragile/conditional latency effect. Counter:
+  a bandwidth knee past B300's ~126 MB L2 would overturn it (first-class either way).
+- **What changes on another arch:** capacity is arch-independent; the per-CTA cap is a *schedule* limit so
+  it's arch-independent in shape (bigger L2 just pushes the spill N_k out); native FP4 *compute* needs
+  Blackwell + M≥64; the 2×-exp lever is sm_103-specific.
+- **Novelty (adversarially checked):** "first to run / first FP4-KV decode / first Blackwell roofline" are
+  **dead** (FlashInfer `trtllm-gen` ships NVFP4 KV decode now; vLLM published GB300 NVFP4 decode Feb 2026).
+  Survives: **the open, roofline-documented, prediction-vs-measured sm_103 decode + asymmetric FP4 recipe +
+  per-CTA-honest methodology — complementing, not beating, FlashInfer/FlashMLA, timestamped June 2026.**
+
+**B300 facts that constrain v10 (web-research, confidence-tagged in
+`docs/b300-decode-research.md`):** HBM **8 TB/s flat** vs B200 (only capacity grew 192→**288 GB**); NVFP4
+**15 PF dense** / FP8 **5 PF** / exp **10.7 TExp/s** (all FACT); B300 **trades away INT8 + most FP64** for
+the NVFP4 uplift; **L2 size UNCONFIRMED** (~126 MB B200, likely same die → measure on first rent); toolchain
+**CUDA 12.9 / PTX 8.8**.
+
+See [`v10-kickoff.md`](v10-kickoff.md), `results.md` Step 9 close-out, `interview-prep.md` C14,
+`b300-decode-research.md` (v10 banner).

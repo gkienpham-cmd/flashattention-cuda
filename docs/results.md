@@ -1187,4 +1187,86 @@ in `notebooks/v9_task1_regime_output.ipynb`).
 | v8_gqa_ss d=128 H_kv=8 | 11.7→27.6% | **27–29%** | — | per-CTA-bound (occupancy-lifted, still capped) |
 | v9_fp8 d=128 H_kv=8 | 4.1→9.9% | ~10% | — | per-CTA-bound (lower %HBM = fewer bytes, not bandwidth) |
 
+### Step 9 — deep-research close-out (2026-06-28)
+
+*A 7-agent verify-and-research pass (2 data-forensics on the run-of-record notebooks + 1 code audit + 1
+adversarial red-team + 2 web-research on B300/NVFP4 + 1 planning) over both gate outputs. **The headlines
+survive; the wording sharpens.** Nothing here overturns Step 9 — it earns the claims more precisely and
+records the prediction-misses the first pass rounded over. Detail: `notebooks/v9_fp8_gate_output.ipynb`,
+`notebooks/v9_task1_regime_output.ipynb`.*
+
+**Verification (the gate is real).** A line-by-line **code audit** confirmed all of v9's load-bearing
+claims match the source: fused per-tile dequant (no prepass), FP32 accum, a **byte-identical** A/B (a
+mechanical diff reduces v9↔v8.7 to the `cuda_fp8.h` include, `dequant_e4m3`, `uint8` KV pool, two scale
+args, and the two dequant lines — **smem is `__half` in both**, so the occupancy-isolation argument is real,
+not asserted); the **linchpin** `vs naive` ratio is genuinely re-timed against `v8_gqa_ss` **in the same
+harness invocation** (so it is clock-matched even when notebook cells ran at different clocks); and the
+`vs sdpa` fix (dequant once outside the timed baseline) is present in `harness.py`. Both notebooks executed
+clean (76 passed; Task-1 sweep + ncu live). **v9 ran successfully.**
+
+**What is SOLID (state forcefully):** (1) correctness 76/76; (2) the Task-1 **not-bandwidth-bound** verdict
+is confound-free and **ncu-validated** (L2-hit 1.1% + DRAM 12.85% past L2 — first ground-truth ncu in the
+project); (3) the counter-free `%HBM` proxy validated vs ncu (13.8% vs 12.85% at the same shape) — so prior
+profiler-free **throughput** numbers hold *as proxies*; (4) FP8 buys a **real** load-sensitive latency win
+in the L2-resident clock-matched regime (occupancy fixed by identical smem; faster *despite* more dequant
+ALU; at d=128 the win is largest where the working set is **largest/most-past-L2** — the *opposite* sign of
+an L2-cacheability artifact, which rules that confound out).
+
+**Refinements (severity-ranked) — the wording the data actually supports:**
+
+1. **[MED-HIGH] "per-CTA-bound" → "per-CTA / low-MLP *latency*-bound (occupancy-lifted to a hard ~28%
+   cap)."** ncu proves *not bandwidth-bound*, but it does **not** separate "occupancy-starved" from
+   "HBM-latency / low-MLP." The batch sweep is the tell: %HBM rises to 29.3% (B=8) then **declines** to
+   25.4% (B=128) — a latency/MLP fingerprint, not pure occupancy starvation. This matters for the
+   next-lever prescription: latency-bound → deeper per-warp pipelining/double-buffer; occupancy-bound →
+   persistent kernel. The not-bandwidth verdict is unaffected; only the *positive* name tightens.
+
+2. **[MED-HIGH] "demonstrably an L2-load-*bandwidth* win" → "a bytes-sensitive load-*latency/issue* win,
+   NOT L2-BW-saturated."** ncu shows L2 throughput **<3%** at these shapes, so the FP8 win is *not* L2
+   bandwidth saturation — it's a load-latency/issue-rate sensitivity to byte count. (The win is genuine;
+   only the "bandwidth" label overreached.) Also: the mechanism is **entangled** — the G-sweep fixes
+   `--heads 32`, so raising G *also* lowers H_kv (occupancy) and shrinks the working set, so
+   "compute-amortization (G)" and "occupancy/contention (H_kv)" cannot be separated from this sweep. A
+   clean disentangle needs a **fixed-H_kv G-sweep**. Lead with **d=128** (cleanly monotone 1.52→1.05); the
+   d=64 row is non-monotone (G1=1.08 < G2=1.37), so the "smoking gun" quote that starts at G2 is
+   selection-biased.
+
+3. **[MED] FP8's latency win is REGIME-SPECIFIC and flips negative under L2-flush — say so.** Task 2
+   (L2-resident, clock-matched): FP8 ~1.2–1.3× *faster*. Task 1 (L2-flushed, high-occupancy): FP8 is
+   **slower even after clock-correcting** (H_kv=8 d=128 N_k=8192: clock-corrected to 1590 MHz, FP8 ≈ 1.19×
+   *slower*; the H_kv=1 endpoint is FP8's measured worst case, the G=1 end of Task 2's own shrink-with-G
+   curve). Once bytes stop being the shared bottleneck (low occupancy / forced-HBM), the **software-dequant
+   ALU tax dominates** and the sign flips. Net: the byte-cut latency effect is **fragile**, which *sharpens*
+   (does not contradict) "FP8 = capacity + accuracy, latency only conditionally." On native-FP8 HW (B300)
+   there is no software-dequant tax, so the flip is an sm_75-emulation artifact — but the *general* lesson
+   (bytes don't buy decode latency when the kernel isn't bandwidth-bound) is arch-independent.
+
+4. **[MED] "decode-schedule chapter CLOSED" → "CLOSED for the L2-resident regime."** v8.5 (double-buffer)
+   and v8.6 (occupancy/ILP) were measured NULL **only at L2-resident sizes (N_k ≤ 16K)** — the exact
+   confound Task 1 exists to kill. Task 1 shows real headroom past L2 (29% → 70%) where latency-hiding could
+   bite. **Highest-value cheap follow-up (settles refinements 1, 3, and 4 at once):** re-run v8.5/v8.6
+   through `bench/regime.py` past L2 (N_k ≥ 32K, clocks locked, L2-flushed). The kernels exist; it's one
+   notebook. If double-buffer lifts %HBM past L2, "CLOSED" reopens and the residual limiter is *latency*.
+
+5. **[LOW] Numbers to state precisely:** the **G-sweep** median is **1.205** (mean 1.21), not 1.3 — the
+   ~1.3 belongs to the *batch* table; combined median ≈ 1.285. The **"2× capacity"** is true *by
+   construction* (uint8 vs fp16) but was **never measured** (no `max_memory_allocated` call) — call it "by
+   construction." Accuracy is a **single-seed (seed=9)** point estimate; the per-token/channel comparison
+   was deferred. **There is no trustworthy measured v9-vs-SDPA number anywhere** — the gate notebook's
+   `vs sdpa` (5–23×) is the pre-fix inflated oracle (still sits in the canonical output with no inline
+   banner); trust only v8.7-vs-SDPA (8–16×) and the v9 `vs naive` A/B.
+
+**Implications for v10 (data-driven course-corrections — see `docs/v10-kickoff.md`, `decisions.md` Step 9
+close-out):** (a) NVFP4 is reframed to **capacity + accuracy + the sm_103 2×-exp softmax delta**, with
+bandwidth-latency **conditional** on a B300 long-context regime that must be *measured* (T4 stayed
+per-CTA-bound even past L2). (b) ⚠️ The Blackwell `tcgen05` tensor-core gate is **M ≥ 64** (M=128 for
+100%), not the M≥16 the v8/old-v10 plans assumed — N_q=1 decode (M=G<64) keeps the FP4 cores dark, so
+**native FP4 compute slips to v11** (multi-token to reach M≥64). (c) The asymmetric-precision recipe is
+**storage** (V→FP4 per-token, K→FP4 per-channel with the score reconstructed at ≥FP16); the
+"P·V-is-cheaper-to-FP4" intuition is *refuted* for *compute* (quantizing post-softmax P piles cvt onto the
+softmax bottleneck) — a v11 concern. (d) Novelty narrows: FlashInfer ships NVFP4 KV decode today → frame as
+**"open, roofline-documented, prediction-vs-measured sm_103 decode + asymmetric FP4 recipe, complementing
+(not beating) FlashInfer/FlashMLA."** Decisive v9 figures: `diagrams/v9-task1-regime.svg`,
+`diagrams/v9-fp8-win-anatomy.svg`.
+
 ---

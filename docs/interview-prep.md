@@ -964,3 +964,48 @@ clock-matched ~1.3× faster, and the win shrank as GQA amortized the KV load —
 mean memory is free' — loading L2 into the SM is itself a wall. And the kernel-engineering subtleties:
 dequant fused per-tile so a prepass doesn't give the bytes back, accumulation stays FP32, and I caught my
 own oracle re-quantizing inside the timed baseline."
+
+## C14 — Refining my own FP8 win under adversarial review (the close-out that sharpened C13)
+
+After the v9 gates, I red-teamed my *own* conclusions before they hit the permanent record. It didn't
+overturn anything — but it caught three places where my prose ran ahead of my data, and I'd rather recite
+the precise version. This is the "I check my own claims" story.
+
+**What I corrected in C13.** (1) I'd called the FP8 win an "L2-**bandwidth**" win. ncu says L2 throughput
+was **<3%** at those shapes — so it was never bandwidth *saturation*; it's a bytes-sensitive load-**latency
+/ issue-rate** effect. (2) The "shrinks as G grows ⇒ compute-amortization" smoking gun is **confounded**:
+my G-sweep fixed `--heads 32`, so raising G also *lowers* H_kv (occupancy) and shrinks the working set —
+amortization and occupancy can't be separated from that one sweep (the clean version is a *fixed-H_kv*
+G-sweep). I lead with d=128 now because d=64 is non-monotone (G1=1.08 < G2=1.37). (3) The win is
+**regime-specific and flips negative under L2-flush**: in Task 1, with L2 flushed and clock-corrected, FP8
+was ~1.2× *slower* — once bytes stop being the shared bottleneck, the software E4M3 dequant ALU tax wins.
+So the honest headline is "FP8 buys a real but **fragile** latency win when L2-resident; the durable wins
+are **2× capacity and ~7e-4 accuracy**."
+
+**The bigger reframe — naming the limiter.** I'd been saying "per-CTA-bound." ncu proves *not
+bandwidth-bound* (L2-hit 1.1% + DRAM 12.85% past L2), but it doesn't separate "occupancy-starved" from
+"latency / low-MLP" — and my batch sweep is the tell: %HBM rises to 29% at B=8 then **declines** to 25% at
+B=128, a *latency/MLP* fingerprint, not occupancy starvation. So I now say **"per-CTA / low-MLP
+latency-bound, occupancy-lifted to a hard ~28% cap."** That distinction changes the next lever (deeper
+pipelining vs persistent kernel) and means "decode-schedule is CLOSED" is only safe **for the L2-resident
+regime** — the cheap experiment to settle it is re-running my v8.5 double-buffer / v8.6 ILP kernels *past*
+L2, where Task 1 shows real 29%→70% headroom (they were only ever measured L2-resident).
+
+**Why it matters for the B300 paper (v10).** If decode is per-CTA-bound, **FP4's value is capacity +
+accuracy, not bandwidth-latency** — most FP4-KV work *assumes* the bandwidth win; I *measured* that it
+doesn't hold at realistic decode occupancy. Two research corrections fell out: the Blackwell `tcgen05`
+tensor-core gate is **M≥64** (M=128 for 100%), not M≥16 — so N_q=1 decode keeps the FP4 cores dark and
+native-FP4 *compute* is a speculative-decode (v11) lever, not v10; and the "P·V-is-cheap-to-FP4" intuition
+is refuted for *compute* (quantizing post-softmax P piles cvt onto the softmax bottleneck). On novelty:
+FlashInfer already ships NVFP4 KV decode on sm_103, so I frame the contribution as **"open,
+roofline-documented, prediction-vs-measured sm_103 decode + asymmetric FP4 recipe, complementing — not
+beating — FlashInfer/FlashMLA."**
+
+**Say-this:** "Before I wrote up v9, I red-teamed my own result. I'd called the FP8 win an 'L2-bandwidth'
+win — but ncu showed L2 was under 3% busy, so it's really a bytes-sensitive load-*latency* effect, and it
+even flips negative when I flush L2 because the dequant ALU tax takes over. The durable wins are 2× capacity
+and 7e-4 accuracy; the latency win is fragile. And I retitled my limiter from 'per-CTA' to 'low-MLP
+latency-bound, capped ~28%' once I noticed my batch sweep *declines* past B=8 — that's a latency fingerprint,
+not occupancy. The payoff is for the B300 paper: if decode is per-CTA-bound, FP4 is a capacity-plus-accuracy
+recipe, not a bandwidth play — the opposite of what most FP4-KV work assumes, and that honest finding is the
+contribution."
