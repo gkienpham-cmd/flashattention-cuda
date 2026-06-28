@@ -1014,14 +1014,78 @@ Task 1's regime sweep creates. Accuracy: the E4M3 **quantization RMSE vs fp16 KV
 (reported by the gate notebook, not gated); the correctness oracle is apples-to-apples (SDPA on the same
 dequantized E4M3 bytes, tol 5e-2).
 
-**Measured (pending — `notebooks/v9_fp8_gate.ipynb`, root/Colab T4):** _to fill at the GPU gate._
+**Measured (2026-06-28, Colab T4, `notebooks/v9_fp8_gate_output.ipynb`): correctness ✅ 76 passed (38
+v9 + 38 v8.7 regression); E4M3 BUILT on sm_75 with NO int8 fallback (`__nv_cvt_fp8_to_halfraw`
+software-emulated, compiles clean). THE "CAPACITY-ONLY" PREDICTION IS REFUTED — FP8 delivered a real,
+same-session, clock-matched ~1.3× decode-latency win, and the way it varies with G proves it's a
+load-bandwidth (L2→SM) win, not capacity-only.**
 
-| metric | v8.7 (fp16 KV) | v9 (fp8 KV) | prediction-vs-measured |
-|---|---|---|---|
-| correctness vs E4M3 oracle | — | _N/N @ 5e-2_ | — |
-| E4M3 quant RMSE vs fp16 KV | (n/a) | _TBD_ | accuracy deliverable |
-| µs/tok (G8, d=128, B=1) | _TBD_ | _TBD_ | predict: ~null (L2-resident) |
-| %HBM (G8, d=128) | _TBD_ | _TBD_ | predict: ≤~12%, "L2!" if >100% |
-| KV footprint (capacity) | 1× | **0.5×** | trivially 2× (the durable win) |
+**The prediction miss (first-class).** I predicted FP8 = capacity-only / no µs/tok win on the
+L2-resident micro-bench. Measured `vs naive` = FP8 kernel ÷ FP16 v8.7 kernel, **same packing, same
+session, clock-matched (both 585/1590 MHz in the A/B)**:
+
+| `vs naive` (FP8÷FP16) | G1 | G2 | G4 | G8 | G16 | G32 |
+|---|---|---|---|---|---|---|
+| A/B d=64  | 1.08 | 1.37 | 1.17 | 1.23 | 1.18 | **0.96** |
+| A/B d=128 | **1.52** | 1.37 | 1.32 | 1.25 | 1.05 | 1.05 |
+
+Median ≈ **1.3×** (range 0.96–1.52×). It's **airtight as a load-bytes effect**: the *only* kernel
+change is the global/L2 load (1 byte vs 2 per KV elem) — smem stays FP16 (identical occupancy + inner
+loop), and FP8 even *adds* ALU (software E4M3→half on sm_75). Faster despite more compute ⇒ **the L2→SM
+load was a genuine bottleneck component.**
+
+**The smoking gun — the win shrinks as G grows** (d=64: 1.37 G2 → 1.18 G16 → **0.96 G32**; d=128 holds
+higher, 1.52 G1 → 1.05 G32). M-packing reads the KV tile once and runs it against G query heads, so as G
+rises the per-CTA cost shifts from *loading KV* to *computing G dot products* → FP8's byte saving matters
+less, and at G32/d=64 the dequant ALU finally exceeds it (0.96×). d=128 wins more (double the bytes/key).
+This `win ∝ bytes-loaded ∝ 1/amortization` double-dependence is the signature of an **L2-load-bandwidth**
+limit — not HBM-bandwidth, not pure compute.
+
+**Reclaim-at-batch (G=8), `vs naive` same-session (⚠ cross-run clocks differ: v8.7@585, v9@1590 — use
+the same-session ratio, not absolute µs/tok):**
+
+| `vs naive` | B1 | B8 | B16 | B32 | B64 |
+|---|---|---|---|---|---|
+| d=64  | 1.30 | 1.45 | 1.25 | 1.33 | 1.28 |
+| d=128 | 1.26 | 1.34 | 1.32 | 1.37 | 1.29 |
+
+**FLAT ~1.3× from B=1 to B=64** — the byte win is batch-independent (consistent with a per-CTA load
+component, not grid occupancy).
+
+**Accuracy (the deliverable):**
+
+| | vs E4M3 oracle (RMSE) | **vs fp16 KV (RMSE / max)** |
+|---|---|---|
+| G1 d=64 | 6.4e-6 | **6.0e-4** / 1.9e-3 |
+| G8 d=64 | 1.0e-5 | 7.3e-4 / 2.5e-3 |
+| G1 d=128 | 6.2e-6 | 6.3e-4 / 2.1e-3 |
+| G8 d=128 | 6.7e-6 | 7.0e-4 / 2.6e-3 |
+
+Oracle ~6e-6 = the **kernel math is exact** given quantized inputs (FP16-accum noise only). Quant RMSE
+**~6–7e-4** = the real per-tensor E4M3 cost — small because softmax averages largely-independent per-key
+quant errors over 8192 keys (why FP8 KV works). Per-token/channel scaling is the lever only if a
+downstream metric demands it.
+
+**Limiter — still NOT HBM-bound, but the L2 picture sharpened.** `%HBM` (already 1-byte-aware for FP8)
+*dropped* vs FP16 (d=128 G1: 13.8%→10.4%; d=64 G8: 9.3%→5.6%) and **`L2!` never fired** (effective_bw
+never exceeded HBM peak) → FP8 did not flip the limiter (the blind roofline was right; kernel sits ~14×
+above the halved floor). But the win *indirectly refines the L2 confound*: an L2-resident working set is
+**not** free to load — the L2→SM path is a real bandwidth wall, and halving the bytes relieves ~1.3× of
+it. So "L2-resident" ≠ "memory is free." The full bandwidth verdict (locked clock, past-L2 sweep) is
+still **Task 1**; this run only shifts the prior toward "a real load-bandwidth component exists."
+
+**Verdict.** FP8 E4M3 KV is correct, builds on sm_75 unaided, costs ~7e-4 RMSE, and — against prediction
+— buys a real **~1.3× decode latency** win that is demonstrably an **L2-load-bandwidth** win (shrinks
+with G, flat across batch), *plus* the durable **2× capacity**. The roadmap claim "bytes won't help
+latency until past-L2/bandwidth-bound" was too strong: on this kernel the residual post-v8.7 ceiling was
+*partly* L2→SM load, which bytes do relieve. What FP8 did **not** do is reach the HBM floor or flip the
+limiter — the kernel is still per-CTA/L2-load-bound at ~10% HBM, so Task 1 (and the larger past-L2 /
+B300 long-context win, and v10 NVFP4's *compute* lever) remain the real bandwidth story.
+
+> **Methodology caveat (fixed post-run):** the v9 `vs sdpa` column in the gate output is **inflated and
+> unusable** — the `sdpa_reference_gqa_fp8` oracle re-quantized K,V *inside* the timed baseline (an amax
+> reduction + full cache passes), making the SDPA baseline ~4× too slow (v9 showed `vs sdpa` 5–16× vs
+> v8.7's 1.03× at the same shape). `bench/harness.py` now dequantizes once **outside** the timed `base`.
+> Trust **`vs naive`** (same-session FP8-vs-FP16 isolation), not v9's `vs sdpa`, in that output.
 
 ---

@@ -20,8 +20,9 @@ import subprocess
 import torch
 
 from fa_kernels import attention, fp8_attention, gqa_attention, paged_attention
-from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8
-from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa, sdpa_reference_gqa_fp8
+from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, dequantize_fp8_e4m3,
+                             quantize_fp8_e4m3)
+from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
 from roofline.archs import get_arch
 from roofline.model import estimate
 
@@ -149,10 +150,16 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
             q_off = (N - qn) if causal else 0
             if is_fp8:
                 # v9 reads an FP8 E4M3 GQA KV pool (uint8) + per-tensor dequant scales. Oracle is
-                # apples-to-apples: SDPA on the SAME dequantized E4M3 bytes, so the timed comparison
-                # isolates the kernel from the quantization error (reported separately as RMSE).
+                # apples-to-apples: SDPA on the SAME dequantized E4M3 bytes. CRITICAL: dequantize ONCE
+                # here, OUTSIDE the timed `base` lambda. The earlier `sdpa_reference_gqa_fp8(q,k,v,...)`
+                # form re-quantized K,V on every call (an amax reduction + full passes over the cache),
+                # inflating the SDPA baseline ~4x and making `vs sdpa` meaningless — measured 2026-06-28.
                 kf, vf, bt_f, nkf, sk, sv = build_paged_kv_fp8(k, v, page_size)
-                base = lambda: sdpa_reference_gqa_fp8(q, k, v, sk, sv, causal=causal)
+                kb, _ = quantize_fp8_e4m3(k)
+                vb, _ = quantize_fp8_e4m3(v)
+                k_hat = dequantize_fp8_e4m3(kb, sk).to(k.dtype)   # the exact bytes the kernel reads
+                v_hat = dequantize_fp8_e4m3(vb, sv).to(v.dtype)
+                base = lambda: sdpa_reference_gqa(q, k_hat, v_hat, causal=causal)
                 ours = lambda: fp8_attention(q, kf, vf, bt_f, page_size, nkf, sk, sv,
                                              causal=causal, q_offset=q_off, backend=backend)
             elif is_gqa:

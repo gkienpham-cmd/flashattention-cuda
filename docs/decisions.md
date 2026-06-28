@@ -815,4 +815,20 @@ the kernel is genuinely bandwidth-bound, which a bigger L2 (A100 40 MB … B300 
 longer context. On B300 (sm_103, the paper) the same dequant machinery carries forward to NVFP4 (v10),
 where native FP4 throughput (15 PF dense) adds a *compute* lever this T4 GEMV doesn't have.
 
+**Measured (2026-06-28, Colab T4): correctness ✅ 76 passed; E4M3 built on sm_75 with NO fallback; the
+"capacity-only" prediction is REFUTED — FP8 buys a real ~1.3× decode latency win, and it's a LOAD-bandwidth
+win (not capacity-only, not HBM-bandwidth).** `vs naive` (FP8÷FP16 v8.7, same packing, same session,
+clock-matched) = **0.96–1.52×, median ~1.3×**, FLAT across batch B=1→64. Airtight as a load-bytes effect:
+the only kernel change is the 1-byte-vs-2 global load (smem stays FP16 → identical occupancy/inner loop),
+and FP8 is faster *despite* adding software E4M3→half ALU. **Smoking gun:** the win shrinks as G grows
+(d=64 1.37 G2 → 0.96 G32) because M-packing amortizes the KV load across G heads → the bottleneck shifts
+load→compute, so fewer bytes matter less; d=128 wins more (2× bytes/key). `%HBM` *dropped* vs FP16 (no
+`L2!` flag), so FP8 did NOT flip the limiter — still per-CTA/L2-load-bound ~10% HBM, ~14× above the halved
+floor. Accuracy: per-tensor E4M3 quant RMSE **~6–7e-4** (oracle ~6e-6 → kernel math exact). **Decision
+update:** the "bytes won't help latency until past-L2" claim (recurring since v6) was too strong — the
+residual post-v8.7 ceiling is *partly* L2→SM load bandwidth, which FP8 relieves. "L2-resident" ≠ "memory
+is free." Task 1 (locked-clock past-L2 sweep) + v10 NVFP4 (a *compute* lever) remain the bandwidth story.
+**Harness fix (post-run):** v9's `vs sdpa` was inflated (the FP8 oracle re-quantized inside the timed
+baseline); now dequantized once outside — trust `vs naive`. Gate-2 quiz pending.
+
 See [`v9-kickoff.md`](v9-kickoff.md), `results.md` Step 9, `interview-prep.md` C13.
