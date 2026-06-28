@@ -900,6 +900,34 @@ prediction (also a finding): if µs/tok drops but %HBM still sits at ~10%**, the
 latency, not compute — which finally makes **v9 FP8 (capacity + fewer bytes)** the right next lever. Either
 outcome closes the decode-schedule investigation.
 
-**Measured:** *pending T4 run-of-record (`notebooks/v8_7_score_stationary_gate.ipynb`).* Fill the 3-way A/B
-(`v8_gqa` Cut 1, `v8_gqa_occ` layout-isolated, `v8_gqa_ss`) µs/tok + %HBM per G + reclaim-at-batch, then
-state whether removing the reduction moved the floor (and at which d), and whether %HBM finally climbed.
+**Measured (2026-06-28, Colab T4, `notebooks/v8_7_score_stationary_gate_output.ipynb`): correctness ✅ 228
+passed; v8.7 WINS — the "remove, don't hide" thesis is vindicated, with a nuance. It is the FIRST lever
+since Cut 1 to move the clock-robust `%HBM`.**
+
+Clock situation is favorable: `v8_gqa_ss` ran at **low clock (375/465 MHz), right next to Cut 1 (360/480)**,
+while `occ` ran hot (585/1590) — so the **ss-vs-Cut 1 headline is clock-fair** and `%HBM` (clock-robust)
+corroborates. ss-vs-Cut 1, matched clock, G-sweep:
+
+| | d=64 Cut1→ss µs/tok | speedup | d=128 Cut1→ss µs/tok | speedup |
+|---|---|---|---|---|
+| G2 | 36.3→26.9 | **1.35×** | 62.3→53.6 | **1.16×** |
+| G4 | 19.0→14.7 | **1.29×** | 33.3→28.3 | **1.17×** |
+| G8 | 10.7→9.0  | **1.18×** | 19.5→16.5 | **1.18×** |
+
+`%HBM` **rose** (d=64 G8 7.7%→9.1%; d=128 G8 8.4%→9.9%; d=128 G1 8.8%→**12.8%**). The reclaim cell
+(ss@465 vs Cut1@480, matched clock) is the cleanest: **ss beats Cut 1 1.1–1.6× at every batch B=1→64**,
+`%HBM` up ~2–3 pts everywhere, and ss beats SDPA **8–16×**. **Layout-isolated (ss vs occ, both FP16 smem):**
+ss is faster *despite a lower clock* (375 vs 585) and higher `%HBM` — so the win is the **layout**, not
+occupancy or dtype.
+
+**Verdict — two things are true:** (1) **Removing the per-key reduction + 32×-shortening the recurrence was a
+real win** (1.1–1.6× at matched clock, first %HBM movement since Cut 1) → the reduction/recurrence WAS a
+genuine component of the floor. v8.6 was right you can't *hide* it; v8.7 shows you can *remove* it. Prediction
+scorecard: ✓ µs/tok dropped, ✓ **d=64 win > d=128 win** (the smem-read-BW drag at d=128 was real — 1.16–1.18×
+vs d=64's 1.18–1.35× — but did NOT null it, R2 partial), ✓ %HBM climbed. (2) **But %HBM only reached ~10–12%,
+NOT the floor** — a residual per-CTA ceiling remains (load latency / small-CTA launch); v8.7 did NOT make the
+kernel bandwidth-bound. So the counter-prediction's spirit holds: **v9 FP8 still won't show a large micro-bench
+latency win** — its value stays KV-cache *capacity + accuracy*. **This closes the decode-schedule arc on a
+positive note:** M-packing (Cut 1, per-CTA/occupancy) + score-stationary (v8.7, inner-loop) are the two real
+decode levers; tensor cores / double-buffer / occupancy / ILP were dead ends; the residual ~10% ceiling is a
+deeper per-CTA limit bytes won't fix.

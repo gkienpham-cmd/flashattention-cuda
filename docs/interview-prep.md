@@ -840,3 +840,24 @@ reduction and shortens the softmax recurrence 32×. I predicted it wins at d=64 
 smem-bandwidth risk *before* running, and I deliberately held occupancy fixed with FP16 smem so a null
 couldn't be blamed on residency. Whatever the number, it's decisive: either removing the reduction was the
 fix, or the floor was load latency all along and bytes are finally the right lever."
+
+### v8.7 measured — the win, and the nuance that made it *more* interesting
+It won — and the result is richer than a clean yes. Correctness 228/228. The clocks cooperated this time:
+`v8_gqa_ss` happened to run at 375/465 MHz, right next to Cut 1's 360/480, so the headline comparison was
+clock-fair (and `occ` ran hot at 1590, which is why I trust ss-vs-Cut-1 over ss-vs-occ on raw µs/tok). **ss
+beat Cut 1 1.1–1.6× at matched clock across every G and every batch, beat SDPA 8–16×, and — for the first
+time since Cut 1 — moved the clock-robust `%HBM` up (~8% → ~10–12%).** The d=64/d=128 split came out exactly
+as predicted: d=64 won more (1.18–1.35×) than d=128 (1.16–1.18×), the fingerprint of the d=128 smem-read-BW
+drag I'd flagged — but it didn't null d=128, it just taxed it. So **two things are true, and saying both is
+the point:** removing the per-key reduction *was* a real win (so the reduction genuinely was part of the
+floor — v8.6 was right that you can't *hide* it, and v8.7 shows you *can* remove it), **but** %HBM only
+climbed to ~10–12%, not to the bandwidth ceiling — a residual per-CTA limit (load latency / small-CTA launch)
+is still there. That's the honest close: v8.7 is the inner-loop decode win, M-packing is the per-CTA decode
+win, and together they're the two real levers; the leftover ~10% ceiling is something bytes (v9 FP8) won't
+fix, which is exactly why FP8's pitch is capacity + accuracy, not micro-bench latency. **Say-this:** "v8.7
+won — 1.1–1.6× over my own M-packing kernel at a fair clock, and the first time I moved %HBM since the
+original. But the better answer is the nuance: it proved the reduction was a real wall *and* that removing it
+doesn't make decode bandwidth-bound — there's a residual per-CTA ceiling underneath. So I can say precisely
+what the two decode levers are (pack the heads, restructure the inner loop), what the dead ends were (tensor
+cores, double-buffer, occupancy, ILP), and why low-precision is a capacity play, not a latency one. That's
+the whole decode-schedule story, measured end to end."

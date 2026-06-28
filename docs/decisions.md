@@ -715,4 +715,11 @@ d=128 at risk of flipping to smem-read-BW-bound (full-D `sK` reads per key). Cou
 d=128 smem-BW risk (R2) shrinks and the score-stationary win should be cleaner there; the layout itself is
 arch-independent (it's the standard decode primitive FlashInfer/FlashMLA use).
 
-**Measured:** *pending T4 run-of-record (`notebooks/v8_7_score_stationary_gate.ipynb`).*
+**Measured (2026-06-28, Colab T4): WIN — ✅ 228 passed; ss beats Cut 1 1.1–1.6× at matched clock across G
+and batch (best at d=64; d=128 wins less — 1.16–1.18× — confirming the R2 smem-read-BW drag but NOT a null),
+beats SDPA 8–16×, and is the FIRST lever since Cut 1 to move the clock-robust `%HBM` (up ~2–3 pts toward
+~10–12%). ss vs occ (both FP16 smem) confirms it's the LAYOUT (ss faster at a lower clock). Two truths: the
+reduction/recurrence WAS a real component of the floor (remove-not-hide vindicated, v8.6 correctly said hiding
+wouldn't work), BUT %HBM plateaued ~10–12% (not the floor) → a residual per-CTA ceiling remains; v8.7 did NOT
+make the kernel bandwidth-bound, so v9 FP8's value stays capacity+accuracy, not micro-bench latency. Closes
+the decode-schedule arc: M-packing + score-stationary are the two real decode levers. See `results.md` Step 8.7.**

@@ -63,7 +63,7 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   keys `j > i` excluded; tested both ways vs SDPA). Hardware leaks in only at the build `-gencode`
   and `roofline/archs.py`.
 
-## Status (2026-06-27)
+## Status (2026-06-28)
 
 - **Step 1 (v1 naive)** — DONE: tests green, benched, quiz passed. Key finding: naive beats its
   cache-free roofline floor at mid-N (L2 absorbs redundant operand reads), converges to it at
@@ -236,9 +236,19 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   premature.** Wired (load/dispatch/harness/tests, both `(7,0)`, tol 2e-2, added to `GQA_BACKENDS`); gate
   notebook `notebooks/v8_6_reduction_gate.ipynb` (fork of v8.5's, builds both arms, `-k "v8_gqa_occ or
   v8_gqa_ilp or v8_gqa"`, 3-way A/B G-sweep + reclaim-at-batch). See `results.md`/`decisions.md` Step 8.6,
-  `interview-prep.md` C11.5. (Gate-2 quiz for v8.6 deferred — folded into v8.7's quiz per Kien.)
-- **Step 8.7 (v8.7 score-stationary inner loop, `kernels/v8_gqa_ss/`)** — **CODE COMPLETE, T4 gate PENDING
-  (2026-06-28).** v8.6's fourth negative mandated REMOVING (not hiding) the wall. Single variable = the
+  `interview-prep.md` C11.5. **Gate-2 quiz PASSED 2026-06-28 (combined with v8.7) → Step 8.6 DONE.**
+- **Step 8.7 (v8.7 score-stationary inner loop, `kernels/v8_gqa_ss/`)** — **MEASURED 2026-06-28 (Colab T4):
+  WIN, ✅ 228 passed. ss beats Cut 1 1.1–1.6× at MATCHED CLOCK (ss ran 375/465 MHz vs Cut 1 360/480 — clock-
+  fair; occ ran hot 585/1590) across G and batch (best at d=64; d=128 wins less 1.16–1.18× = the R2
+  smem-read-BW drag, NOT a null), beats SDPA 8–16×, and is the FIRST lever since Cut 1 to move the
+  clock-robust %HBM (up ~2–3 pts → ~10–12%). ss-vs-occ (both FP16 smem) confirms the win is the LAYOUT. TWO
+  TRUTHS: (1) removing the per-key reduction + 32×-shortening the recurrence was a REAL win → the
+  reduction/recurrence WAS a genuine component of the floor (remove-not-hide vindicated; v8.6 correctly said
+  hiding wouldn't work); (2) %HBM plateaued ~10–12%, NOT the floor → a residual per-CTA ceiling remains (load
+  latency / small-CTA launch), the kernel is still NOT bandwidth-bound → v9 FP8's value stays capacity+accuracy,
+  not micro-bench latency. CLOSES the decode-schedule arc: M-packing (Cut 1) + score-stationary (v8.7) are the
+  two real decode levers; tensor cores / double-buffer / occupancy / ILP were dead ends. **Combined v8.6+v8.7
+  Gate-2 quiz PASSED 2026-06-28 → Step 8.7 DONE.** v8.6's fourth negative mandated REMOVING (not hiding) the wall. Single variable = the
   inner-loop LAYOUT: flip from Cut 1's output-stationary GEMV (lane splits head-dim → per-key `__shfl_xor`
   butterfly + serial recurrence) to **score-stationary: lane = key** — lane `l` computes the FULL dot product
   q·k_c in its own registers (**no per-key cross-lane reduction**); softmax runs **once per 32-key group** (one
@@ -255,15 +265,23 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   µs/tok drops, best at d=64; d=128 at RISK of flipping to smem-read-BW-bound (full-D sK reads/key);
   counter-prediction: if µs/tok drops but %HBM stays ~10% → floor is per-CTA LOAD latency → v9 FP8 (capacity)
   is the right next lever.** Wired (load/dispatch/harness 3 tuples/tests, `(7,0)`, tol 2e-2, `GQA_BACKENDS`);
-  gate notebook `notebooks/v8_7_score_stationary_gate.ipynb` (build ss, `-k "v8_gqa_ss or v8_gqa"`, 3-way A/B
-  Cut1/occ/ss G-sweep + reclaim). **Outstanding GPU work:** run the gate (T4), fill the A/B, then the combined
-  v8.6+v8.7 quiz. See `results.md`/`decisions.md` Step 8.7, `interview-prep.md` C11.6.
+  gate notebook `notebooks/v8_7_score_stationary_gate_output.ipynb` (run-of-record; build ss, 3-way A/B
+  Cut1/occ/ss G-sweep + reclaim). See `results.md`/`decisions.md` Step 8.7, `interview-prep.md` C11.6.
 
 ## Next steps
 
 **The reordered decode arc is `docs/decode-replan.md` §5 (math + per-step deliverable); summary:**
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → v9 FP8 KV → v10 NVFP4 + asymmetric
 precision (headline) → v11 MLA/speculative.
+
+**Decode-SCHEDULE chapter CLOSED (2026-06-28, Steps 8/8.6/8.7 all DONE).** The two real decode levers are
+**M-packing (Cut 1, per-CTA/occupancy)** + **score-stationary (v8.7, inner-loop)** — together they beat
+SDPA 8–16× and v7-no-packing many×, on CUDA cores. Measured dead ends: tensor cores (Cut 2), double-buffer
+(v8.5), occupancy & key-ILP (v8.6) — the decode floor was a serial dependency chain you relayout, not a knob
+you tune. **Residual: even v8.7 plateaus at ~10–12% HBM** (a per-CTA load/launch ceiling), so the kernel is
+NOT bandwidth-bound on this micro-bench → **v9 FP8 / v10 NVFP4 are a CAPACITY + ACCURACY play, not a
+micro-bench latency win** (frame the deliverable as KV-cache footprint + RMSE-vs-FP64, measured vs
+FlashInfer/FlashMLA). Next lever for latency would be a memory-bound regime (N_k past L2) or batch scale.
 
 1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — DONE (both gates, 2026-06-27).** Deep-research
    close-out applied (`docs/v7-deep-research.md` + `docs/v8-kickoff.md`); `diagrams/decode-roofline-crossover.svg`
