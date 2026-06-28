@@ -1436,6 +1436,35 @@ FP4-everything demo blew up RMSE **4.6–6.6×** when the score P was quantized 
 **score ≥ FP16 justified** (already true in the kernel). So Stage B (kernel per-channel/per-token) is
 **deferred until real KV earns it.**
 
+### Asymmetric ablation — Stage A′ (REAL GPT-2 KV, 2026-06-29): conditionally vindicated, block16 robust
+
+`notebooks/v10_realkv_ablation_output.ipynb` — capture K,V from GPT-2 (MHA, d=64) on real text, an
+**outlier diagnostic**, then the same K×V matrix. The diagnostic proves the structure the synthetic
+test lacked: K channel max/mean = **11.6 at layer 2** (~2× the Gaussian 5.9), fading to ≈Gaussian by
+layer 11; V token norm max/median only **1.5–2.2** (mild — gpt2-small's sink/massive-activation effect
+is weak). The matrix, read against it:
+
+| layer | K outliers | best NVFP4 cell | vs block16/block16 | vs per-tensor FP8 |
+|---|---|---|---|---|
+| 2 | strong (11.6) | **K=channel / V=block16 = 5.60e-2** | **beats block16 (6.64e-2) 16%** | 3.88× |
+| 6 | mild (9.2) | block16/block16 = 1.23e-2 | block16 wins | **1.49×** |
+| 11 | none (5.7) | block16/block16 = 2.90e-2 | block16 wins | 3.06× |
+
+**The K mechanism is REAL and mechanism-confirmed: per-channel-K beats block16 *exactly* at the layer
+with strong channel outliers (layer 2), and loses where they vanish (layer 11 ≈ Gaussian)** — precisely
+as the diagnostic predicts. **But it's layer-conditional, and block16 (standard NVFP4) is the robust
+default** (best/tied at 2 of 3 layers); a *fixed* per-channel-K recipe would hurt where outliers are
+absent. **V=token never clearly wins** (gpt2-small's V outliers too mild). **No NVFP4 cell beats
+per-tensor FP8**, but the gap **narrows to 1.49× at mid layers** (vs 3.5× synthetic) because real
+outliers punish FP8's coarse per-tensor scale too (FP8 RMSE rose ~20× synthetic→real).
+
+**Verdict:** the asymmetric recipe is **conditionally vindicated, not blanket-justified**; **block16 is
+the right thing to ship**, and a fixed per-channel/per-token kernel (Stage B) is **NOT justified** for a
+decode micro-study. Caveat: gpt2-small is a weak outlier substrate — a larger / known-sink model would
+strengthen the V=token lever and the conditional claim (an optional next rung). Accuracy chapter is
+honest + complete: *block16 robust; per-channel-K conditionally real; FP4 above the FP8 floor but the
+gap narrows on real KV; score ≥ FP16 required.*
+
 ### Still PENDING — Gate 2 (quiz) + the paper's measured core
 
 - **Gate 2 — quiz:** not yet taken (the per-step loop gates the next step on it).

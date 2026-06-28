@@ -1024,3 +1024,15 @@ outlier diagnostic + the same matrix); **Stage B (kernel per-channel/per-token s
 real KV earns it.** Clean positive: the FP4-everything demo confirmed score-quantization collapses softmax
 (4.6–6.6× RMSE blow-up) → **score ≥ FP16 justified** (already in the kernel). Tooling:
 `fa_kernels/nvfp4_recipes.py` (model-agnostic fake-quant). See `results.md` Step 10 asymmetric subsection.
+
+**Stage A′ (REAL GPT-2 KV) DONE 2026-06-29: conditionally vindicated, block16 stays the default →
+Stage B (kernel) NOT justified.** Captured real K,V from GPT-2 + an outlier diagnostic (K channel
+max/mean 11.6 at layer 2 vs Gaussian 5.9, gone by layer 11; V token outliers mild 1.5–2.2). The matrix:
+**per-channel-K beats block16 exactly at the layer with strong channel outliers (layer 2, 16% better)
+and loses where they vanish (layer 11) — the KIVI/KVQuant mechanism CONFIRMED, but layer-conditional.**
+block16 (standard NVFP4) is best/tied at 2 of 3 layers; V=token never clearly wins (gpt2-small sinks too
+weak); no NVFP4 beats per-tensor FP8 but the gap narrows to 1.49× at mid layers (vs 3.5× synthetic).
+**Decision: ship block16; a fixed per-channel/per-token kernel is not worth the complexity for a decode
+micro-study.** The accuracy chapter is honest + complete; an optional stronger-model rung (larger /
+known-sink) would firm the V lever. See `results.md` Step 10 Stage-A′ subsection,
+`notebooks/v10_realkv_ablation_output.ipynb`.

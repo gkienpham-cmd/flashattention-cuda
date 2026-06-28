@@ -372,7 +372,16 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   block16 (finest) wins by default. → test on REAL KV (`notebooks/v10_realkv_ablation.ipynb`, GPT-2);
   Stage B kernel deferred until real KV earns it. Clean positive: FP4-everything demo blew up RMSE 4.6–6.6×
   (score-quant collapses softmax) → score ≥ FP16 justified (already in-kernel). Tool:
-  `fa_kernels/nvfp4_recipes.py`.** Forks v9 (`fp8_attention.cu`)
+  `fa_kernels/nvfp4_recipes.py`.** **Stage A′ (REAL GPT-2 KV, 2026-06-29,
+  `notebooks/v10_realkv_ablation_output.ipynb`): CONDITIONALLY VINDICATED. Outlier diagnostic confirms K
+  channel structure (max/mean 11.6 @ layer 2 vs Gaussian 5.9, gone by layer 11; V token outliers mild
+  1.5–2.2). per-channel-K BEATS block16 exactly where channel outliers are strong (layer 2, 16% better)
+  and loses where they vanish (layer 11) — KIVI/KVQuant mechanism CONFIRMED but layer-conditional. block16
+  (standard NVFP4) is the robust default (best/tied 2 of 3 layers); V=token never clearly wins (gpt2-small
+  sinks too weak); no NVFP4 beats per-tensor FP8 but the gap narrows to 1.49× mid-layer (vs 3.5× synthetic).
+  DECISION: ship block16; Stage B (fixed per-channel/per-token kernel) NOT justified for a decode
+  micro-study. Accuracy chapter honest + complete; optional larger/known-sink model rung would firm the V
+  lever.** Forks v9 (`fp8_attention.cu`)
   changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
   E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
   FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host
