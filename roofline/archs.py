@@ -102,15 +102,16 @@ A100 = Arch(
 # HBM 8 TB/s (same flat 8 TB/s as B300). Compute peaks are
 # vendor "dense" figures and SPECULATIVE placeholders — fix vs a primary spec sheet before quoting any
 # sm_100 compute prediction. Decode is memory-bound regardless (AI << ridge), so the 8 TB/s drives the
-# floor; FP8/FP4 dense are ~2/3 of B300's (Ultra is ~1.5x B200).
+# floor; FP8/FP4 dense are ~2/3 of B300's (Ultra is ~1.5x B200). num_sm / clock / L2 / smem now MEASURED
+# on a vast.ai B200 (v10 B300-regime run, 2026-06-29) — see docs/results.md Step 10 B200 result.
 B200 = Arch(
     name="NVIDIA B200 (Blackwell)",
     sm="sm_100",
-    num_sm=148,                  # SPECULATIVE placeholder; confirm vs spec sheet
-    boost_clock_mhz=1800,        # SPECULATIVE placeholder
-    hbm_gb=192,
+    num_sm=148,                  # MEASURED (torch device props, 2026-06-29)
+    boost_clock_mhz=1965,        # MEASURED max SM clock (nvidia-smi)
+    hbm_gb=192,                  # MEASURED 191.5 GB
     hbm_bw_gbps=8000.0,          # firm: 8 TB/s (flat, same as B300)
-    smem_per_sm_kb=228,          # SPECULATIVE placeholder (Hopper-class); confirm for Blackwell
+    smem_per_sm_kb=228,          # MEASURED (CC 10.x = Hopper config)
     smem_bw_gbps=33000.0,        # SPECULATIVE estimate
     fp16_tc_flops=2.25e15,       # SPECULATIVE (~FP8 dense / 2); confirm vs spec sheet
     fp32_cuda_flops=60.0e12,     # SPECULATIVE placeholder
@@ -118,7 +119,7 @@ B200 = Arch(
     mufu_ratio=0.25,             # SPECULATIVE placeholder
     fp8_tc_flops=4.5e15,         # SPECULATIVE: ~B300 FP8 (5 PF) scaled down; confirm
     fp4_tc_flops=9.0e15,         # SPECULATIVE: ~B300 NVFP4 (15 PF) scaled down; the v10 headline lever
-    l2_mb=126.0,                 # ~126 MB (deep-research; partitioned across 2 dies)
+    l2_mb=132.6,                 # MEASURED 132.6 MB (refutes the 192 MB aggregator claim; B300 same die)
 )
 
 # B300 (Blackwell Ultra), sm_103. THE FINAL GOAL — the v10/v11 record target and the paper's novelty

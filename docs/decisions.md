@@ -1036,3 +1036,19 @@ weak); no NVFP4 beats per-tensor FP8 but the gap narrows to 1.49× at mid layers
 micro-study.** The accuracy chapter is honest + complete; an optional stronger-model rung (larger /
 known-sink) would firm the V lever. See `results.md` Step 10 Stage-A′ subsection,
 `notebooks/v10_realkv_ablation_output.ipynb`.
+
+**B300-measured-core — B200 dev-rung MEASURED 2026-06-29 (the T3 verdict, confound-free on the L2 axis;
+sm_103 record + ncu still owed).** Ran the regime knee-hunt end-to-end on a vast.ai **B200** (after fixing
+the cusparse-header build, `bindings/load.py`). **Decision-relevant findings:** (1) **No bandwidth knee** —
+%HBM dead flat ~0.5% from N_k 8K→2M, *including* an 8× L2 overflow (1 GB WS ≫ measured 132.6 MB L2) →
+**decode is per-CTA-bound on Blackwell at all reachable context**, now confound-free on the L2 axis
+*without ncu* (the 1 GB WS kills the L2-residency confound by construction). (2) **Architecture-independent
+latency ceiling:** ~40 GB/s achieved at B=1 on BOTH T4 and B200 (11% of 320 GB/s vs 0.5% of 8 TB/s) — the
+strongest latency-bound evidence in the project. (3) **NVFP4 is latency-NEGATIVE past L2** (12–30% slower
+than FP16; FP8 ≈ FP16) → **NVFP4 = capacity + accuracy, NOT latency, settled definitively**. (4) Occupancy
+(batch) is the only throughput lever (4× from batching) but caps at 2.3% HBM. (5) Arch constants measured
+(L2 **132.6 MB** refutes the 192 MB aggregator claim; 148 SMs; 1965 MHz suggests B300's 2600 estimate is
+high). **Net: the B300/sm_103 run is now corroboration, not discovery** — reproduce the flat %HBM + add the
+ncu L2-hit-rate (needs a **privileged/bare-metal** box; vast.ai containers block counters at the host
+kernel-module level) + the 2×-exp delta. The science answer won't change. See `results.md` Step 10 B200
+result, `notebooks/v10_b300_regime_output.ipynb`, `docs/v10-b300-runbook.md` §0.

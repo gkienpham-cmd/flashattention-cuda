@@ -381,7 +381,18 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   sinks too weak); no NVFP4 beats per-tensor FP8 but the gap narrows to 1.49× mid-layer (vs 3.5× synthetic).
   DECISION: ship block16; Stage B (fixed per-channel/per-token kernel) NOT justified for a decode
   micro-study. Accuracy chapter honest + complete; optional larger/known-sink model rung would firm the V
-  lever.** Forks v9 (`fp8_attention.cu`)
+  lever.** **B300-measured-core — B200 dev-rung MEASURED 2026-06-29 (`notebooks/v10_b300_regime_output.ipynb`,
+  after fixing the cusparse-header build): the T3 knee-hunt has a first Blackwell answer (sm_100, not yet
+  the sm_103 record; counter-free, no ncu). NO bandwidth knee — %HBM dead flat ~0.5% from N_k 8K→2M
+  INCLUDING an 8× L2 overflow (1 GB WS ≫ measured L2 132.6 MB) → decode per-CTA-bound on Blackwell at all
+  context, CONFOUND-FREE on the L2 axis without ncu (the 1 GB WS kills the L2 confound by construction).
+  Architecture-independent latency ceiling: ~40 GB/s achieved at B=1 on BOTH T4 and B200 (11% of 320 GB/s
+  vs 0.5% of 8 TB/s) = strongest latency-bound evidence yet. NVFP4 latency-NEGATIVE past L2 (12–30% slower
+  than FP16; FP8≈FP16) → NVFP4 = capacity+accuracy NOT latency, settled. Occupancy (batch) only lever (4×,
+  caps 2.3% HBM). Measured: L2 132.6 MB (refutes 192 MB aggregator), 148 SMs, 1965 MHz (→ B300's 2600 est
+  likely high) — filled into `roofline/archs.py` B200. B300/sm_103 run is now corroboration not discovery
+  (+ ncu L2-hit-rate needs a PRIVILEGED/bare-metal box; vast.ai containers block counters — host
+  kernel-module gate, `docs/v10-b300-runbook.md` §0).** Forks v9 (`fp8_attention.cu`)
   changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
   E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
   FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host

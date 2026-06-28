@@ -1492,4 +1492,51 @@ pre-flight smoke), `v10_b300_exp_ablation.ipynb` (T2), `v10_b300_comparators.ipy
 See `decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`, `docs/v10-b300-runbook.md`,
 `docs/b300-decode-research.md`, `notebooks/v10_nvfp4_gate_output.ipynb`.
 
+### B300 measured core — B200 dev-rung result (MEASURED 2026-06-29, `notebooks/v10_b300_regime_output.ipynb`)
+
+The dev-rung box (vast.ai **B200**, sm_100, the cusparse-header build fixed) was run end-to-end, so the
+T3 knee-hunt has a **first Blackwell answer** — on sm_100, not yet the sm_103 record, and **counter-free
+(no ncu** on the unprivileged AIO image; ncu the L2-hit-rate corroboration is still owed on a privileged
+B300). It still **resolves the T3 question decisively**, because the run brute-forces past the measured
+**L2 = 132.6 MB** to a **1 GB working set** (L2-flushed). Clocks ran at **max boost 1965 MHz throughout**
+(kernel too light to throttle), so absolute µs/tok is clock-trustworthy here.
+
+**Headline — NO bandwidth knee; per-CTA-bound to 2M tokens.** %HBM (vs 8 TB/s) is **dead flat ~0.5%**
+across the entire N_k range 8K→2M for FP16, FP8 *and* NVFP4 — *including* an **8× L2 overflow** (WS 1 GB
+≫ 132.6 MB L2, `L2res=no`). `eff_bw` rises 37→45 GB/s (launch-overhead amortization, plateauing *before*
+the L2 crossing), then flat. **Decode is per-CTA-bound on Blackwell, NOT bandwidth-bound, at every
+reachable context** — the "stronger, more surprising" T3 outcome, now **confound-free on the L2 axis
+without needing ncu** (the 1 GB WS kills the L2-residency confound by construction).
+
+**The architecture-independent latency ceiling (the strongest evidence yet).** At B=1 the kernel
+achieves **~40–45 GB/s on BOTH T4 and B200** — i.e. **~11% of the T4's 320 GB/s but ~0.5% of the B200's
+8 TB/s.** Same absolute throughput across a 25× bandwidth gap → a **per-CTA/latency ceiling that does not
+scale with the device**: the cleanest possible signature of latency-bound, stronger than T4 alone could
+make.
+
+**NVFP4 is latency-NEGATIVE past L2 (the byte cut HURTS).** Wall-clock µs/tok at d=128: NVFP4 is
+**12–30% SLOWER than FP16** (N_k=1M: FP16 11425, FP8 11769, **NVFP4 14631**), and **FP8 ≈ FP16** (byte
+savings ≈ dequant tax, within ~5% noise). On a compute/latency-bound kernel the nibble-unpack +
+per-16-microscale ALU sits on the critical path and the byte savings buy nothing. **This definitively
+settles NVFP4 = capacity + accuracy, NOT latency** — on B200 it's not even latency-neutral, it's
+negative. Zero ambiguity left.
+
+**Occupancy is the only throughput lever, and it still caps far from bandwidth.** Large-batch (N_k=131072,
+d=128, FP16, sweep B): µs/tok drops **4.1×** (1491→367, B=1→128) and %HBM climbs **0.6→2.3%** — batching
+fills the 148 SMs (consistent with the v8.6 "occ revives at batch" finding), but even SM-saturated with
+an 8.6 GB working set the per-CTA serial recurrence (1 active warp at N_q=1) caps achieved BW at 2.3%.
+
+**Arch constants MEASURED** (now in `roofline/archs.py` B200): **L2 132.6 MB** (confirms the ~126 same-die
+figure, **refutes the 192 MB aggregator claim** → B300 same die ≈ 132, not 192), **148 SMs**, **228 KB
+smem/SM**, **191.5 GB**, **max SM clock 1965 MHz** (⚠️ suggests the B300 `boost_clock_mhz=2600` estimate
+may be high — flag for the sm_103 measure).
+
+**Net:** the per-CTA-bound thesis is now confirmed on **Blackwell at scale, confound-free on the L2 axis**
+— the verdict that was hedged-by-L2 on T4 is demonstrated past a 1 GB working set on an 8 TB/s GPU, with
+an architecture-independent ~40 GB/s latency ceiling. A **B300/sm_103 run is now corroboration, not
+discovery** (reproduce the flat %HBM + add ncu L2-hit-rate + the 2×-exp delta; the science answer will
+not change). **Outstanding for the paper record:** the sm_103 box + the ncu L2-hit-rate cross-check on a
+**privileged/bare-metal** host (vast.ai containers block counters — host kernel-module gate, see
+`docs/v10-b300-runbook.md` §0).
+
 ---
