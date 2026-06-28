@@ -1474,7 +1474,22 @@ gap narrows on real KV; score ≥ FP16 required.*
   sweep N_k to 256K–1M past the ~126 MB L2, clock-locked + ncu), the sm_103 2×-exp ablation,
   FlashInfer/FlashMLA comparators. (T4-emulated latency is NOT valid — confirmed by the 585 MHz throttle.)
 
-See `decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`,
-`notebooks/v10_nvfp4_gate_output.ipynb`.
+**B300 rental kickoff — PREP LANDED (2026-06-29, ready to rent).** A 3-agent research pass + tiered,
+pre-flighted notebooks so the paid vast.ai session runs cheaply and first-try. **Decided:** comparator =
+**FlashInfer trtllm-gen NVFP4** (released v0.6.13; key constraints — FP8-Q required, head_dim 128 only,
+`kv_layout="NHD"` matches our pool); path = **B200 dev-rung → B300**; budget = **escalating tiers**
+(short 256K → medium 524K → open 1M+). **Build blocker fixed:** `bindings/load.py` now **auto-detects the
+GPU capability** (T4→compute_75, B200→compute_100, B300→compute_103 + PTX) so the sm_103 build just works
+on a CUDA-12.9 box (a global compute_103 default would have broken Colab's 12.8 nvcc). **B300 arch
+constants research-filled** in `roofline/archs.py` (L2 **126 MB** [LIKELY, 192 MB is aggregator-error —
+measure], smem/SM 228 KB [FACT], BF16 2.5 PF, FP32 ~105 TF, **INT8 gutted ~95%** → strengthens
+NVFP4-not-INT8, clock ~2600 [unconfirmed]). **The critical runbook finding:** `ncu`'s `ERR_NVGPUCTRPERM`
+is a **host kernel-module gate, unfixable from inside a container** even with `--cap-add` → method =
+**probe-then-keep** (run the ncu probe first, destroy the host if it fails). Deliverables:
+`docs/v10-b300-runbook.md`, `notebooks/v10_b300_regime.ipynb` (headline knee-hunt + arch-measure cell +
+pre-flight smoke), `v10_b300_exp_ablation.ipynb` (T2), `v10_b300_comparators.ipynb` (FlashInfer).
+
+See `decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`, `docs/v10-b300-runbook.md`,
+`docs/b300-decode-research.md`, `notebooks/v10_nvfp4_gate_output.ipynb`.
 
 ---

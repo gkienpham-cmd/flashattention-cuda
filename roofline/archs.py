@@ -127,27 +127,29 @@ B200 = Arch(
 # 15 PF dense. Sources:
 # NVIDIA Blackwell Ultra / GB300 briefings + docs/v7-deep-research.md. HBM bandwidth is the one
 # number that matters for the decode roofline and it is firm: 8 TB/s, FLAT vs B200 (only capacity
-# grew 192->288 GB). The dense-compute peaks are vendor "dense" figures; FP16/FP32 here are
-# SPECULATIVE placeholders (derived ~FP8/2 and a rough CUDA-core estimate) and tagged as such —
-# fix them against a primary spec sheet before quoting any sm_103 compute prediction. boost clock
-# and smem/SM are likewise unconfirmed placeholders. exp_per_s is the stated 2x-exp throughput.
+# grew 192->288 GB). Constants refreshed by the v10 B300-research pass (2026-06-29, NVIDIA primary
+# sources — Inside Blackwell Ultra blog, Blackwell Tuning Guide, GB300 NVL72 page); each field tagged
+# FACT / LIKELY / UNCONFIRMED. The UNCONFIRMED ones (L2, clock, smem_bw, fp32) are MEASURED on the
+# rental (notebooks/v10_b300_regime.ipynb §4 arch-measure). NOTE the INT8 gutting (~95% vs B200) — it
+# strengthens the NVFP4-not-INT8 KV choice. Decode kernel compiles to plain sm_103 (no tcgen05); v11's
+# native FP4 compute would need sm_103a. See docs/b300-decode-research.md + docs/v10-b300-runbook.md.
 B300 = Arch(
     name="NVIDIA B300 (Blackwell Ultra, GB300)",
     sm="sm_103",
-    num_sm=160,
-    boost_clock_mhz=1800,        # SPECULATIVE placeholder — no confirmed boost clock
-    hbm_gb=288,
-    hbm_bw_gbps=8000.0,          # firm: 8 TB/s, flat vs B200 (deep-research verified)
-    smem_per_sm_kb=228,          # SPECULATIVE placeholder (Hopper-class); confirm for Blackwell
-    smem_bw_gbps=33000.0,        # SPECULATIVE estimate
-    fp16_tc_flops=2.5e15,        # SPECULATIVE (~FP8 dense / 2); confirm vs spec sheet
-    fp32_cuda_flops=80.0e12,     # SPECULATIVE placeholder
-    int8_tc_ops=5.0e15,          # ~= FP8 dense
-    mufu_ratio=0.25,             # SPECULATIVE placeholder; exp_per_s below is the firm figure
-    fp8_tc_flops=5.0e15,         # deep-research: FP8 5 PF dense
-    fp4_tc_flops=15.0e15,        # deep-research: NVFP4 15 PF dense (the v10 headline lever)
-    exp_per_s=10.7e12,           # deep-research: 2x exp throughput (10.7 TeraExp/s)
-    # l2_mb left None: no primary source.
+    num_sm=160,                  # FACT
+    boost_clock_mhz=2600,        # UNCONFIRMED (aggregator/TPU-DB; NVIDIA publishes none) — MEASURE
+    hbm_gb=288,                  # FACT
+    hbm_bw_gbps=8000.0,          # FACT: 8 TB/s, flat vs B200
+    smem_per_sm_kb=228,          # FACT (CC 10.x = Hopper config; combined L1+smem 256 KB, TMEM 256 KB)
+    smem_bw_gbps=36800.0,        # LIKELY (~230 GB/s/SM x 160, microbench-derived) — MEASURE
+    fp16_tc_flops=2.5e15,        # LIKELY (BF16/FP16 dense; rack 180 dense / 72. NOT 2.25=B200, NOT 3.5=rumor)
+    fp32_cuda_flops=105.0e12,    # UNCONFIRMED (20480 cores x 2 x ~2.6 GHz) — MEASURE with an FMA microkernel
+    int8_tc_ops=0.15e15,         # LIKELY: GUTTED ~95% vs B200 (~150 TOPS) to fund the NVFP4 uplift
+    mufu_ratio=0.25,             # placeholder; exp_per_s below is the firm softmax figure
+    fp8_tc_flops=5.0e15,         # FACT: FP8 5 PF dense
+    fp4_tc_flops=15.0e15,        # FACT: NVFP4 15 PF dense (the v10 headline lever; tcgen05 gate M>=64)
+    exp_per_s=10.7e12,           # FACT: 2x exp/EX2 throughput (10.7 TeraExp/s) — the sm_103 softmax lever
+    l2_mb=126.0,                 # LIKELY (same dual-die as B200; 192 MB is aggregator-only) — MEASURE on rental
 )
 
 # Registry so other modules / bench logs can look an arch up by its sm string.

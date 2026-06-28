@@ -36,10 +36,10 @@ _SOURCES = {
 }
 
 
-# Per-kernel gencode. The DEFAULT targets BOTH the Colab T4 (sm_75) and a rented A100 (sm_80) so any
-# kernel runs on either box (a sm_75-only binary will NOT load on an A100 — different SASS, no JIT PTX).
-# A kernel that uses arch-specific features overrides with its own list. The roofline arch constant and
-# this gencode must agree (see roofline/archs.py: T4=sm_75, A100=sm_80).
+# Per-kernel gencode. Fallback DEFAULT targets BOTH the Colab T4 (sm_75) and a rented A100 (sm_80) so a
+# binary built without a queryable GPU runs on either box. A kernel that uses arch-specific features
+# overrides with its own list. The roofline arch constant and this gencode must agree (see
+# roofline/archs.py: T4=sm_75, A100=sm_80, B200=sm_100, B300=sm_103).
 _DEFAULT_ARCH = [
     "-gencode=arch=compute_75,code=sm_75",   # Tesla T4 (Turing) — the free Colab box
     "-gencode=arch=compute_80,code=sm_80",   # A100 (Ampere) — the v8 Cut 2b rental
@@ -48,6 +48,35 @@ _ARCH = {
     # Cut 2b's cp.async + mma.m16n8k16 path (when written) is Ampere-only -> sm_80 alone:
     # "v8_gqa_tc_sm80": ["-gencode=arch=compute_80,code=sm_80"],
 }
+
+
+def _detect_arch_flags():
+    """Gencode for the CURRENT GPU. We build for the device actually present rather than a fixed
+    multi-arch list because the Blackwell targets are CUDA-version-gated: sm_100 (B200) needs CUDA
+    >=12.8 and sm_103 (B300) needs CUDA >=12.9, so putting compute_103 in a global default would BREAK
+    the Colab-T4 build (its older nvcc rejects the unknown arch). Querying the device gives each box
+    exactly the arch its toolchain supports: T4->compute_75, A100->compute_80, B200->compute_100,
+    B300->compute_103. A trailing PTX (code=compute_XX) keeps it JIT-forward on a newer driver. Honors
+    FA_CUDA_ARCH (e.g. '103' or '10.3') to force a target; falls back to _DEFAULT_ARCH if no GPU is
+    queryable. Our kernels use no arch-specific (sm_103a) features, so plain sm_103 SASS compiles."""
+    forced = os.environ.get("FA_CUDA_ARCH")
+    cap = None
+    if forced:
+        cap = forced.replace(".", "")
+    else:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                major, minor = torch.cuda.get_device_capability()
+                cap = f"{major}{minor}"
+        except Exception:
+            cap = None
+    if not cap:
+        return _DEFAULT_ARCH
+    return [
+        f"-gencode=arch=compute_{cap},code=sm_{cap}",       # native SASS for this device
+        f"-gencode=arch=compute_{cap},code=compute_{cap}",  # PTX fallback (JIT-forward safety)
+    ]
 
 
 @lru_cache(maxsize=None)
@@ -67,9 +96,10 @@ def build_kernel(name: str):
     src_dir = os.path.join(_KERNELS_DIR, name)
     sources = [os.path.join(src_dir, f) for f in _SOURCES[name]]
 
+    arch_flags = _ARCH.get(name) or _detect_arch_flags()
     return load(
         name=f"fa_{name}",
         sources=sources,
-        extra_cuda_cflags=["-O3", *_ARCH.get(name, _DEFAULT_ARCH)],
+        extra_cuda_cflags=["-O3", *arch_flags],
         verbose=True,
     )
