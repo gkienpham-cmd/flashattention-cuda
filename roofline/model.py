@@ -104,9 +104,20 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         #
         # NOTE on what t_hbm is and is NOT: it is a FLOOR the kernel is far from, not a bound split-KV
         # attains. v7's --batch sweep measured only ~10% of HBM on T4 decode, FLAT from BH=8 to 512 (no
-        # occupancy->bandwidth crossover). The kernel is per-CTA-bound, not bandwidth-bound: at N_q=1
+        # occupancy->bandwidth crossover). The kernel LOOKS per-CTA-bound, not bandwidth-bound: at N_q=1
         # only 1 of 8 warps computes (GEMV shape) and sK+sV=32 KB caps residency at 2 blocks/SM. Filling
-        # the grid with splits does NOT move %HBM. So the lever is per-CTA EFFICIENCY, not bytes.
+        # the grid with splits does NOT move %HBM. So the candidate lever is per-CTA EFFICIENCY, not bytes.
+        #
+        # *** L2-RESIDENCY CONFOUND (v8 deep-research close-out, 2026-06-28) ***: that "~10% HBM" is
+        # NOT yet an earned bandwidth verdict. At the bench sizes the KV working set FITS in the T4's
+        # 4 MB L2 (e.g. reclaim G=8/B=1 -> H_kv=1 -> KV = 2*1*8192*128*2 B ~= 4.2 MB ~= L2). An
+        # L2-resident working set streams from L2 (~1.3 TB/s, ~4x HBM), so the DRAM counter reads low
+        # even if the kernel IS memory-bound -- just bound by the wrong memory. The bench also never
+        # locked clocks (free Colab) nor pushed N_k past ~16K. COUNTER-FREE L2 TEST: effective_bw =
+        # kv_bytes / measured_time; if effective_bw > arch.hbm_bw_gbps the data came from L2, so %HBM
+        # is meaningless as a boundedness metric. v9 Task 1 (root T4: lock clocks, flush L2, sweep N_k
+        # 1K..128K, measure L2 hit-rate) earns or overturns the per-CTA verdict. Until then the
+        # bytes-vs-per-CTA decode limiter is OPEN. See docs/v9-kickoff.md, results.md threats-section.
         #
         # v8 GQA M-packing IS that lever (promoted from the old "v10/v11, not modeled" note): G query
         # heads share one KV head, so KV is read once per group (bh/G) instead of per head (bh). KV bytes

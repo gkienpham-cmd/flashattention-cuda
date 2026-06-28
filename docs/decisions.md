@@ -723,3 +723,57 @@ reduction/recurrence WAS a real component of the floor (remove-not-hide vindicat
 wouldn't work), BUT %HBM plateaued ~10–12% (not the floor) → a residual per-CTA ceiling remains; v8.7 did NOT
 make the kernel bandwidth-bound, so v9 FP8's value stays capacity+accuracy, not micro-bench latency. Closes
 the decode-schedule arc: M-packing + score-stationary are the two real decode levers. See `results.md` Step 8.7.**
+
+---
+
+## Step 8 close-out — deep-research audit + v9 decision (2026-06-28)
+
+**Context:** before opening v9, a 6-investigation close-out (3 forensic on code/results/notebooks + 3
+web-research) audited the v8 family and the planned roadmap, with a mandate to question every conclusion.
+
+**What it confirmed (keep):** M-packing's 8.6×-vs-v7 / 6–10×-vs-SDPA headline (same-session ratios, clock-
+robust) and the WMMA negative (T4→A100 non-scaling = tensor cores wrong for an M≤16 decode GEMV).
+
+**Bottleneck (the correction):** the limiter diagnosis recurring since v6 — "per-CTA-bound, NOT bandwidth-
+bound (~10% HBM)" — is **confounded and not yet earned**. (1) **L2 residency:** the bench KV fits in the
+T4's 4 MB L2 (reclaim G=8/B=1 → H_kv=1 → ~4.2 MB ≈ L2), so the DRAM counter reads low even if the kernel is
+memory-bound — bound by the wrong memory. (2) **Unlockable clock:** free Colab can't pin clocks (CUR swung
+360–1590 MHz), so absolutes/cross-run comparisons carry a ± band. The bench never measured L2 traffic, locked
+clocks, or pushed N_k past ~16K. *Partial counterweight:* low-G configs (KV ~67 MB ≫ L2) still showed ~11%
+HBM. Net: probably per-CTA-bound, unproven. See `results.md` "Step 8 — threats to validity".
+
+**Options for v9:** (a) FP8 KV + fold the regime-fix in as Task 1; (b) a separate pure-measurement step
+first; (c) pivot (mini-vLLM integration / prefill). **Choice: (a)** — `v9 = FP8 KV + regime-characterization`.
+Task 1 (gating, existing `v8_gqa_ss` on a root T4): lock clocks, flush L2, sweep N_k 1K…128K × batch × d ×
+H_kv measuring HBM%/L2-hit-rate/L2-BW% + the counter-free L2 test (effective BW > HBM peak ⇒ L2-served). Task 2:
+FP8 E4M3 KV (fork of ss) with **fused per-tile dequant** (a prepass eats the savings — QServe), FP32 accum.
+*Why fold-in, not a separate step:* the same FP8 byte-cut is what creates the memory-bound regime, and after
+six steps the user wanted forward progress, not another detour. The decode-byte arc (v9→v10→v11) is preserved
+and now rests on an earned verdict.
+
+**FP8 framing (web-research, regime-scoped):** "FP8 = capacity-only, not latency" is right for the L2-resident
+micro-bench but too strong generally — FP8 KV becomes a real latency win past ~4–7k tokens / under load (vLLM:
+per-token cost → 54% of BF16). So v9's latency deliverable is two-regime: L2-resident null vs past-L2 win.
+
+**Hardware (UPDATED — B300 is the final goal, the paper's novelty):** v9 = **T4, no rental** (a decode
+GEMV uses no tensor cores; FP8's win is storage bytes, decoupled from sm_89+ FP8-MMA). v10/v11 (NVFP4,
+MLA/spec) = **B300 / GB300 (sm_103)** — the project's research north star, because **no published FA
+*paper* has characterized a B300** (FA4 stops at B200/sm_100). Honest scope (survives a reviewer):
+production libs (FlashInfer/FlashMLA) already run measured GB300 decode, so the contribution is *the
+first open, roofline-documented, prediction-vs-measured FA decode study on sm_103 + the
+asymmetric-precision FP4 recipe + the honest methodology*, vs those libs — **not** "first to run on
+GB300." B300-specific levers the paper exploits: 2× exp/SFU throughput (10.7 TeraExp/s, hits softmax's
+MUFU term), 288 GB (holds the long-context KV that reaches the bandwidth-bound regime), NVFP4 15 PF
+dense. **B200 (sm_100, ~$3.44/hr) is an OPTIONAL cheaper dev rung** (most tcgen05/TMEM code ports to
+sm_103); the *record* runs on **B300 (~$5.44/hr, spot ~$2.45)**. RTX 5090 (sm_120, different PTX) /
+T4-emulated FP4 are budget fallbacks only. *(Supersedes the earlier "B200 over B300" note — that was
+right for a pure engineering micro-bench, wrong for a publishable contribution where sm_103 IS the
+differentiator.)* Regime-method dev stays on T4 (4 MB L2 spills at tractable N_k); the B300 long-context
+roofline (huge L2) is itself a paper figure.
+
+**What changes on another arch:** the L2 confound is arch-relative — bigger L2 (A100 40 MB, H100 50 MB,
+B200/B300 126–192 MB) pushes the L2-spill N_k far higher, so the "bandwidth-bound regime" needs proportionally
+longer context there. The decode roofline math (AI=2/b, memory-bound at every reachable precision) is
+arch-independent; only *where the kernel reaches the floor* moves.
+
+See [`v9-kickoff.md`](v9-kickoff.md), `decode-replan.md` §5 v9/v10 + §2.1 L2 confound, `interview-prep.md` C12.

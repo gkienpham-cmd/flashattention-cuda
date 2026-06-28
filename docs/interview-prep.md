@@ -861,3 +861,41 @@ doesn't make decode bandwidth-bound — there's a residual per-CTA ceiling under
 what the two decode levers are (pack the heads, restructure the inner loop), what the dead ends were (tensor
 cores, double-buffer, occupancy, ILP), and why low-precision is a capacity play, not a latency one. That's
 the whole decode-schedule story, measured end to end."
+
+---
+
+## C12 — I caught my own six-step conclusion was confounded (the L2-residency trap)
+
+**The chain:** Before building v9 I ran an adversarial close-out on the whole v8 family, and it caught
+something I'd been repeating since **v6**: "decode is per-CTA-bound, not bandwidth-bound — ~10% of HBM,
+flat across batch." That verdict drove three steps of design (v8.5 double-buffer, v8.6 occupancy + ILP,
+all nulls). **It's confounded.** At my bench sizes the KV cache *fits in the T4's 4 MB L2* — reclaim
+G=8/B=1 is H_kv=1, so KV = `2·1·8192·128·2 B ≈ 4.2 MB ≈ L2 exactly`. An L2-resident working set streams
+from L2 at ~1.3 TB/s (≈4× HBM), so the **DRAM counter reads ~10% even if the kernel is fully memory-bound**
+— it's just bound by the *wrong memory*. I'd been reading "10% of HBM" as "not bandwidth-bound" when it
+could equally mean "never left L2." On top of that, free Colab gives no root, so I never locked clocks
+(they swung 360–1590 MHz). So the metric I leaned on was confounded two ways and I never measured L2
+traffic or pushed N_k past ~16K.
+
+**What saves it from being just an error:** I questioned the critique too. The G-sweep's low-G corner
+(G=2 → H_kv=16 → ~67 MB KV, way past L2) still showed ~11% HBM — real evidence the per-CTA verdict
+*survives* past L2. So the honest state isn't "I was wrong," it's "probably per-CTA-bound, but unproven —
+and I can say exactly which experiment settles it."
+
+**The fix (v9 Task 1):** rent a *root* T4 (so clocks lock and ncu counters work), pin clocks, flush L2
+between timed iterations, and sweep N_k 1K→128K × batch × H_kv while measuring HBM% *and* L2 hit-rate *and*
+the counter-free L2 test (effective BW = bytes/time; if it exceeds HBM peak, the data came from L2). Where
+HBM% plateaus as L2-hit-rate falls is the genuine bandwidth-bound regime. If it *still* reads ~10% past L2
+at large batch, "per-CTA/launch-bound" is finally earned.
+
+**Why it matters for the roadmap:** this is also why "FP8 is capacity-only, not latency" was too strong —
+it's true for an L2-resident micro-bench, but FP8 KV is a real latency win past ~4–7k tokens / under load
+(vLLM measured per-token cost → 54% of BF16). So FP8 (v9) does double duty: halving KV bytes is exactly
+what creates the memory-bound regime to test the limiter in.
+
+**Say-this:** "The strongest thing I did in this project was catch my own recurring conclusion. I'd said
+'decode isn't bandwidth-bound' for six steps — then realized my benchmark's KV cache fit inside the GPU's
+L2, so the HBM counter *couldn't* show bandwidth, confound, not result. I also never locked clocks. The
+lesson is that '% of peak HBM' is meaningless for an L2-resident kernel; you have to size the working set
+past L2, flush caches, pin clocks, and measure L2 traffic before you're allowed to name the limiter. v9 is
+built to earn that verdict, not assume it."

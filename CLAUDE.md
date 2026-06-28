@@ -4,6 +4,12 @@ A roofline-driven journey rebuilding FlashAttention one measured speedup at a ti
 is the **measured speedup + roofline curve** (prediction vs reality), not just fast code. Long-term
 goal: a stable `from fa_kernels import attention` API that a future from-scratch mini-vLLM consumes.
 
+**Research north star (the paper):** the decode arc (v6→v11) targets **B300 / GB300 (sm_103)** as its
+final goal — *the first open, roofline-documented, prediction-vs-measured FlashAttention decode study on
+sm_103, with an asymmetric-precision FP4 KV recipe, vs FlashInfer/FlashMLA.* FA4 stops at B200/sm_100, so
+sm_103 is the publishable novelty. Honest scope: production libs already run GB300 decode — the
+contribution is the *open paper-grade roofline + FP4 recipe + honest methodology*, not "first to run."
+
 ## How this project works (read before changing anything)
 
 **The per-step loop** (in `ROADMAP.md`; every kernel version follows it, in order):
@@ -128,7 +134,7 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (HBM, `AI=2/b=1.0`, N-independent) but **magnitude wrong a 5th time** — real limiter is still
   **occupancy/launch** (BH=8 → ~2 blocks/SM + a 2-kernel launch + a tiny under-occupied merge), not
   bandwidth. So the measurement **reorders the roadmap: next lever is occupancy (GQA M-packing → v8,
-  `AI=2G/b`), not bytes** — FP8/NVFP4 KV (now v9/v10 on B300) only pays once actually bandwidth-bound.
+  `AI=2G/b`), not bytes** — FP8/NVFP4 KV (now v9 on T4 / v10 on B300) only pays once actually bandwidth-bound.
   Causal-decode rows are a degenerate-shape artifact (`q` at row 0 → 1 key; SDPA short-circuits, v6
   doesn't) — a `--decode` query-offset is a v7 harness fix. Opens the decode arc v6→v11.
 - **Step 6 deep-research close-out (2026-06-27)** — DONE: a 13-agent verify-and-research pass →
@@ -245,9 +251,12 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   TRUTHS: (1) removing the per-key reduction + 32×-shortening the recurrence was a REAL win → the
   reduction/recurrence WAS a genuine component of the floor (remove-not-hide vindicated; v8.6 correctly said
   hiding wouldn't work); (2) %HBM plateaued ~10–12%, NOT the floor → a residual per-CTA ceiling remains (load
-  latency / small-CTA launch), the kernel is still NOT bandwidth-bound → v9 FP8's value stays capacity+accuracy,
+  latency / small-CTA launch), the kernel looks NOT bandwidth-bound → v9 FP8's value stays capacity+accuracy,
   not micro-bench latency. CLOSES the decode-schedule arc: M-packing (Cut 1) + score-stationary (v8.7) are the
-  two real decode levers; tensor cores / double-buffer / occupancy / ILP were dead ends. **Combined v8.6+v8.7
+  two real decode levers; tensor cores / double-buffer / occupancy / ILP were dead ends. **⚠️ CAVEAT (deep-
+  research 2026-06-28): that "~10% HBM / not bandwidth-bound" read is CONFOUNDED — the bench KV fits in the T4's
+  4 MB L2 + clocks were never locked, so bandwidth couldn't appear. "per-CTA-bound OR L2-resident, unproven";
+  v9 Task 1 earns it. See "Next steps" + `results.md` threats-section + C12.** **Combined v8.6+v8.7
   Gate-2 quiz PASSED 2026-06-28 → Step 8.7 DONE.** v8.6's fourth negative mandated REMOVING (not hiding) the wall. Single variable = the
   inner-loop LAYOUT: flip from Cut 1's output-stationary GEMV (lane splits head-dim → per-key `__shfl_xor`
   butterfly + serial recurrence) to **score-stationary: lane = key** — lane `l` computes the FULL dot product
@@ -271,17 +280,36 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 ## Next steps
 
 **The reordered decode arc is `docs/decode-replan.md` §5 (math + per-step deliverable); summary:**
-v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → v9 FP8 KV → v10 NVFP4 + asymmetric
-precision (headline) → v11 MLA/speculative.
+v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV + regime-fix (T4)** → **v10
+NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper)** → **v11 MLA/speculative (B300)**. **v9
+plan to paste into a fresh session: [`docs/v9-kickoff.md`](docs/v9-kickoff.md).**
 
 **Decode-SCHEDULE chapter CLOSED (2026-06-28, Steps 8/8.6/8.7 all DONE).** The two real decode levers are
 **M-packing (Cut 1, per-CTA/occupancy)** + **score-stationary (v8.7, inner-loop)** — together they beat
 SDPA 8–16× and v7-no-packing many×, on CUDA cores. Measured dead ends: tensor cores (Cut 2), double-buffer
 (v8.5), occupancy & key-ILP (v8.6) — the decode floor was a serial dependency chain you relayout, not a knob
-you tune. **Residual: even v8.7 plateaus at ~10–12% HBM** (a per-CTA load/launch ceiling), so the kernel is
-NOT bandwidth-bound on this micro-bench → **v9 FP8 / v10 NVFP4 are a CAPACITY + ACCURACY play, not a
-micro-bench latency win** (frame the deliverable as KV-cache footprint + RMSE-vs-FP64, measured vs
-FlashInfer/FlashMLA). Next lever for latency would be a memory-bound regime (N_k past L2) or batch scale.
+you tune.
+
+**⚠️ But the limiter diagnosis is CONFOUNDED (deep-research close-out, 2026-06-28) — soften "NOT
+bandwidth-bound".** The "per-CTA-bound, ~10–12% HBM" verdict (recurring since **v6**) was measured where
+bandwidth physically couldn't appear: the bench **KV fits in the T4's 4 MB L2** (reclaim G=8/B=1 → H_kv=1 →
+~4.2 MB ≈ L2), clocks were never locked (free Colab, CUR 360–1590 MHz), and N_k never passed ~16K. So the
+kernel is **per-CTA-bound OR L2-resident — unresolved until benched past L2 at locked clock** (partial
+counterweight: low-G configs with KV ≫ L2 still showed ~11%, so per-CTA-bound *probably* survives — but
+unproven). The M-packing/SDPA *ratio* headlines are same-session and robust; only the limiter *name* is
+confounded. See `results.md` "Step 8 — threats to validity", `decisions.md` Step 8 close-out, C12.
+
+**Reframed v9 (decision recorded):** `v9 = FP8 KV + regime-characterization`. **Task 1 (gating)** earns the
+verdict — on a *root T4* (clocks lock, ncu works), pin clocks, flush L2, sweep N_k {1K…128K} × batch × d ×
+H_kv measuring HBM%/L2-hit-rate/L2-BW% + the counter-free L2 test (effective BW = KV_bytes/time > HBM peak ⇒
+L2-served). **Task 2** = FP8 E4M3 KV (fork `v8_gqa_ss`) with *fused per-tile* dequant (a prepass eats the
+savings), FP32 accum. **FP8 is capacity+accuracy on the L2-resident micro-bench, AND a latency lever in the
+past-L2 / large-batch regime** (vLLM: per-token cost → 54% of BF16 past ~4–7k tokens) — Task 1 creates that
+regime and Task 2 measures it. **Hardware: v9 on T4 (no rental — decode GEMV uses no tensor cores; FP8's win
+is storage bytes); v10/v11 NVFP4 + MLA on B300 / GB300 (sm_103) — the FINAL goal and the paper's novelty**
+(no published FA paper has characterized a B300; FA4 stops at B200). B200 (sm_100) is an optional cheaper dev
+rung; the record runs on B300. B300-only levers the paper uses: 2× exp/SFU throughput (softmax MUFU term),
+288 GB (long-context KV → the bandwidth-bound regime), NVFP4 15 PF.
 
 1. **Step 7 — paged KV gather (`kernels/v7_paged/`) — DONE (both gates, 2026-06-27).** Deep-research
    close-out applied (`docs/v7-deep-research.md` + `docs/v8-kickoff.md`); `diagrams/decode-roofline-crossover.svg`
@@ -296,7 +324,7 @@ FlashInfer/FlashMLA). Next lever for latency would be a memory-bound regime (N_k
    once, `AI = 2/b → 2G/b`, **and G compute-warps/block** (the fix v7 proved is needed). Promoted ahead
    of low-precision because v7 measured the kernel is per-CTA-bound at **all** batch sizes (flat ~10–12%
    HBM, BH=8→512), so cutting bytes is premature regardless of batch. `[RENT]` A100/H100. Then bytes: v9
-   FP8 KV, v10 NVFP4 + asymmetric precision `[B300]`. (Diagrams: `gqa-mpacking.svg`,
+   FP8 KV `[T4]` (+ regime-fix), v10 NVFP4 + asymmetric precision `[B300]` (the paper). (Diagrams: `gqa-mpacking.svg`,
    `decode-roofline-crossover.svg`, `per-cta-limiter-anatomy.svg`.) **Refinements (deep-research, 2026-06-27;
    full starter in [`docs/v8-kickoff.md`](docs/v8-kickoff.md)):** tensor cores engage only at **M≥16** → G=8
    needs pad-to-16 / multi-group-pack / CUDA-core-QK (**the v8 ablation**); sweep `G∈{1,2,4,8,16,32}`; target

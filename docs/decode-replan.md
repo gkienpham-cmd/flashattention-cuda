@@ -135,6 +135,21 @@ the batch alone fills the machine. The crossover **[verified by code-trace]**:
 > header is cosmetic), so the per-CTA story needs no dtype caveat. Full cited synthesis:
 > [`v7-deep-research.md`](v7-deep-research.md).
 
+> **⚠️ L2-RESIDENCY CONFOUND (v8 deep-research close-out, 2026-06-28 — the `%HBM` evidence is not yet
+> earned).** The "per-CTA-bound, ≤12% HBM, flat across batch" finding above (and through v8.7) was
+> measured in a regime where **the KV working set fits in the T4's 4 MB L2** — e.g. reclaim G=8/B=1 →
+> H_kv=1 → KV = `2·1·8192·128·2 B ≈ 4.2 MB ≈ L2 exactly`. When the working set is L2-resident, bytes
+> stream from L2 (~1.3 TB/s, ~4× HBM) and the **HBM counter legitimately reads low** — the kernel looks
+> "not bandwidth-bound" because it's bound by the *wrong memory*. This is a textbook confound (Nsight
+> flushes caches by default for it; practitioners size working sets past L2 / flush L2 in the timing
+> loop). The bench also **never locked clocks** (free Colab; CUR swung 360–1590 MHz) and **never pushed
+> N_k past ~16K**. *Partial counterweight:* the v8 G-sweep's low-G corner (G=2 → H_kv=16 → ~67 MB ≫ L2)
+> still showed ~11% HBM, which is *evidence for* per-CTA-bound past L2 — but L2 traffic was never
+> measured. **Verdict: probably per-CTA-bound, but confounded and unproven.** **v9 Task 1** (clock-lock
+> + sweep N_k past L2 + measure L2 hit-rate/BW, on a root T4) is what earns or overturns it; until then
+> the bytes-vs-per-CTA limiter for decode is *open*. See [`v9-kickoff.md`](v9-kickoff.md), `results.md`
+> "Step 8 — threats to validity".
+
 ---
 
 ## 3. The decode roofline (the math the paper rests on)
@@ -296,30 +311,70 @@ See [`diagrams/build-roadmap-v6-v11.svg`](diagrams/build-roadmap-v6-v11.svg).
 - **Math:** `AI = 2G/b` (GQA-8 BF16 = 8.0, FP4 ≈ 28.6). Shared-KV read drops bytes
   `2·BH·N_k·d·b → 2·(BH/G)·N_k·d·b`. The documented escape from the GEMV trap.
 
-### v9 — FP8 KV cache (bytes lever, step 1) · **[B300]** (or H100 for correctness)
-- **Why here:** bytes-reduction only pays once v8 has pushed the kernel toward the wall. FP8 (`b:2→1`)
-  doubles `AI`, lower accuracy risk than FP4, and establishes the in-loop dequant machinery NVFP4 reuses.
-- **Deliverable:** decode speedup from halving KV bytes **and** an accuracy delta vs FP16 KV. The
-  honest test: the prediction should *finally track measured* **iff** v8 made the kernel bandwidth-bound.
-  If it doesn't track, that is itself the deliverable (still occupancy-bound → more M-packing).
-- **Math:** `AI = 2/b = 2.0` (or `2G/b = 16`); B300 ridge `AI*_FP8 = 625` ⇒ still memory-bound ⇒ byte
-  cut maps ~directly to `µs/tok = KV_bytes / 8 TB/s`.
+### v9 — FP8 KV cache + regime-characterization (earn the bandwidth verdict) · **[T4]** (root, for clock-lock + ncu)
+- **Why redefined (2026-06-28 deep-research close-out):** the v6→v8.7 "per-CTA-bound, NOT
+  bandwidth-bound (~10% HBM)" verdict is **confounded** — at the bench sizes the KV cache fits in the
+  T4's 4 MB L2 (reclaim G=8/B=1 → H_kv=1 → ~4.2 MB ≈ L2), clocks were never locked (free Colab), and
+  N_k never exceeded ~16K. Bandwidth physically could not appear. So v9 has **two tasks**: earn the
+  verdict, then bring the byte lever — and the same FP8 step that halves KV bytes is what finally
+  creates the memory-bound regime to test it in. Full plan: [`v9-kickoff.md`](v9-kickoff.md).
+- **Task 1 (gating science, NO new kernel — existing `v8_gqa_ss`):** on a **root T4** (clocks lock,
+  ncu counters work), pin clocks, flush L2 between timed iters, and sweep **N_k {1K…128K} × batch
+  {1…128} × d × H_kv {1,8}** measuring HBM% (vs the ~65–75% *achievable* ceiling), **L2 hit-rate + L2
+  BW%**, and the **counter-free L2 test** (effective BW = KV_bytes/time > HBM peak ⇒ data came from
+  L2). The decisive plot is HBM% & L2-hit-rate vs N_k: where HBM% plateaus as hit-rate→0 is the true
+  bandwidth-bound regime. If HBM% *still* sits ~10% past L2 at large B, "per-CTA/launch-bound" is
+  finally confound-free. **Do this on T4, not B200/B300** (126–192 MB L2 needs enormous N_k to spill).
+- **Task 2 (the kernel):** fork `v8_gqa_ss` → `kernels/v9_fp8/`, change ONLY the KV storage to **FP8
+  E4M3** (1 byte) with **fused per-tile dequant** at smem-load time (a full-cache dequant *prepass*
+  re-reads the cache and eats the savings — QServe). FP32 accum kept (dodges the FA-3 FP8-accum cliff).
+  Per-tensor scale first (near-lossless at 8-bit). Runs on T4 — a decode GEMV uses no tensor cores, so
+  FP8's win is *storage bytes*, decoupled from sm_89+ FP8-MMA support.
+- **Deliverable (three, regime-scoped):** (a) **capacity** — 2× KV footprint / context at fixed memory;
+  (b) **accuracy** — RMSE / logit error vs FP16 KV (the headline number, not pass/fail); (c) **latency,
+  two regimes** — L2-resident micro-bench (expect ~null, *capacity-only*) vs Task-1's past-L2 regime
+  (the real prediction-vs-measured test: does halving bytes give ~2×?). External evidence frames the
+  honest claim: FP8 KV is capacity-only at short-context/small-batch but a real latency win past
+  ~4–7k tokens / under load (vLLM: per-token cost → 54% of BF16).
+- **Math:** `AI = 2/b = 2.0` (or `2G/b = 16` at G=8); T4 fp16 ridge ≈ 203 ⇒ still memory-bound (FP8
+  doubles AI, doesn't flip the limiter); HBM floor halves. On T4, FP8 makes KV *more* L2-resident on
+  the small-N_k bench → the latency win surfaces only once N_k is pushed past the now-larger footprint.
 
-### v10 — NVFP4 + asymmetric precision (the headline contribution) · **[B300]** required
+### v10 — NVFP4 + asymmetric precision (the headline + the paper) · **[B300]** (GB300, sm_103) — THE FINAL GOAL
+- **The publication goal (2026-06-28, the project's north star):** **B300 / GB300 (sm_103, Blackwell
+  Ultra) is the final target and the paper's novelty** — no published FlashAttention *paper* has
+  characterized a B300 (FA4 stops at B200 / sm_100). **Honest scoping (so it survives a reviewer):**
+  production libraries *do* run measured GB300 decode (FlashInfer on vLLM-GB300, FlashMLA on
+  SGLang-GB300 — confirmed in `v7-deep-research.md`), so the claim is **NOT "first to run on GB300."**
+  It is: *the first open, roofline-documented, prediction-vs-measured FlashAttention decode study on
+  **sm_103**, with the asymmetric-precision FP4 recipe and the L2-/clock-honest methodology (from v9),
+  benchmarked against FlashInfer/FlashMLA on the same B300.* See `writeup.md` for the paper outline.
+- **B300-specific levers the paper exploits (what makes sm_103 ≠ B200):** NVFP4 15 PF dense; **2×
+  exp/SFU throughput (10.7 TeraExp/s)** — directly attacks softmax's MUFU term, a measurable B300-only
+  result; **288 GB** (vs B200's 192) — holds the long-context KV that pushes decode into the
+  bandwidth-bound regime the v9 methodology was built to detect; flat 8 TB/s HBM.
+- **HW path (dev cheap, record on B300):** iterate correctness + the sm_100 FP4 path on a cheaper
+  **B200 (sm_100, ~$3.44/hr)** if desired — most `tcgen05`/TMEM code ports to sm_103 — but **the
+  record runs (the paper's numbers, incl. the 2×-exp softmax + sm_103a-only features) happen on B300
+  (~$5.44/hr, spot ~$2.45).** B200 is an optional dev rung, **not** the destination. T4-emulated FP4
+  (store 4-bit, unpack in-kernel) stays the no-rental correctness/capacity fallback; RTX 5090 (sm_120,
+  different PTX) is a last-resort budget fallback only.
 - **Why last among precision steps:** lands on a kernel already occupancy-filled (v8) and byte-disciplined
   (v9), where cutting bytes actually converts to wall-clock. Asymmetric precision: FP4 `P·V`
   (convex-combination-safe) + MXFP8 `Q·Kᵀ` + outlier residual + FP32 hardware `exp2`; NVFP4 KV (`b≈0.56`).
-- **Deliverable:** the headline — `µs/tok` vs FP16 and FP8 KV on B300, the **FP4 accuracy delta**
-  (perplexity / logit error vs FP16, documented), and the prediction-vs-measured roofline at
-  `AI = 2/0.56 ≈ 3.57` (or `2G/0.56 ≈ 28.6`).
-- **Math:** `AI ≈ 3.57` (NVFP4) / `≈ 28.6` (GQA-8); ridge 1875 ⇒ ~50–500× below ⇒ firmly memory-bound,
-  so ~3.5× fewer bytes → ~3.5× `µs/tok` **iff** bandwidth-bound (the v8/v9 precondition).
+- **Deliverable (the paper's core results):** `µs/tok` vs FP16 and FP8 KV **on B300**; the **FP4 accuracy
+  delta** (perplexity / logit error vs FP16, documented); the **B300 decode roofline** (centerpiece
+  figure: `AI = 2G/b` vs the FP4 ridge across context length, showing where decode crosses into
+  bandwidth-bound on sm_103); and head-to-head **vs FlashInfer/FlashMLA on the same B300**.
+- **Math:** `AI ≈ 3.57` (NVFP4) / `≈ 28.6` (GQA-8); B300 FP4 ridge 1875 ⇒ ~50–500× below ⇒ firmly
+  memory-bound, so ~3.5× fewer bytes → ~3.5× `µs/tok` **iff** bandwidth-bound (the v8/v9 precondition).
 
-### v11 — MLA / latent-KV decode + speculative (stretch) · **[B300]**
+### v11 — MLA / latent-KV decode + speculative (stretch) · **[B300]** (sm_103)
 - **Why last:** most architecturally invasive, highest `AI`. MLA shares **one** latent KV across all `H`
   heads (`AI → 2H/b`), pushing furthest toward the ridge — the only decode regime where tensor cores
   stop idling. Speculative decoding restores `M = k` (draft length) → small GEMM along the query-time
-  axis, the same `M>1` win as GQA but temporal.
+  axis, the same `M>1` win as GQA but temporal. **Also runs on B300** (the paper's "how far can sm_103
+  decode be pushed toward the ridge" closer).
 - **Deliverable:** `µs/tok` for MLA-shaped KV vs the GQA path; the `AI`-toward-ridge curve; closes the arc.
 
 ---

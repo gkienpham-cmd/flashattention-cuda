@@ -69,6 +69,8 @@ T4 = Arch(
     fp32_cuda_flops=8.1e12,
     int8_tc_ops=130.0e12,
     mufu_ratio=0.25,
+    l2_mb=4.0,                   # 4 MB L2 — the v9 regime-characterization hinges on this (decode KV
+                                 # at N_k=8192/d=128/H_kv=1 ~= 4.2 MB ~= L2, the L2-residency confound)
 )
 
 # A100-SXM4-80GB, Ampere sm_80. Source: NVIDIA A100 datasheet + Ampere whitepaper (sm_80 row).
@@ -93,7 +95,36 @@ A100 = Arch(
     l2_mb=40.0,
 )
 
-# B300 (Blackwell Ultra), sm_103. The v9/v10 byte-lever target — NOT yet measured by us. Sources:
+# B200 (Blackwell), sm_100. An OPTIONAL cheaper dev rung for the v10 NVFP4 path (~$3.44/hr; most
+# tcgen05/TMEM code ports sm_100 -> sm_103), NOT the destination — the record/paper runs on B300
+# (sm_103), the project's final goal, because no published FA paper has characterized a B300 (FA4
+# stops at B200). NOT yet measured by us. The one number that matters for the decode roofline is firm:
+# HBM 8 TB/s (same flat 8 TB/s as B300). Compute peaks are
+# vendor "dense" figures and SPECULATIVE placeholders — fix vs a primary spec sheet before quoting any
+# sm_100 compute prediction. Decode is memory-bound regardless (AI << ridge), so the 8 TB/s drives the
+# floor; FP8/FP4 dense are ~2/3 of B300's (Ultra is ~1.5x B200).
+B200 = Arch(
+    name="NVIDIA B200 (Blackwell)",
+    sm="sm_100",
+    num_sm=148,                  # SPECULATIVE placeholder; confirm vs spec sheet
+    boost_clock_mhz=1800,        # SPECULATIVE placeholder
+    hbm_gb=192,
+    hbm_bw_gbps=8000.0,          # firm: 8 TB/s (flat, same as B300)
+    smem_per_sm_kb=228,          # SPECULATIVE placeholder (Hopper-class); confirm for Blackwell
+    smem_bw_gbps=33000.0,        # SPECULATIVE estimate
+    fp16_tc_flops=2.25e15,       # SPECULATIVE (~FP8 dense / 2); confirm vs spec sheet
+    fp32_cuda_flops=60.0e12,     # SPECULATIVE placeholder
+    int8_tc_ops=4.5e15,          # ~= FP8 dense
+    mufu_ratio=0.25,             # SPECULATIVE placeholder
+    fp8_tc_flops=4.5e15,         # SPECULATIVE: ~B300 FP8 (5 PF) scaled down; confirm
+    fp4_tc_flops=9.0e15,         # SPECULATIVE: ~B300 NVFP4 (15 PF) scaled down; the v10 headline lever
+    l2_mb=126.0,                 # ~126 MB (deep-research; partitioned across 2 dies)
+)
+
+# B300 (Blackwell Ultra), sm_103. THE FINAL GOAL — the v10/v11 record target and the paper's novelty
+# (first open roofline-documented FA decode study on sm_103; FA4 stops at B200). NOT yet measured by us.
+# B300-only levers the paper exploits: 2x exp/SFU throughput (exp_per_s below), 288 GB capacity, NVFP4
+# 15 PF dense. Sources:
 # NVIDIA Blackwell Ultra / GB300 briefings + docs/v7-deep-research.md. HBM bandwidth is the one
 # number that matters for the decode roofline and it is firm: 8 TB/s, FLAT vs B200 (only capacity
 # grew 192->288 GB). The dense-compute peaks are vendor "dense" figures; FP16/FP32 here are
@@ -120,7 +151,7 @@ B300 = Arch(
 )
 
 # Registry so other modules / bench logs can look an arch up by its sm string.
-ARCHS = {a.sm: a for a in (T4, A100, B300)}
+ARCHS = {a.sm: a for a in (T4, A100, B200, B300)}
 
 
 def get_arch(sm: str) -> Arch:

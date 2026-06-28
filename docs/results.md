@@ -931,3 +931,44 @@ latency win** — its value stays KV-cache *capacity + accuracy*. **This closes 
 positive note:** M-packing (Cut 1, per-CTA/occupancy) + score-stationary (v8.7, inner-loop) are the two real
 decode levers; tensor cores / double-buffer / occupancy / ILP were dead ends; the residual ~10% ceiling is a
 deeper per-CTA limit bytes won't fix.
+
+---
+
+## Step 8 — threats to validity (deep-research close-out, 2026-06-28)
+
+A 6-investigation close-out (3 forensic + 3 web-research) audited the v8 family before opening v9. The
+**M-packing headline survives** (8.6× vs v7, 6–10× vs SDPA — same-session ratios, robust to clock) and
+the **WMMA negative is correct** (T4→A100 non-scaling proves tensor cores are wrong for an M≤16 decode
+GEMV). But two confounds mean the *limiter diagnosis* — "per-CTA-bound, NOT bandwidth-bound," recurring
+since **v6** — is **not yet earned**. Recording honestly (prediction-vs-measured misses are first-class):
+
+### T1. The L2-residency confound (the serious one)
+At the bench sizes **the KV working set fits in the T4's 4 MB L2.** Worked example — reclaim-batch
+G=8/B=1 → H_kv=1 → KV bytes = `2(K,V) · 1 head · 8192 · 128 · 2 B ≈ 4.2 MB ≈ the T4's L2 exactly`. An
+L2-resident working set streams from L2 (~1.3 TB/s, ~4× HBM), so the **HBM counter legitimately reads
+~10%** even if the kernel *is* memory-bound — it's just bound by the *wrong memory*. This is a textbook,
+documented confound (Nsight flushes caches by default precisely for it; practitioners size working sets
+past L2 or flush L2 in the timing loop — jan.ai, the "Dissecting…" microbench papers, FlashInfer's
+decode methodology). The bench **never measured L2 traffic, never pushed N_k past ~16K**, and "% of peak
+HBM" is a near-meaningless metric for an L2-resident kernel (the honest denominator is the *achievable*
+~65–75% on a T4, and the right companion metrics are L2 hit-rate + L2 BW%).
+
+- **Partial counterweight (questioning the critique too):** the G-sweep's low-G corner (G=2 → H_kv=16 →
+  ~67 MB KV ≫ L2) still showed ~11% HBM — that's evidence *for* per-CTA-bound past L2. But it's the
+  inefficient low-G end, L2 traffic was never measured, and clocks weren't locked. **Verdict: probably
+  per-CTA-bound, but confounded and unproven.** v9 Task 1 settles it.
+
+### T2. The unlockable-clock confound
+Free Colab gives no root, so clocks could not be pinned; CUR swung **360–1590 MHz** across runs (a ~44%
+swing on identical work). The headline **same-session ratios** (vs-v7, vs-SDPA — both kernels back-to-back
+at one clock) survive this. But absolute µs/tok and any cross-*run* comparison carry a large ± band, and
+v8.7's modest 1.16–1.35× win — though measured at *matched same-session clock* (ss 375/465 vs Cut1
+360/480, with the hot `occ` arm correctly excluded) — is real-but-small with genuine uncertainty.
+
+### What v9 Task 1 does about it
+Rent a **root T4** (clocks lock, ncu counters work), **pin clocks**, **flush L2 between timed iters**, and
+**sweep N_k {1K…128K} × batch {1…128} × d × H_kv {1,8}** measuring HBM% (vs achievable ceiling), **L2
+hit-rate + L2 BW%**, and the **counter-free L2 test** (effective BW = KV_bytes/time > HBM peak ⇒ data came
+from L2). The decisive plot is HBM% & L2-hit-rate vs N_k: where HBM% plateaus as hit-rate→0 is the true
+bandwidth-bound regime. If HBM% *still* sits ~10% past L2 at large B, "per-CTA/launch-bound" is finally
+confound-free. Either outcome is a first-class result. Plan: [`v9-kickoff.md`](v9-kickoff.md).
