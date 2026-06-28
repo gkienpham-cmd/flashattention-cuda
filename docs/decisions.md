@@ -832,3 +832,43 @@ is free." Task 1 (locked-clock past-L2 sweep) + v10 NVFP4 (a *compute* lever) re
 baseline); now dequantized once outside — trust `vs naive`. **Gate-2 quiz PASSED 2026-06-28 → Step 9 DONE.**
 
 See [`v9-kickoff.md`](v9-kickoff.md), `results.md` Step 9, `interview-prep.md` C13.
+
+## Step 9 — Task 1: regime characterization — VERDICT (per-CTA-bound, confound-free)
+
+**Measured (2026-06-28, ROOT T4, clocks LOCKED 1590 MHz no-throttle, L2 flushed, ncu live): the decode
+kernel is GENUINELY PER-CTA-BOUND, not bandwidth-bound — the six-step verdict is now EARNED.** Three
+confounds removed at once: clocks pinned (was the unlockable-clock confound), L2 flushed + N_k pushed to
+128K so the working set hit **537 MB ≫ 4 MB L2** (was the L2-residency confound), and — for the first time
+in the project — **ncu counters worked** (every prior step had `ERR_NVGPUCTRPERM`; the root T4 unlocked
+them).
+
+**The evidence:** `v8_gqa_ss` achieved-%HBM plateaus at **~11–14% (low occupancy, H_kv=1)** rising to a
+hard **~28–29% ceiling (H_kv=8 or batch≥8)** — and stays there to a 1 GB working set, never near the ~70%
+achievable ceiling. ncu confirms past L2 the **L2 hit-rate is 1.1%** (data genuinely from HBM) while **DRAM
+is only 12.85%** → HBM-served yet ≈13% busy = per-CTA-bound. The `%HBM`-vs-N_k curve rises (launch-overhead
+amortization) then plateaus, with **no bandwidth knee at the L2 crossing** — the cleanest possible proof a
+kernel that isn't bytes-bound doesn't care where the bytes live.
+
+**Decision impact (locks several open threads):**
+- **The limiter is named, confound-free:** per-CTA / occupancy (at N_q=1 each CTA runs ~1 compute warp →
+  low memory-level parallelism). "~10% HBM" was an *occupancy* artifact, not the floor; the real cap is
+  ~28% of peak. This retires the "per-CTA OR L2-resident, unproven" hedge that has run since v6.
+- **Bytes are NOT the decode wall** on this kernel → **FP8/NVFP4 are confirmed a capacity+accuracy play,
+  not a decode-latency/bandwidth play** (corroborates Step 9 Task 2's L2-load-bandwidth framing). v10
+  NVFP4's contribution is capacity + accuracy + the B300 long-context regime + native FP4 *compute*, NOT a
+  micro-bench bandwidth-latency claim.
+- **The counter-free %HBM method is validated** against ncu DRAM% (13.8% vs 12.85% at the same shape) — so
+  every prior counter-free decode reading is retroactively trustworthy *as a throughput proxy*; what was
+  missing was the L2-vs-HBM discriminator, which only ncu (or the now-known one-sided `L2!` test) provides.
+- **Reopener (not acted on):** v8.5 double-buffer + v8.6 occupancy/ILP nulls were measured at L2-resident
+  sizes; past L2 there is real 29%→70% headroom where latency-hiding could bite, so those nulls may be L2
+  artifacts. Logged for a future revisit, not a v10 blocker.
+
+**What changes on another arch:** the per-CTA cap is a *schedule* limit (1 active warp at N_q=1), so it's
+arch-independent in shape; bigger-L2 archs (A100 40 MB … B300 192 MB) just push the L2-spill N_k far higher,
+so the confound-free measurement there needs proportionally longer context (why Task 1 was done on the T4's
+small 4 MB L2). On B300 the same kernel would still be per-CTA-bound at short context; the bandwidth-bound
+regime only appears at very long context where even ~28% of 8 TB/s is large in absolute terms.
+
+See [`v9-kickoff.md`](v9-kickoff.md) Task 1, `results.md` Step 9 Task 1, `interview-prep.md` C12 (the
+ncu-validation story), `notebooks/v9_task1_regime_output.ipynb`.

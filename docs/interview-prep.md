@@ -900,6 +900,24 @@ lesson is that '% of peak HBM' is meaningless for an L2-resident kernel; you hav
 past L2, flush caches, pin clocks, and measure L2 traffic before you're allowed to name the limiter. v9 is
 built to earn that verdict, not assume it."
 
+**Resolution (v9 Task 1, measured on a ROOT T4 — and the counters finally worked).** I rented a
+bare-metal T4 so I could lock clocks (pinned 1590 MHz, no throttle) and — for the first time in the whole
+project — run ncu (every prior step had `ERR_NVGPUCTRPERM` on containerized rentals). Then I flushed L2
+between iterations and swept N_k to 128K so the working set hit 537 MB, ~130× past the 4 MB L2. **The
+verdict came back confound-free: per-CTA-bound, not bandwidth-bound.** Achieved HBM tops out at ~28–29%
+(and only that high *with* enough occupancy — at low occupancy it's ~11%), never near the ~70% ceiling,
+even with the data definitely coming from HBM. ncu nailed it: past L2 the **L2 hit-rate is 1.1%** (so the
+bytes really are streaming from DRAM) while **DRAM throughput is only 12.85%** — HBM-served and ~13% busy
+is the definition of per-CTA-bound. Two things I'm proud of here: (1) I *refined* my own story rather than
+just confirming it — "~10% HBM" turned out to be an occupancy artifact, the true cap is ~28%, set by
+having one active warp per CTA at N_q=1; and (2) **my counter-free proxy was validated** — `eff_bw =
+bytes/time` read 13.8% where ncu's hardware counter read 12.85%, within a point, so the whole project's
+profiler-free methodology holds up against the real counters. **Say-this:** "I didn't just suspect the
+confound — I went and removed it. Root box, locked clocks, flushed L2, swept 130× past L2, and ran ncu for
+the first time. The kernel is genuinely per-CTA-bound — ~28% of HBM peak with the data provably coming
+from DRAM — and my counter-free bandwidth proxy matched ncu to within a point, which means the dozens of
+profiler-free measurements I'd taken when ncu was blocked were trustworthy all along."
+
 ## C13 — FP8 KV cache: I predicted "capacity-only" and the data proved me wrong (a load-bandwidth win)
 
 **The setup:** v9 stores the KV cache as FP8 E4M3 (1 byte) instead of FP16 (2). The roofline doubles the

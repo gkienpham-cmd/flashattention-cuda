@@ -303,10 +303,24 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   confound. Prediction: capacity-only (no µs/tok win) on the L2-resident micro-bench; latency win only
   past-L2/under-load (v9 Task 1 territory).** See `results.md`/`decisions.md` Step 9, `interview-prep.md`
   C13, `docs/v9-kickoff.md`.
-- **Step 9 Task 1 (regime characterization) — TOOLING CODE-COMPLETE (2026-06-28); root-T4 gate pending.**
-  The measurement that earns/overturns the "per-CTA-bound, ~10% HBM" verdict recurring since v6 (Task 2
-  showed an L2-load-bandwidth component exists; Task 1 names the limiter confound-free). NOT a new kernel
-  — characterizes the existing `v8_gqa_ss`/`v9_fp8`. New `bench/regime.py` (`python -m bench.regime`):
+- **Step 9 Task 1 (regime characterization) — MEASURED 2026-06-28 (ROOT T4, clocks LOCKED 1590 MHz
+  no-throttle, L2 flushed, ncu LIVE): VERDICT = PER-CTA-BOUND, CONFOUND-FREE. The six-step "per-CTA, not
+  bandwidth-bound" read is now EARNED, and this is the FIRST ncu-validated measurement in the project (all
+  prior steps had ncu blocked by `ERR_NVGPUCTRPERM`).** Removed all three confounds at once (locked clocks;
+  L2 flushed + N_k→128K so WS hit 537 MB ≫ 4 MB L2; ncu counters worked). `v8_gqa_ss` achieved-%HBM
+  plateaus ~11–14% (low occupancy H_kv=1) → hard **~28–29% ceiling** (H_kv=8 or batch≥8), never near the
+  ~70% achievable ceiling, to a 1 GB working set. ncu past L2: **L2 hit-rate 1.1%** (data genuinely from
+  HBM) yet **DRAM 12.85%** → HBM-served + ~13% busy = per-CTA-bound. `%HBM`-vs-N_k RISES (launch-overhead
+  amortization) then PLATEAUS with NO bandwidth knee at the L2 crossing. **Counter-free method VALIDATED:**
+  sweep `eff_bw=KV_bytes/time` = 13.8% vs ncu DRAM 12.85% (same shape, within ~1 pt). So **"~10% HBM" was
+  an OCCUPANCY artifact, not the floor (true cap ~28%)**, the limiter is per-CTA (1 active warp at N_q=1 →
+  low MLP), and **FP8/NVFP4 are confirmed a capacity+accuracy play, NOT a decode-latency/bandwidth play**
+  (corroborates Task 2). Caveat: `v9_fp8` clock sagged to 1350 MHz despite the lock (FP8 dequant ALU
+  power-caps sm_75) → cross-kernel `us/tok` clock-confounded this run; within-kernel %HBM trends robust.
+  Reopener (logged): v8.5/v8.6 nulls were at L2-resident sizes; past-L2 headroom (29%→70%) means
+  latency-hiding might bite there. Verdict + ncu-validation story in `results.md`/`decisions.md` Step 9
+  Task 1 + `interview-prep.md` C12; data of record `notebooks/v9_task1_regime_output.ipynb`. Tooling:
+  `bench/regime.py` (`python -m bench.regime`):
   `lock_clocks()`/`reset_clocks()` (root; loud warn + continue if not), an **L2-flushing CUDA-event timer**
   (zero a ≥2×L2 buffer outside the timed window — the jan.ai technique), a `sweep()` returning structured
   rows with the **counter-free L2 test** (`eff_bw = kv_bytes/time > 320 GB/s ⇒ L2-served`, flagged `L2!`)
@@ -333,14 +347,18 @@ SDPA 8–16× and v7-no-packing many×, on CUDA cores. Measured dead ends: tenso
 (v8.5), occupancy & key-ILP (v8.6) — the decode floor was a serial dependency chain you relayout, not a knob
 you tune.
 
-**⚠️ But the limiter diagnosis is CONFOUNDED (deep-research close-out, 2026-06-28) — soften "NOT
-bandwidth-bound".** The "per-CTA-bound, ~10–12% HBM" verdict (recurring since **v6**) was measured where
-bandwidth physically couldn't appear: the bench **KV fits in the T4's 4 MB L2** (reclaim G=8/B=1 → H_kv=1 →
-~4.2 MB ≈ L2), clocks were never locked (free Colab, CUR 360–1590 MHz), and N_k never passed ~16K. So the
-kernel is **per-CTA-bound OR L2-resident — unresolved until benched past L2 at locked clock** (partial
-counterweight: low-G configs with KV ≫ L2 still showed ~11%, so per-CTA-bound *probably* survives — but
-unproven). The M-packing/SDPA *ratio* headlines are same-session and robust; only the limiter *name* is
-confounded. See `results.md` "Step 8 — threats to validity", `decisions.md` Step 8 close-out, C12.
+**✅ The limiter diagnosis is now RESOLVED, confound-free (v9 Task 1, 2026-06-28).** The "per-CTA-bound,
+NOT bandwidth-bound" verdict (recurring + hedged since **v6**) was confounded because the bench KV fit in
+the T4's 4 MB L2, clocks were never locked, and N_k never passed ~16K. v9 Task 1 removed all three on a
+**root T4** (clocks LOCKED 1590 MHz, L2 flushed, N_k→128K so WS=537 MB ≫ L2) **with ncu finally working**
+(first time in the project): achieved %HBM caps at **~28–29%** (occupancy-lifted from ~11%), never near the
+~70% ceiling, and **ncu confirms L2 hit-rate 1.1% / DRAM 12.85% past L2** = HBM-served yet per-CTA-bound.
+**The counter-free %HBM proxy was validated against ncu (13.8% vs 12.85%)**, so every prior profiler-free
+decode reading holds as a throughput proxy. "~10% HBM" was an *occupancy* artifact (true cap ~28%); the
+limiter is per-CTA (1 active warp at N_q=1 → low MLP). **Net: bytes are NOT the decode wall → FP8/NVFP4 are
+a capacity+accuracy play, not a decode-latency/bandwidth play.** The M-packing/SDPA *ratio* headlines were
+always robust; now the limiter *name* is earned too. See `results.md`/`decisions.md` Step 9 Task 1, C12,
+`notebooks/v9_task1_regime_output.ipynb`.
 
 **Reframed v9 (decision recorded):** `v9 = FP8 KV + regime-characterization`. **Task 1 (gating)** earns the
 verdict — on a *root T4* (clocks lock, ncu works), pin clocks, flush L2, sweep N_k {1K…128K} × batch × d ×

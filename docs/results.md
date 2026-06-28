@@ -1125,11 +1125,66 @@ precision.
 | Per-CTA-bound (confound-free) | %HBM flat ~10% past L2; `L2served=False`; batch sweep flat | genuinely launch/per-CTA-bound; bytes not the wall → persistent-kernel lever; FP8 stays capacity+accuracy |
 | L2-resident (confound shown) | `L2!` fires (eff_bw > HBM peak) while WS ≤ 4 MB | confirms C12 directly — %HBM was never a boundedness metric at those sizes |
 
-**Measured (pending — root T4):** _to fill at the gate;_ decisive figure → `diagrams/v9-task1-regime.svg`.
+**Measured (2026-06-28, ROOT T4, clocks LOCKED 1590 MHz no-throttle, L2 flushed, ncu live —
+`notebooks/v9_task1_regime_output.ipynb`): VERDICT = PER-CTA-BOUND, CONFOUND-FREE. The six-step "per-CTA,
+not bandwidth-bound" read is now EARNED — and this is the FIRST ncu-validated measurement in the project
+(every prior step had ncu blocked by `ERR_NVGPUCTRPERM`; the root T4 unlocked the counters).**
 
-| config | N_k at L2 crossing | %HBM below L2 | %HBM past L2 | `L2served`? | verdict |
-|---|---|---|---|---|---|
-| v8_gqa_ss d=128 H_kv=1 | ~8192 | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| v9_fp8 d=128 H_kv=1 | ~16384 | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+This run removed every confound at once: clocks pinned at 1590 MHz (no throttle), L2 flushed between iters,
+and N_k pushed to 128K (working set up to **537 MB ≫ the 4 MB L2**). Even so the kernel never approaches
+bandwidth-bound.
+
+**`v8_gqa_ss` (FP16) — achieved %HBM plateaus FAR below the ~70% achievable ceiling, and the plateau is
+set by OCCUPANCY, not bytes:**
+
+| config (d=128, past L2) | %HBM plateau (N_k 8K→128K) | achieved BW |
+|---|---|---|
+| H_kv=1 (low occupancy) | **11–14%** | ~36–46 GB/s |
+| H_kv=8 (8× the CTAs) | **27–29%** | ~85–92 GB/s |
+
+The `%HBM`-vs-N_k curve **rises** (small N_k = launch/overhead-dominated → artificially low eff_bw) then
+**plateaus** (per-CTA ceiling) — there is **no bandwidth knee at the L2 crossing**, because a kernel that
+isn't bytes-bound doesn't care whether the bytes came from L2 or HBM. **Batch sweep** (N_k=16384, H_kv=1,
+d=128) tells the same story: 11.5% (B=1) → **29.3% (B=8)** → 29.1 → 25.6 → 25.4% (B=128) — occupancy lifts
+achieved BW to a **hard ~28–29% ceiling**, then it plateaus even at a 1 GB working set. So the accurate
+statement is **"per-CTA-bound, achieved BW caps ~28% of peak"**, not "stuck at ~10%" (the old micro-benches
+just ran at low occupancy).
+
+**ncu confirms it directly (the counters every prior step deferred):**
+
+| ncu (v8_gqa_ss partial) | L2-resident N_k=2048 | past-L2 N_k=65536 |
+|---|---|---|
+| `lts__t_sector_hit_rate.pct` | ~20% | **1.1%** |
+| `dram__throughput …pct` | 3.2% | **12.85%** |
+
+L2 hit-rate **collapses 20%→1%** across the L2 crossing — at N_k=65536 the data **genuinely streams from
+HBM** — yet DRAM throughput is still only **12.85%**. HBM-served *and* ≈13% busy ⇒ definitively
+**per-CTA-bound, not bandwidth-bound**, with the L2-residency confound killed from both sides.
+
+**The counter-free method is VALIDATED against hardware:** the sweep's `eff_bw = KV_bytes/time` gave
+**13.8%** at exactly that shape; ncu measured **12.85%** — agreement within ~1 point. (Note the `L2!`
+counter-free flag never fired: a per-CTA-bound kernel is too slow to exceed HBM peak even when L2-resident,
+so the counter-free test is one-sided — it can *confirm* L2-streaming but not rule it out; ncu's hit-rate
+is what settled L2-vs-HBM here. The two are complementary.)
+
+**Caveat (honest):** the `v9_fp8` sweep's clock **sagged to 1350 MHz despite the 1590 lock** — the
+software E4M3-dequant ALU on sm_75 is power-hungry enough to power-cap the clock (it wouldn't on native-FP8
+HW). So **cross-kernel `us/tok` (v8 vs v9) in this run is clock-confounded** — do not re-derive the FP8
+speedup here (that's Task 2's same-session job); only the within-kernel `%HBM` regime trends are robust.
+FP8's `%HBM` is uniformly *lower* than FP16's (fewer bytes over a per-CTA-bound time), consistent with
+Task 2: FP8 is **not** a bandwidth play on this kernel.
+
+**Reopener (flagged, not acted on):** v8.5 (double-buffer) and v8.6 (occupancy/ILP) were measured NULL —
+but only at **L2-resident sizes (N_k ≤ 16K)**, the confounded regime. Task 1 shows real headroom past L2
+(29% → 70%), where load-latency-hiding could actually bite; those nulls may themselves be L2 artifacts.
+
+**Decisive figure** → `diagrams/v9-task1-regime.svg` (saved by the notebook on the run host; data of record
+in `notebooks/v9_task1_regime_output.ipynb`).
+
+| config | %HBM below L2 | %HBM past L2 (cap) | ncu L2-hit past L2 | verdict |
+|---|---|---|---|---|
+| v8_gqa_ss d=128 H_kv=1 | 1.7→6.4% | 11–14% | 1.1% | per-CTA-bound |
+| v8_gqa_ss d=128 H_kv=8 | 11.7→27.6% | **27–29%** | — | per-CTA-bound (occupancy-lifted, still capped) |
+| v9_fp8 d=128 H_kv=8 | 4.1→9.9% | ~10% | — | per-CTA-bound (lower %HBM = fewer bytes, not bandwidth) |
 
 ---
