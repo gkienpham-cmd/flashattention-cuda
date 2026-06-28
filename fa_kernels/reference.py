@@ -43,6 +43,26 @@ def sdpa_reference_gqa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return F.scaled_dot_product_attention(q, k, v, is_causal=causal, scale=scale)
 
 
+def sdpa_reference_gqa_fp8(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                           scale_k: float, scale_v: float,
+                           *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
+    """Apples-to-apples FP8 oracle for v9: dequantize the SAME E4M3 bytes the kernel reads, then run
+    GQA SDPA. The kernel must match the math on identical quantized inputs, so this isolates the
+    kernel's correctness from the quantization error (the latter is reported separately as RMSE vs the
+    original fp16 `sdpa_reference_gqa`). `k, v` are the dense FP16 KV; we round-trip them through E4M3
+    exactly as `build_paged_kv_fp8` did, so the oracle sees the kernel's actual operands.
+    """
+    from .paged import quantize_fp8_e4m3, dequantize_fp8_e4m3
+
+    kb, sk = quantize_fp8_e4m3(k)
+    vb, sv = quantize_fp8_e4m3(v)
+    # The caller passes the scales build_paged_kv_fp8 produced; recompute-identical here, but honor the
+    # passed-in scales for the dequant so a mismatch surfaces rather than silently re-deriving.
+    k_hat = dequantize_fp8_e4m3(kb, scale_k).to(k.dtype)
+    v_hat = dequantize_fp8_e4m3(vb, scale_v).to(v.dtype)
+    return sdpa_reference_gqa(q, k_hat, v_hat, causal=causal, scale=scale)
+
+
 def fp64_reference(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                    *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
     """Ground-truth attention in float64. Used to measure quantization RMSE in Phase 3.

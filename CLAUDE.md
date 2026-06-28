@@ -276,6 +276,24 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   is the right next lever.** Wired (load/dispatch/harness 3 tuples/tests, `(7,0)`, tol 2e-2, `GQA_BACKENDS`);
   gate notebook `notebooks/v8_7_score_stationary_gate_output.ipynb` (run-of-record; build ss, 3-way A/B
   Cut1/occ/ss G-sweep + reclaim). See `results.md`/`decisions.md` Step 8.7, `interview-prep.md` C11.6.
+- **Step 9 (v9 FP8 E4M3 KV, `kernels/v9_fp8/`)** — **Task 2 CODE COMPLETE (2026-06-28); GPU gate
+  pending (build + correctness + bench + quiz on root/Colab T4, `notebooks/v9_fp8_gate.ipynb`).** Forks
+  `v8_gqa_ss` changing the SINGLE variable **KV storage precision**: the paged K/V pool holds **FP8 E4M3
+  (1 byte, uint8)** instead of FP16, dequantized **fused per-tile** at the smem gather (`__nv_cvt_fp8_to_halfraw`,
+  software-emulated on sm_75; int8-symmetric is a 1-line fallback if ptxas rejects E4M3) with **per-tensor
+  FP32 scales** (`scale_k/scale_v`, = amax/448), FP32 accum. Score-stationary inner loop / M-packing grid /
+  split-KV / LSE merge **byte-identical** → clean byte-only A/B vs v8.7. New `fp8_attention()` API +
+  `build_paged_kv_fp8` (returns uint8 pools + scales) + `sdpa_reference_gqa_fp8` apples-to-apples oracle
+  (dequant the SAME bytes; tol **5e-2**); 3 dedicated v9 tests (decode G∈{1,2,4,8}, idle-warp G=3/multi-tile
+  G=16, square) + an RMSE-vs-fp16 accuracy assertion. Harness `v9_fp8` branch (FP8 pool, `precision=fp8`
+  roofline, baseline = v8.7 on the fp16 pool to isolate bytes, **counter-free "L2!" flag** when
+  effective_bw > HBM peak). Wired (`load.py`, `dispatch.py` `(7,0)`, `__all__`). **Roofline recorded BEFORE
+  coding (confirmed via `roofline.model.estimate`):** FP8 DOUBLES AI (G8: 8.0→16.0) and HALVES the HBM floor
+  (13.12→6.56 µs), limiter STAYS HBM (16 ≪ T4 fp16 ridge 203) — **blind to dequant latency + the L2
+  confound. Prediction: capacity-only (no µs/tok win) on the L2-resident micro-bench; latency win only
+  past-L2/under-load (v9 Task 1 territory).** **Task 1 (locked-clock/L2-flush regime sweep that earns the
+  bandwidth verdict) DEFERRED** (scope decision). See `results.md`/`decisions.md` Step 9, `interview-prep.md`
+  C13, `docs/v9-kickoff.md`.
 
 ## Next steps
 

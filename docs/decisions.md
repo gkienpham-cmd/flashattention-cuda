@@ -777,3 +777,42 @@ longer context there. The decode roofline math (AI=2/b, memory-bound at every re
 arch-independent; only *where the kernel reaches the floor* moves.
 
 See [`v9-kickoff.md`](v9-kickoff.md), `decode-replan.md` §5 v9/v10 + §2.1 L2 confound, `interview-prep.md` C12.
+
+## Step 9 — FP8 E4M3 KV cache (v9_fp8) — Task 2 (the kernel)
+
+**Bottleneck (v8.7's residual ceiling):** `%HBM` plateaued ~10–12% — a per-CTA limit (load latency /
+small-CTA launch) **OR** an L2-residency artifact (the bench KV fits in the T4's 4 MB L2). Confounded.
+v9 splits into **Task 1** (earn the bandwidth verdict on a root T4 — locked clock, L2-flush, N_k sweep)
+and **Task 2** (the FP8 kernel). This step is Task 2; Task 1 is deferred (scope decision this session).
+
+**Options (KV byte-cut mechanism):**
+1. **FP8 E4M3 KV with fused per-tile dequant** — dequant at the smem gather (where v8.7 already converts
+   to FP16), per-tensor FP32 scale, FP32 accumulation. → **chosen (v9).**
+2. **Post-load / per-key dequant in the inner loop** — dequant per lane per key; redundant work on the
+   shared tile → **rejected** (throughput-worse, and pollutes the byte-only ablation).
+3. **Full-cache dequant prepass** → **rejected** (re-reads the whole cache, eats the byte savings — QServe).
+4. **Native FP8 tensor-core math** → **deferred to v10** (needs sm_89+ FP8 MMA; decode is a GEMV, no
+   tensor cores, and the paper's FP4 throughput lever is a B300/sm_103 story).
+5. **int8-symmetric instead of E4M3** → **fallback only** (same 1-byte HBM win; kept as a 1-line swap if
+   E4M3 fails ptxas on sm_75; the E4M3-vs-int8 accuracy gap is itself a deliverable if we run both).
+
+**Choice + sub-decisions:** fork `v8_gqa_ss` → `v9_fp8` changing ONLY the KV path. KV pool = uint8 (FP8
+E4M3 bytes); two new runtime args `scale_k/scale_v` (per-tensor, = amax/448); Q stays FP16; merge kernel
+untouched (FP32 partials). **Per-tensor scaling first** (research: near-lossless at 8-bit); per-token V /
+per-channel K only if RMSE demands it (that comparison is a deliverable, not a default). The correctness
+oracle is **apples-to-apples** (SDPA on the same dequantized E4M3 bytes, tol 5e-2) so it isolates the
+kernel's math from the quantization error; the **quantization RMSE vs fp16 KV** is reported separately as
+the accuracy deliverable.
+
+**Prediction (before measuring):** roofline blind to dequant latency; AI doubles 8.0→16.0, HBM floor
+halves 13.12→6.56 µs, limiter stays HBM. **Mechanistic:** L2-resident micro-bench → likely capacity-only
+(no µs/tok win). **Counter:** if the bench prints "L2!" (`effective_bw > HBM peak`), `%HBM` isn't a
+boundedness signal here and FP8's latency win lives past L2 / under load — which Task 1 creates.
+
+**What changes on another arch:** FP8's **capacity** win (2× KV cache at fixed memory) is arch-independent
+and is the durable deliverable. The **latency** win is arch- and regime-dependent: it appears only where
+the kernel is genuinely bandwidth-bound, which a bigger L2 (A100 40 MB … B300 192 MB) pushes to far
+longer context. On B300 (sm_103, the paper) the same dequant machinery carries forward to NVFP4 (v10),
+where native FP4 throughput (15 PF dense) adds a *compute* lever this T4 GEMV doesn't have.
+
+See [`v9-kickoff.md`](v9-kickoff.md), `results.md` Step 9, `interview-prep.md` C13.

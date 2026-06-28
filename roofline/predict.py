@@ -34,7 +34,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Predict the attention roofline bottleneck.")
     p.add_argument("--arch", default="sm_75", help="compute capability, e.g. sm_75")
     p.add_argument("--shape", default="1x8x2048x64", help="BxHxNxd (N used for both q and k)")
-    p.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16", "int8"])
+    p.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16", "int8", "fp8"])
     p.add_argument("--materialize-s", action="store_true",
                    help="model the non-fused S round-trip + tiled operand re-reads (v1/v2)")
     p.add_argument("--tile", default="1x1",

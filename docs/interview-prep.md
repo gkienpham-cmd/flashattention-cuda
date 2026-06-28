@@ -899,3 +899,42 @@ L2, so the HBM counter *couldn't* show bandwidth, confound, not result. I also n
 lesson is that '% of peak HBM' is meaningless for an L2-resident kernel; you have to size the working set
 past L2, flush caches, pin clocks, and measure L2 traffic before you're allowed to name the limiter. v9 is
 built to earn that verdict, not assume it."
+
+## C13 — FP8 KV cache: why fewer bytes ≠ lower latency (and when it does)
+
+**The setup:** v9 stores the KV cache as FP8 E4M3 (1 byte) instead of FP16 (2). The roofline says this
+*doubles* the decode arithmetic intensity (AI = 2G/b: G=8 fp16 → 8.0, fp8 → 16.0) and *halves* the HBM
+floor (13.1 → 6.6 µs). A naive read is "so it's ~2× faster." That's wrong on this micro-bench, and knowing
+why is the whole point.
+
+**Two reasons the byte-cut doesn't buy latency here.** (1) **The roofline is a floor the kernel is ~9×
+above** — v8.7 sits at ~10% HBM, so halving the floor moves a number the kernel never touches. (2) **The
+L2 confound (C12):** the bench KV fits in L2, so the "halved bytes" were already being served from L2 at
+~4× HBM bandwidth — cutting HBM traffic changes nothing when you weren't going to HBM. My harness prints
+an **"L2!"** flag when `effective_bw = KV_bytes/time` exceeds HBM peak, exactly to make this visible
+instead of silently misreading %HBM.
+
+**So why build it?** FP8's win is **capacity + accuracy**, and a **regime-conditional** latency win.
+Capacity: 2× the KV cache at fixed memory → 2× context length, the durable, arch-independent deliverable.
+Latency: it appears only *past* L2 / under load, where you genuinely hit HBM — vLLM measured FP8 KV at 54%
+of BF16 per-token cost past ~4–7k tokens. v9 Task 1 (locked clock, L2-flush, N_k 1K→128K) creates that
+regime; Task 2 (this kernel) measures it there. Prediction recorded both ways: **null on the L2-resident
+micro-bench, ~2× past L2 iff bandwidth-bound there.**
+
+**The engineering traps I had to get right.** (1) **Fused per-tile dequant, never a prepass** — a
+full-cache dequant pass re-reads the entire KV cache, which *eats the byte savings you came for* (QServe's
+lesson). I dequant at the smem gather, where v8.7 already converts to FP16, so the score-stationary inner
+loop is byte-identical and it's a clean one-variable ablation. (2) **FP32 accumulation** — keep the
+matmul accumulator in FP32 to dodge FlashAttention-3's documented FP8-accum accuracy cliff; only *storage*
+is 8-bit. (3) **Apples-to-apples vs accuracy are two different references** — correctness compares the
+kernel to SDPA on the *same* dequantized E4M3 bytes (isolates the kernel's math, tol 5e-2); the
+*quantization error* is a separate, larger RMSE vs the original fp16 KV (the accuracy number, reported not
+gated). Conflating them would either hide a real kernel bug or fail a correct kernel for quantization it
+didn't cause.
+
+**Say-this:** "FP8 KV halves the bytes and doubles the arithmetic intensity, but on my micro-bench it
+buys no latency — because the cache already fit in L2 and the kernel was 9× off the HBM floor anyway. The
+honest framing is FP8 = capacity and accuracy now, latency only past L2 / under load, and I print an 'L2!'
+flag so I don't misread that. The kernel-engineering subtlety is dequant has to be fused per-tile — a
+prepass re-reads the cache and gives the bytes back — and accumulation stays FP32 so storage precision
+doesn't become math precision."

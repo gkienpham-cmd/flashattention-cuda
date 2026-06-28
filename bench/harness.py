@@ -19,9 +19,9 @@ import subprocess
 
 import torch
 
-from fa_kernels import attention, gqa_attention, paged_attention
-from fa_kernels.paged import build_paged_kv
-from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
+from fa_kernels import attention, fp8_attention, gqa_attention, paged_attention
+from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8
+from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa, sdpa_reference_gqa_fp8
 from roofline.archs import get_arch
 from roofline.model import estimate
 
@@ -102,8 +102,9 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
     # `gqa_groups` (v8 only) sweeps the GQA group factor G = H_q/H_kv: H stays the query-head count and
     # H_kv = H//G shrinks as G grows, so KV bytes drop by G and decode AI = 2/b -> 2G/b. The v8 analogue
     # of the --batch sweep: it MEASURES the GEMV->GEMM (per-CTA efficiency) win as G activates G warps.
-    paged = backend in ("v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss")
-    is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss")
+    paged = backend in ("v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8")
+    is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8")
+    is_fp8 = backend == "v9_fp8"   # v9: GQA-class shapes/sweep, but FP8 pools + scales + a quantizing oracle
     groups = gqa_groups or [1]
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
@@ -146,7 +147,15 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
             v = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
 
             q_off = (N - qn) if causal else 0
-            if is_gqa:
+            if is_fp8:
+                # v9 reads an FP8 E4M3 GQA KV pool (uint8) + per-tensor dequant scales. Oracle is
+                # apples-to-apples: SDPA on the SAME dequantized E4M3 bytes, so the timed comparison
+                # isolates the kernel from the quantization error (reported separately as RMSE).
+                kf, vf, bt_f, nkf, sk, sv = build_paged_kv_fp8(k, v, page_size)
+                base = lambda: sdpa_reference_gqa_fp8(q, k, v, sk, sv, causal=causal)
+                ours = lambda: fp8_attention(q, kf, vf, bt_f, page_size, nkf, sk, sv,
+                                             causal=causal, q_offset=q_off, backend=backend)
+            elif is_gqa:
                 # v8 reads a PAGED GQA KV (H_kv heads); the oracle expands KV by G (repeat_interleave).
                 base = lambda: sdpa_reference_gqa(q, k, v, causal=causal)
                 k_pool, v_pool, block_table, n_k = build_paged_kv(k, v, page_size)
@@ -184,7 +193,14 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # v5/v6/v7/v8 read FP16 KV regardless of the input dtype (they cast in the kernel),
                 # so the roofline byte count uses fp16. For v8, G>1 -> the decode bound is AI=2G/b.
                 tile_m, tile_n = _roofline_tile(backend, d)
-                rp = "fp16" if backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss") else precision
+                # v9 stores KV as FP8 (1 byte) -> the decode HBM floor uses precision="fp8" (AI=2G/b
+                # doubles vs fp16). Other FP16-KV backends use fp16 regardless of the input dtype.
+                if is_fp8:
+                    rp = "fp8"
+                elif backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss"):
+                    rp = "fp16"
+                else:
+                    rp = precision
                 est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
                                materialize_s=backend in ("v1_naive", "v2_tiled"),
                                tile_m=tile_m, tile_n=tile_n, G=(G if is_gqa else 1))
@@ -198,13 +214,21 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # re-reads its KV head, G times the bytes) — the cleanest same-session isolation of
                 # M-packing's one variable. For v6/v7 it stays the naive seqlen_q=1 loop (v5 @ N_q=1).
                 us_tok = o_p50 * 1e3 / tokens
+                kv_b = 1 if is_fp8 else 2                      # FP8 KV is 1 byte/elem, FP16 is 2
                 if arch is not None:
-                    kv_bytes = 2.0 * B * H_kv * N * d * 2  # K and V, fp16; H_kv KV heads
-                    hbm_pct = (kv_bytes / (o_p50 / 1e3)) / (arch.hbm_bw_gbps * 1e9) * 100.0
+                    kv_bytes = 2.0 * B * H_kv * N * d * kv_b   # K and V; H_kv KV heads
+                    eff_bw = kv_bytes / (o_p50 / 1e3)          # achieved bytes/s on the KV read
+                    hbm_pct = eff_bw / (arch.hbm_bw_gbps * 1e9) * 100.0
                 else:
                     hbm_pct = float("nan")
                 try:
-                    if is_gqa:
+                    if is_fp8:
+                        # v9 baseline = v8.7 (score-stationary, FP16 KV) on the SAME GQA shape, so the
+                        # A/B isolates the ONE variable: KV storage precision (FP8 vs FP16). Same packing.
+                        kp8, vp8, bt8, nk8 = build_paged_kv(k, v, page_size)
+                        naive = lambda: gqa_attention(q, kp8, vp8, bt8, page_size, nk8,
+                                                      causal=causal, q_offset=q_off, backend="v8_gqa_ss")
+                    elif is_gqa:
                         k_exp = k.repeat_interleave(G, dim=1)   # [B, H_q, N, d] — no-packing baseline
                         v_exp = v.repeat_interleave(G, dim=1)
                         kp7, vp7, bt7, nk7 = build_paged_kv(k_exp, v_exp, page_size)
@@ -216,9 +240,13 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                     vs_naive = n_p50 / o_p50
                 except Exception:
                     vs_naive = float("nan")
+                # Counter-free L2 test (no ncu): if the KV working set streamed from L2 (~4x HBM on T4),
+                # %HBM exceeds 100 -> "L2!" -> the %HBM number is NOT a bandwidth-boundedness signal (the
+                # v9 Task-1 confound). vs_naive for v9 is the FP8-vs-FP16 (v8.7) byte-isolation ratio.
+                l2flag = " L2!" if (is_fp8 and hbm_pct == hbm_pct and hbm_pct > 100.0) else ""
                 label = f"{B}x{H}x{qn}x{d}/{N}" + (f" G{G}" if is_gqa else "")
                 print(f"  {label:>19} | {o_p50:7.3f}/{o_max:7.3f} | {us_tok:8.2f} | "
-                      f"{hbm_pct:5.1f}% | {speedup:7.2f}x | {vs_naive:7.2f}x | {roof}")
+                      f"{hbm_pct:5.1f}%{l2flag} | {speedup:7.2f}x | {vs_naive:7.2f}x | {roof}")
             else:
                 label = f"{B}x{H}x{N}x{d}" + (f" G{G}" if is_gqa else "")
                 print(f"  {label:>19} | {o_p50:7.3f}/{o_max:7.3f} | "

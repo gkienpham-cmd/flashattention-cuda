@@ -13,9 +13,9 @@ inference engine imports exactly this function.
 from __future__ import annotations
 
 from .config import AttnConfig
-from .paged import gqa_attention, paged_attention
+from .paged import fp8_attention, gqa_attention, paged_attention
 
-__all__ = ["attention", "paged_attention", "gqa_attention", "AttnConfig"]
+__all__ = ["attention", "paged_attention", "gqa_attention", "fp8_attention", "AttnConfig"]
 
 # The default backend advances as the journey progresses. Today: the naive baseline.
 _DEFAULT_BACKEND = "v1_naive"

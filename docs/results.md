@@ -972,3 +972,56 @@ hit-rate + L2 BW%**, and the **counter-free L2 test** (effective BW = KV_bytes/t
 from L2). The decisive plot is HBM% & L2-hit-rate vs N_k: where HBM% plateaus as hit-rate→0 is the true
 bandwidth-bound regime. If HBM% *still* sits ~10% past L2 at large B, "per-CTA/launch-bound" is finally
 confound-free. Either outcome is a first-class result. Plan: [`v9-kickoff.md`](v9-kickoff.md).
+
+---
+
+## Step 9 — FP8 E4M3 KV decode (v9_fp8)
+
+*Roofline-first recorded; code complete, T4 gate pending (`notebooks/v9_fp8_gate.ipynb`). This is Task 2
+of v9 (the kernel); Task 1 (the locked-clock/L2-flush regime sweep that earns the bandwidth verdict) is
+deferred. Mirrors how v8 Cut 1 was kicked off: code + wiring + tests + roofline landed, GPU build +
+correctness + bench + quiz outstanding.*
+
+**Why:** v8.7 closed the decode-SCHEDULE arc but `%HBM` plateaued ~10–12% (per-CTA-bound **or**
+L2-resident — confounded). v9 attacks the **bytes**: store the paged K/V cache as **FP8 E4M3 (1 byte)**
+instead of FP16 (2), dequantizing each tile at the smem gather. The **single variable is KV storage
+precision** — the score-stationary inner loop, M-packing grid, split-KV, paged gather, and LSE merge are
+**byte-identical** to v8.7, so `v9_fp8` vs `v8_gqa_ss` is a clean byte-only A/B.
+
+**Fused per-tile dequant (the locked decision):** each FP8 byte is read, converted (`cuda_fp8.h`
+`__nv_cvt_fp8_to_halfraw`, software-emulated on sm_75), multiplied by a **per-tensor FP32 scale**, and
+stored as FP16 into the same `sK`(transposed)/`sV`(natural) smem v8.7 used — **never a full-cache prepass**
+(a prepass re-reads the cache and eats the byte savings — QServe). E4M3 primary with an int8-symmetric
+1-line fallback if ptxas rejects E4M3 on sm_75 (the E4M3-vs-int8 accuracy gap is itself worth a number).
+
+**Roofline prediction (recorded BEFORE coding — T4 sm_75, confirmed via `roofline.model.estimate`):**
+
+| precision | G | AI = 2G/b | limiter | t_hbm floor (B=1, N_k=8192, d=128) |
+|---|---|---|---|---|
+| fp16 (v8.7) | 8 | 8.0 | HBM | 13.12 µs |
+| **fp8 (v9)** | 8 | **16.0** | HBM | **6.56 µs** (bytes halve) |
+
+FP8 **doubles AI** (16.0 ≪ T4 fp16 ridge 203 → still HBM-bound, no compute flip) and **halves the HBM
+floor**. The model is **BLIND** to dequant latency and to the L2-residency confound (it can't see whether
+the halved bytes come from HBM or L2).
+
+**Mechanistic prediction (recorded before the run):** on the L2-resident micro-bench, FP8 makes the KV
+working set *more* L2-resident → likely **no µs/tok win (capacity-only)**. **Counter-prediction (also a
+finding):** if `%HBM` exceeds ~100% (the bench prints **"L2!"** when effective_bw > HBM peak), the data
+streamed from L2 → `%HBM` is not a boundedness signal and FP8's byte win can't show here; its real latency
+win lives **past L2 / under load** (vLLM: FP8 KV → 54% of BF16 per-token cost past ~4–7k tokens), which
+Task 1's regime sweep creates. Accuracy: the E4M3 **quantization RMSE vs fp16 KV** is the deliverable
+(reported by the gate notebook, not gated); the correctness oracle is apples-to-apples (SDPA on the same
+dequantized E4M3 bytes, tol 5e-2).
+
+**Measured (pending — `notebooks/v9_fp8_gate.ipynb`, root/Colab T4):** _to fill at the GPU gate._
+
+| metric | v8.7 (fp16 KV) | v9 (fp8 KV) | prediction-vs-measured |
+|---|---|---|---|
+| correctness vs E4M3 oracle | — | _N/N @ 5e-2_ | — |
+| E4M3 quant RMSE vs fp16 KV | (n/a) | _TBD_ | accuracy deliverable |
+| µs/tok (G8, d=128, B=1) | _TBD_ | _TBD_ | predict: ~null (L2-resident) |
+| %HBM (G8, d=128) | _TBD_ | _TBD_ | predict: ≤~12%, "L2!" if >100% |
+| KV footprint (capacity) | 1× | **0.5×** | trivially 2× (the durable win) |
+
+---

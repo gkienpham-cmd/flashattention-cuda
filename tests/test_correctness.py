@@ -16,9 +16,9 @@ import pytest
 import torch
 
 from conftest import requires_cuda
-from fa_kernels import attention, gqa_attention, paged_attention
-from fa_kernels.paged import build_paged_kv
-from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
+from fa_kernels import attention, fp8_attention, gqa_attention, paged_attention
+from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8
+from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa, sdpa_reference_gqa_fp8
 
 # (B, H, N, d) shapes spanning the sweep we care about. Small + the head dims 64/128. The last
 # two have N that is NOT a multiple of v2's tile (64 at d=64, 32 at d=128) to exercise the
@@ -70,6 +70,11 @@ _TOL = {
     # FP16-in/FP32-accum precision class; the per-tile online softmax is FP32-rounding-equal to the
     # per-key form (max/sum associativity), not bit-identical -> same 2e-2 band.
     "v8_gqa_ss": (2e-2, 2e-2),
+    # v9_fp8 forks v8.7 and stores the KV cache as FP8 E4M3 (1 byte) — a SECOND lossy step on top of
+    # the FP16-in band, so the apples-to-apples oracle (sdpa_reference_gqa_fp8, which dequantizes the
+    # SAME E4M3 bytes) is compared at a loosened 5e-2. The QUANTIZATION error vs the original fp16 KV
+    # is a separate, larger number reported as RMSE (the accuracy deliverable), NOT gated by this tol.
+    "v9_fp8": (5e-2, 5e-2),
 }
 
 # GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core), Cut 2a (Turing WMMA), and v8.5
@@ -336,4 +341,85 @@ def test_v8_gqa_square_reduces(causal, backend):
                         backend=backend)
     ref = sdpa_reference_gqa(q, k, v, causal=causal)
     atol, rtol = tol_for(backend)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# v9-specific: FP8 E4M3 KV cache. v9 forks v8.7 (score-stationary GQA M-packing) and changes ONLY the
+# KV storage precision — the pool holds FP8 E4M3 bytes (uint8), dequantized per-tile at the smem gather.
+# The API differs (extra scale_k/scale_v + uint8 pools from build_paged_kv_fp8), so v9 gets its own
+# tests rather than joining GQA_BACKENDS. The CORRECTNESS oracle is apples-to-apples: SDPA on the SAME
+# dequantized E4M3 bytes (sdpa_reference_gqa_fp8), so the kernel must match the math given identical
+# quantized inputs — at a loosened 5e-2 (FP8 is a second lossy step on the FP16-in band). The
+# QUANTIZATION error itself (vs the original fp16 KV) is asserted finite + sane below as the accuracy
+# deliverable; its exact RMSE is reported by the gate notebook, not gated here.
+FP8_BACKEND = "v9_fp8"
+
+
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("N_k", [4096, 8190])              # 8190 -> non-multiple last page/split
+@pytest.mark.parametrize("G", [1, 2, 4, 8])                # group factor; G<8 idles past M
+@pytest.mark.parametrize("causal", [False, True])
+def test_v9_fp8_decode(causal, G, N_k, d):
+    torch.manual_seed(9)
+    B, H_kv = 1, 2
+    H_q = G * H_kv
+    page_size = 128
+    q = torch.randn(B, H_q,  1,   d, device="cuda", dtype=torch.float32)   # decode: one query token
+    k = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)   # GQA: only H_kv KV heads
+    v = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k, sk, sv = build_paged_kv_fp8(k, v, page_size, seed=9)
+    q_offset = (n_k - 1) if causal else 0
+    out = fp8_attention(q, k_pool, v_pool, block_table, page_size, n_k, sk, sv,
+                        causal=causal, q_offset=q_offset, backend=FP8_BACKEND)
+    # Apples-to-apples: kernel vs SDPA on the SAME dequantized E4M3 KV.
+    ref = sdpa_reference_gqa_fp8(q, k, v, sk, sv, causal=False)
+    atol, rtol = tol_for(FP8_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+    # Accuracy deliverable: the quantization error vs the ORIGINAL fp16 KV is larger but must stay
+    # finite + sane (E4M3 over unit-normal data is well under this bound). The number is reported by
+    # the gate notebook; here we only guard against a blown-up scale/quant path.
+    ref_fp16 = sdpa_reference_gqa(q, k, v, causal=False)
+    rmse = (out - ref_fp16).pow(2).mean().sqrt().item()
+    assert rmse == rmse and rmse < 0.5, f"FP8 quantization RMSE vs fp16 KV = {rmse} (expected small)"
+
+
+@requires_cuda()
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("G", [3, 16])                     # G=3 idles warps; G=16 forces 2 row-tiles
+def test_v9_fp8_idle_warps_and_multiblock(G, d):
+    torch.manual_seed(90)
+    B, H_kv, N_k = 1, 2, 8192
+    H_q = G * H_kv
+    page_size = 256
+    q = torch.randn(B, H_q,  1,   d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H_kv, N_k, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k, sk, sv = build_paged_kv_fp8(k, v, page_size, seed=90)
+    out = fp8_attention(q, k_pool, v_pool, block_table, page_size, n_k, sk, sv,
+                        causal=False, q_offset=0, backend=FP8_BACKEND)
+    ref = sdpa_reference_gqa_fp8(q, k, v, sk, sv, causal=False)
+    atol, rtol = tol_for(FP8_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+@requires_cuda()
+@pytest.mark.parametrize("causal", [False, True])
+def test_v9_fp8_square_reduces(causal):
+    torch.manual_seed(91)
+    B, H_kv, N, d = 2, 2, 512, 64
+    G = 4
+    H_q = G * H_kv
+    page_size = 128
+    q = torch.randn(B, H_q,  N, d, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H_kv, N, d, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H_kv, N, d, device="cuda", dtype=torch.float32)
+
+    k_pool, v_pool, block_table, n_k, sk, sv = build_paged_kv_fp8(k, v, page_size, seed=91)
+    out = fp8_attention(q, k_pool, v_pool, block_table, page_size, n_k, sk, sv,
+                        causal=causal, q_offset=0, backend=FP8_BACKEND)
+    ref = sdpa_reference_gqa_fp8(q, k, v, sk, sv, causal=causal)
+    atol, rtol = tol_for(FP8_BACKEND)
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
