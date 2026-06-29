@@ -1079,3 +1079,22 @@ container — CUPTI trace, no `ERR_NVGPUCTRPERM`): the `nvfp4_partial_kernel` is
 merge **0.04%** — one under-occupied dominant kernel, no hidden phase, exactly what per-CTA-bound predicts.
 Bandwidth axis (flat %HBM) and schedule axis (single dominant kernel) agree; the only owed cross-check is
 ncu's L2-hit-rate on a privileged box, and it's now belt-and-suspenders, not load-bearing.
+
+**The sm_103 RECORD itself (B300, 2026-06-29) — the verdict transferred to the paper's arch.** I then ran
+the same notebook on a real **B300 (sm_103)**, and every B200 finding held: **no knee** (%HBM flat
+~0.5%/0.1% to 2M past an 8× L2 overflow of the measured **132.6 MB** L2), the **~40 GB/s B=1 ceiling now
+on THREE arches** (B300/B200/T4 — same absolute BW across a 25× bandwidth span), **NVFP4 latency-negative**
+(2M: FP16 24,798 vs NVFP4 27,579 µs/tok), and the **nsys schedule 99.4%/0.04%** (which needed a CUPTI fix:
+the image's nsys 2025.1.3 records an *empty* sm_103 trace — I diagnosed that, installed dated
+`nsight-systems-2025.3.2`, and invoked that binary explicitly). **Two things I got to record honestly:**
+(1) the **2×-exp claim is a miss** — a dependent-EX2 microkernel hit **5.33 TExp/s = 0.50× the 10.7 vendor
+peak**, and the roofline mufu-share of decode is <3% anyway, so the marquee sm_103 softmax lever is
+*negligible* for M=1 decode (I measured the lever I was supposed to be excited about and reported that it
+doesn't matter here); (2) against **FlashInfer's tuned trtllm-gen NVFP4** on the same shape my kernel is
+**~3× slower** (4491 vs 1485 µs/step, and I'm FP16-Q vs its FP8-Q) — which is the honest "complementing,
+not beating" framing: ~3× off a production closed kernel with the *same* per-CTA wall, so tuning buys the
+constant factor, not a regime change. **Say-this:** "The record arch confirmed the verdict, refuted the one
+lever I'd have most liked to bank (the 2× exp), and placed the open kernel ~3× off the closed SOTA with the
+roofline explaining exactly why — per-CTA-bound, not bandwidth-bound, on Blackwell Ultra." Measured arch
+constants (148 SMs not 160, L2 132.6 MB not 192, clock 2032 not 2600) went into `roofline/archs.py`. Only
+ncu (Pass 2, bare-metal) + the Gate-2 quiz remain.

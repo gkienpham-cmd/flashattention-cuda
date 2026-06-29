@@ -392,7 +392,18 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   caps 2.3% HBM). Measured: L2 132.6 MB (refutes 192 MB aggregator), 148 SMs, 1965 MHz (→ B300's 2600 est
   likely high) — filled into `roofline/archs.py` B200. B300/sm_103 run is now corroboration not discovery
   (+ ncu L2-hit-rate needs a PRIVILEGED/bare-metal box; vast.ai containers block counters — host
-  kernel-module gate, `docs/v10-b300-runbook.md` §0).** Forks v9 (`fp8_attention.cu`)
+  kernel-module gate, `docs/v10-b300-runbook.md` §0).** **B300/sm_103 RECORD — Pass 1 MEASURED 2026-06-29
+  (unprivileged vast.ai B300 container, counter-free + nsys, no ncu): every B200 finding TRANSFERS to
+  sm_103. NO knee (%HBM flat ~0.5%/0.1% to 2M past 8× L2 overflow of measured 132.6 MB L2 → per-CTA-bound
+  on Blackwell Ultra, confound-free); ~40 GB/s B=1 ceiling now on THREE arches (B300/B200/T4); NVFP4
+  latency-negative (2M: FP16 24798 vs NVFP4 27579 µs/tok); nsys schedule partial 99.4% / merge 0.04%
+  (needed nsys 2025.3.2 — image's 2025.1.3 CUPTI records empty sm_103 trace). Arch constants MEASURED →
+  `archs.py` B300: 148 SMs (not 160), L2 132.6 MB (not 192), clock 2032 MHz (not 2600). Two new measured
+  items: 2×-exp delta is a MISS (EX2 5.33 TExp/s = 0.50× the 10.7 claim, mufu share <3% so irrelevant to
+  M=1 decode); FlashInfer trtllm-gen NVFP4 ~3× faster (1485 vs our 4491 µs/step, FP8-Q vs FP16-Q →
+  "complementing, not beating"). Prediction-vs-measured 4/4 + 1 honest miss. Data: `notebooks/v10_b300_*_output*.ipynb`,
+  `v10_b300_nsys_kernsum.txt`, `diagrams/v10-b300-regime.svg`. ONLY ncu (Pass 2 bare-metal) + Gate-2 quiz
+  remain → v10 DONE.** Forks v9 (`fp8_attention.cu`)
   changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
   E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
   FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host

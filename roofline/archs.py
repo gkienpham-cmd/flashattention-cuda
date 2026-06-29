@@ -123,7 +123,8 @@ B200 = Arch(
 )
 
 # B300 (Blackwell Ultra), sm_103. THE FINAL GOAL — the v10/v11 record target and the paper's novelty
-# (first open roofline-documented FA decode study on sm_103; FA4 stops at B200). NOT yet measured by us.
+# (first open roofline-documented FA decode study on sm_103; FA4 stops at B200). Device constants now
+# MEASURED on a vast.ai B300/sm_103 (2026-06-29): num_sm/clock/L2 below — see results.md Step 10 sm_103 record.
 # B300-only levers the paper exploits: 2x exp/SFU throughput (exp_per_s below), 288 GB capacity, NVFP4
 # 15 PF dense. Sources:
 # NVIDIA Blackwell Ultra / GB300 briefings + docs/v7-deep-research.md. HBM bandwidth is the one
@@ -137,20 +138,23 @@ B200 = Arch(
 B300 = Arch(
     name="NVIDIA B300 (Blackwell Ultra, GB300)",
     sm="sm_103",
-    num_sm=160,                  # FACT
-    boost_clock_mhz=2600,        # UNCONFIRMED (aggregator/TPU-DB; NVIDIA publishes none) — MEASURE
-    hbm_gb=288,                  # FACT
+    num_sm=148,                  # MEASURED on a vast.ai B300/sm_103 (torch device props, 2026-06-29) —
+                                 # refutes the 160 spec; same 148-SM die as the measured B200
+    boost_clock_mhz=2032,        # MEASURED max SM clock (nvidia-smi, B300 sm_103) — below the 2600 estimate
+    hbm_gb=288,                  # FACT (measured 287.4 GB usable)
     hbm_bw_gbps=8000.0,          # FACT: 8 TB/s, flat vs B200
-    smem_per_sm_kb=228,          # FACT (CC 10.x = Hopper config; combined L1+smem 256 KB, TMEM 256 KB)
-    smem_bw_gbps=36800.0,        # LIKELY (~230 GB/s/SM x 160, microbench-derived) — MEASURE
+    smem_per_sm_kb=228,          # MEASURED (CC 10.x = Hopper config; combined L1+smem 256 KB, TMEM 256 KB)
+    smem_bw_gbps=36800.0,        # LIKELY (~230 GB/s/SM x 148, microbench-derived) — MEASURE
     fp16_tc_flops=2.5e15,        # LIKELY (BF16/FP16 dense; rack 180 dense / 72. NOT 2.25=B200, NOT 3.5=rumor)
     fp32_cuda_flops=105.0e12,    # UNCONFIRMED (20480 cores x 2 x ~2.6 GHz) — MEASURE with an FMA microkernel
     int8_tc_ops=0.15e15,         # LIKELY: GUTTED ~95% vs B200 (~150 TOPS) to fund the NVFP4 uplift
     mufu_ratio=0.25,             # placeholder; exp_per_s below is the firm softmax figure
     fp8_tc_flops=5.0e15,         # FACT: FP8 5 PF dense
     fp4_tc_flops=15.0e15,        # FACT: NVFP4 15 PF dense (the v10 headline lever; tcgen05 gate M>=64)
-    exp_per_s=10.7e12,           # FACT: 2x exp/EX2 throughput (10.7 TeraExp/s) — the sm_103 softmax lever
-    l2_mb=126.0,                 # LIKELY (same dual-die as B200; 192 MB is aggregator-only) — MEASURE on rental
+    exp_per_s=10.7e12,           # FACT (vendor peak). MEASURED achievable on a dependent-EX2 microkernel
+                                 # = 5.33 TExp/s (0.50x of peak, 2026-06-29) — but mufu share of decode is
+                                 # <3% so the 2x-exp lever barely moves M=1 decode regardless.
+    l2_mb=132.6,                 # MEASURED 132.6 MB (B300 sm_103) — refutes the 192 MB aggregator; B200 same die
 )
 
 # Registry so other modules / bench logs can look an arch up by its sm string.

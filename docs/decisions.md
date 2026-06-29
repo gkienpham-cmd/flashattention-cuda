@@ -1066,3 +1066,23 @@ the AIO image's bare `apt-get install nsight-systems` ships an *incomplete* nsys
 already-configured NVIDIA CUDA repo, and the regime notebook's §10b now auto-finds a complete nsys and
 runs `nsys stats` as a separate step. Data of record: `notebooks/v10_nsys_kernsum.txt`. See `results.md`
 Step 10 "B200 nsys schedule corroboration", `interview-prep.md` C15.
+
+**B300 / sm_103 RECORD — Pass 1 MEASURED 2026-06-29 (the paper's headline arch; counter-free + nsys, ncu
+owed).** Reproduced the whole dev-rung on a real **B300 (sm_103)**, unprivileged vast.ai container.
+**Decision-relevant:** every B200 finding **transfers to sm_103** — (1) **no bandwidth knee**, %HBM flat
+~0.5%(FP16)/0.1%(NVFP4) from N_k 8K→2M incl. an 8× L2 overflow (1.07 GB WS ≫ measured **132.6 MB L2**) →
+per-CTA-bound on Blackwell Ultra at all reachable context, confound-free without ncu; (2) the **~40 GB/s
+B=1 latency ceiling now holds on THREE arches** (B300/B200/T4 — same absolute BW across a 25× bandwidth
+span = the cleanest latency-bound proof); (3) **NVFP4 latency-negative** (2M: FP16 24,798 vs NVFP4 27,579
+µs/tok, ~11% slower) → capacity+accuracy not latency; (4) occupancy caps at 2.3% HBM; (5) **nsys schedule
+99.4%/0.04%** matches B200 (needed **nsys 2025.3.2** — the image's 2025.1.3 CUPTI records an empty trace on
+sm_103). **Arch constants MEASURED** → `roofline/archs.py` B300: 148 SMs (not 160 spec), L2 132.6 MB (not
+192 aggregator), clock 2032 MHz (not 2600 est). **Two new measured items:** (a) **2×-exp delta is a MISS** —
+EX2 microkernel hits 5.33 TExp/s = **0.50× the 10.7 claim**, and the mufu share of decode is <3% so even a
+real 2× wouldn't matter (the sm_103 exp lever is negligible for M=1 decode — honest, recorded); (b)
+**FlashInfer trtllm-gen NVFP4 is ~3× faster** (1484.51 vs our 4491.43 µs/step, FP8-Q vs our FP16-Q) →
+frame "complementing, not beating": ~3× off a tuned closed kernel, same per-CTA wall, tuning buys the
+constant not a regime change. **Net: the sm_103 record is in hand; only ncu (Pass 2, bare-metal) + the
+Gate-2 quiz remain before v10 DONE.** Data of record: `notebooks/v10_b300_*_output*.ipynb`,
+`v10_b300_nsys_kernsum.txt`, `docs/diagrams/v10-b300-regime.svg`. See `results.md` Step 10 sm_103 record,
+`interview-prep.md` C15.

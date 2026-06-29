@@ -1568,4 +1568,66 @@ online-softmax recurrence) doing essentially all the work, with the merge and se
 %HBM (bandwidth) and nsys (schedule) reads now agree from both sides; the **ncu L2-hit-rate** remains the
 only owed cross-check, and it needs a privileged/bare-metal box (`docs/v10-b300-runbook.md` §0/§0b).
 
+### B300 / sm_103 RECORD — Pass 1 (MEASURED 2026-06-29, unprivileged vast.ai B300 container)
+
+The paper's headline datapoint: the same counter-free knee-hunt + nsys schedule + arch-measure, now on a
+real **B300 (sm_103)**, the project's final target. Notebooks of record: `notebooks/v10_b300_regime_outputb300.ipynb`,
+`v10_b300_exp_ablation_output.ipynb`, `v10_b300_comparators_output.ipynb`, `notebooks/v10_b300_nsys_kernsum.txt`,
+figure `docs/diagrams/v10-b300-regime.svg`. **Counter-free + nsys, no ncu** (container blocks counters,
+`RmProfilingAdminOnly:1`; ncu deferred to an optional Pass-2 bare-metal session). The B200 dev-rung already
+settled the L2 confound by construction, so this run **transfers the verdict to sm_103** rather than
+re-deriving it. Clocks unlocked but boosted to and held **2032 MHz** under load (intra-run %HBM trusted).
+
+**1. Arch constants MEASURED** (now in `roofline/archs.py` B300): **148 SMs** (refutes the 160 spec — same
+die as B200), **L2 = 132.6 MB** (refutes the 192 MB aggregator), **smem 228 KB/SM**, **287.4 GB HBM**,
+**max SM clock 2032 MHz** (below the 2600 estimate — corrected down). Mem clock 3996 MHz.
+
+**2. NO bandwidth knee — per-CTA-bound on sm_103, confound-free.** %HBM (vs 8 TB/s) is **dead flat ~0.5%
+(FP16) / 0.1% (NVFP4)** across N_k = 8K→2M, *including* an **8× L2 overflow** (FP16/2M working set 1.07 GB
+≫ 132.6 MB L2). No climb at the L2 crossing. The "stronger" T3 outcome — per-CTA-bound to a million tokens
+on Blackwell Ultra — holds on the record arch. The 1 GB working set kills the L2-residency confound by
+construction, so this is earned **without ncu**.
+
+**3. The architecture-independent ~40 GB/s latency ceiling (now THREE arches).** At B=1 the kernel hits
+**~40–46 GB/s on B300, B200, AND T4** — i.e. **0.5% of the B300's 8 TB/s, 0.5% of the B200's 8 TB/s, but
+~11% of the T4's 320 GB/s.** Identical absolute throughput across a 25× bandwidth span → a per-CTA/latency
+ceiling that does not scale with the device. The cleanest latency-bound signature in the project.
+
+**4. NVFP4 latency-NEGATIVE past L2 (settled on sm_103).** At d=128/N_k=2M: FP16 **24,798 µs/tok**, NVFP4
+**27,579 µs/tok** (~11% slower); NVFP4 ≤ FP16 at every shape. The nibble-unpack + per-16-microscale ALU
+sits on the critical path of a compute/latency-bound kernel, so the byte cut buys nothing in time.
+**NVFP4 = capacity (3.55×) + accuracy, NOT latency** — confirmed on FP4 + Blackwell Ultra past L2.
+
+**5. Occupancy caps far below bandwidth.** Large-batch (N_k=131072, d=128, FP16, sweep B=1→128): µs/tok
+drops **4.1×** (1494→362) and %HBM climbs only **0.6→2.3%** — batching fills the 148 SMs but even
+SM-saturated (8.6 GB WS) the per-CTA serial recurrence caps achieved BW at ~2.3%.
+
+**6. nsys schedule on sm_103 — partial 99.4% / merge 0.04%.** Captured with **Nsight Systems 2025.3.2**
+(the image's default 2025.1.3 CUPTI records an empty trace on Blackwell Ultra — install the dated
+`nsight-systems-2025.3.2` package and invoke that binary explicitly). The split-KV `nvfp4_partial_kernel`
+is **99.4%** of GPU time, the LSE-merge **0.04%** (~2500× smaller), the rest a one-time NVFP4 quant prepass
+(2–6 instances, not 100). Single-dominant-kernel per-CTA schedule — matches B200 (99.3% / 0.04%).
+
+**7. sm_103 2×-exp softmax delta — a measured MISS.** A dependent-EX2 microkernel achieved **5.33 TExp/s
+vs the 10.7 TExp/s vendor claim = ratio 0.50×** (B300 lands at ~B200's level on this kernel; the advertised
+2× isn't realized in a register-bound dependent chain). And the roofline **mufu share of the decode floor
+is 0.42% (G=1) → 3.01% (G=8)** — so even a *real* 2× would barely move M=1 decode. Honest first-class miss:
+the sm_103 exp lever is real on paper but negligible for this workload.
+
+**8. FlashInfer trtllm-gen NVFP4 comparator — complementing, not beating.** Same shape (B=64, N_k=8192,
+d=128, G=4): FlashInfer **1484.51 µs/step** vs ours **4491.43 µs/step** → production trtllm-gen is **~3×
+faster**. It even paid an NHD→HND transpose penalty and still won (its native HND would widen the gap), and
+it runs **FP8-Q** vs our **FP16-Q**. The deliverable is *where the open kernel sits and why*: ~3× off a
+tuned closed kernel, with the same per-CTA/~40 GB/s wall — tuning buys the constant factor, not a regime change.
+
+**Prediction-vs-measured (Pass 1): 4/4 + 1 honest miss.** Per-CTA-bound past L2 ✅ (predicted survivor),
+NVFP4 latency-negative ✅, arch constants ✅ (L2 132.6 not 192, clock 2032 not 2600, 148 not 160 SMs),
+schedule partial-dominant ✅; the **EX2 2× claim refuted** (0.50× measured) — the one miss, recorded.
+
+**Net:** the **sm_103 record landed** — decode is per-CTA / low-MLP latency-bound on Blackwell Ultra at all
+reachable context, NVFP4 is a capacity+accuracy lever not a latency one, and the kernel sits ~3× off
+FlashInfer's tuned NVFP4 path. The verdict that was hedged-by-L2 on T4 and demonstrated at scale on B200 is
+now on the paper's record arch. **Only owed:** the ncu L2-hit-rate (Pass 2, bare-metal) + the deferred
+Gate-2 quiz. See `decisions.md` Step 10 sm_103 record, `interview-prep.md` C15.
+
 ---
