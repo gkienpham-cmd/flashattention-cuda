@@ -1,0 +1,89 @@
+<svg width="100%" viewBox="0 0 940 540" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v11 changes the shape (MLA) to leave the per-CTA wall — raising M above 1 activates more than one warp and lifts arithmetic intensity off the floor</title>
+<desc>A left-to-right flow. Left, orange, the wall: decode at N_q=1 packs M = G less than 64, so 1 active warp, per-CTA-bound; arithmetic intensity AI = 2G/b is at most 8 to 16; about 0.5 percent HBM at a ~40 GB/s ceiling; FP4 tensor cores are dark because the tcgen05 NVFP4 gate is M at least 128. Middle, three candidate levers. First, green and recommended as v11: MLA latent-KV decode packs all 128 query heads against one shared 512-wide latent so M = 128 by construction, meeting the tcgen05 NVFP4 M at least 128 gate with no speculative draft; AI rises from 2G/b toward about 2 times h_q, roughly 256, toward compute-bound; KV is about 93 percent smaller; the open cell is that no open roofline exists for MLA decode on sm_103. Second, neutral, speculative or tree decode as a fallback: query length equals k draft tokens so M = k times G; EAGLE-3 acceptance about 6.2, DeepSeek MTP about 1.8x; but it needs query length 8 to 16 just to clear M=64 and carries acceptance-rate risk because rejected tokens waste the FLOPs. Third, neutral, occupancy v8.8 as a cheap carry: 4-blocks-per-SM residency giving about 1.4x at batch at least 32 in the serving regime; not a shape change, so fold it into v11. Right, purple, the prize and open question: does the limiter flip from per-CTA to compute or tensor-core-bound, or just move to smem-capacity from the absorbed weight on-chip; either sign is publishable; M=128 also lights the FP4 cores at 15 PF and supplies many independent exps for the 2x-exp SFU. Bottom, a mini roofline arrow: AI goes from GQA-8 about 8 to MLA about 256, and the B300 FP16 ridge is about 312 FLOP per byte, so MLA crosses toward compute-bound for the first time in the arc.</desc>
+<rect x="0" y="0" width="940" height="540" fill="#ffffff"/>
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">v11: change the SHAPE (MLA) to leave the per-CTA wall</text>
+<text x="30" y="49" font-size="11" fill="#888780">v10 proved cutting bytes does nothing for decode latency — the only lever left is to raise M above 1 so &gt;1 warp is active and arithmetic intensity rises off the floor</text>
+
+<!-- ===== LEFT: the wall ===== -->
+<text x="40" y="82" font-size="11" font-weight="600" fill="#5F5E5A">the wall</text>
+<rect x="30" y="90" width="232" height="330" rx="7" fill="#FAECE7" stroke="#D85A30" stroke-width="1.2"/>
+<text x="146" y="118" font-size="12" font-weight="600" fill="#993C1D" text-anchor="middle">Decode at N_q = 1</text>
+<text x="46" y="148" font-size="10.5" fill="#2C2C2A">packed M = G &lt; 64</text>
+<text x="46" y="167" font-size="10.5" fill="#2C2C2A">→ 1 active warp</text>
+<text x="46" y="186" font-size="10.5" fill="#993C1D">→ per-CTA-bound</text>
+<line x1="46" y1="202" x2="246" y2="202" stroke="#E0B9A6" stroke-width="1"/>
+<text x="46" y="224" font-size="10.5" fill="#2C2C2A">AI = 2G/b ≤ 8–16</text>
+<text x="46" y="246" font-size="10.5" fill="#2C2C2A">~0.5% HBM</text>
+<text x="46" y="265" font-size="10.5" fill="#2C2C2A">~40 GB/s ceiling</text>
+<line x1="46" y1="281" x2="246" y2="281" stroke="#E0B9A6" stroke-width="1"/>
+<text x="46" y="303" font-size="10.5" font-weight="600" fill="#993C1D">FP4 tensor cores DARK</text>
+<text x="46" y="322" font-size="10" fill="#5F5E5A">tcgen05 NVFP4 gate</text>
+<text x="46" y="338" font-size="10" fill="#5F5E5A">requires M ≥ 128</text>
+<text x="146" y="380" font-size="10" font-style="italic" fill="#993C1D" text-anchor="middle">cutting bytes does not</text>
+<text x="146" y="396" font-size="10" font-style="italic" fill="#993C1D" text-anchor="middle">move this — only raising</text>
+<text x="146" y="412" font-size="10" font-style="italic" fill="#993C1D" text-anchor="middle">M does.</text>
+
+<!-- arrow LEFT -> MIDDLE -->
+<line x1="262" y1="255" x2="300" y2="255" stroke="#5F5E5A" stroke-width="2"/>
+<polygon points="300,255 290,250 290,260" fill="#5F5E5A"/>
+
+<!-- ===== MIDDLE: three candidate levers ===== -->
+<text x="312" y="82" font-size="11" font-weight="600" fill="#5F5E5A">three candidate levers</text>
+
+<!-- MLA card (green, recommended) -->
+<rect x="306" y="90" width="350" height="128" rx="7" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1.2"/>
+<text x="318" y="110" font-size="11.5" font-weight="600" fill="#226B40">MLA — latent-KV decode  ✓ v11 (recommended)</text>
+<text x="318" y="128" font-size="9.7" fill="#2C2C2A">Pack all h_q = 128 query heads vs ONE shared 512-wide latent</text>
+<text x="318" y="143" font-size="9.7" fill="#2C2C2A">→ M = 128 BY CONSTRUCTION (meets tcgen05 NVFP4 M≥128,</text>
+<text x="318" y="158" font-size="9.7" fill="#2C2C2A">no speculative draft needed).</text>
+<text x="318" y="175" font-size="9.7" fill="#2C2C2A">AI 2G/b → ~2·h_q ≈ 256 → toward compute-bound. KV ~93% smaller.</text>
+<text x="318" y="194" font-size="9.5" font-style="italic" fill="#226B40">The empty cell: no open roofline for MLA decode on sm_103.</text>
+
+<!-- Speculative card (neutral) -->
+<rect x="306" y="226" width="350" height="92" rx="7" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="1.1"/>
+<text x="318" y="246" font-size="11.5" font-weight="600" fill="#5F5E5A">Speculative / tree decode — fallback</text>
+<text x="318" y="264" font-size="9.7" fill="#2C2C2A">q_len = k draft tokens → M = k·G. EAGLE-3 τ≈6.2, DeepSeek MTP ~1.8×.</text>
+<text x="318" y="281" font-size="9.7" fill="#2C2C2A">But needs q_len ≥ 8–16 just to clear M = 64, and acceptance-rate risk</text>
+<text x="318" y="298" font-size="9.7" fill="#5F5E5A">(rejected tokens waste the FLOPs).</text>
+
+<!-- Occupancy card (neutral) -->
+<rect x="306" y="326" width="350" height="92" rx="7" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="1.1"/>
+<text x="318" y="346" font-size="11.5" font-weight="600" fill="#5F5E5A">Occupancy v8.8 — cheap carry</text>
+<text x="318" y="364" font-size="9.7" fill="#2C2C2A">4-blocks/SM residency, ~1.4× at B ≥ 32 (serving regime).</text>
+<text x="318" y="381" font-size="9.7" fill="#2C2C2A">NOT a shape change — fold into v11.</text>
+
+<!-- arrow MIDDLE -> RIGHT -->
+<line x1="656" y1="150" x2="694" y2="150" stroke="#5F5E5A" stroke-width="2"/>
+<polygon points="694,150 684,145 684,155" fill="#5F5E5A"/>
+
+<!-- ===== RIGHT: the prize / open question ===== -->
+<text x="710" y="82" font-size="11" font-weight="600" fill="#5F5E5A">the prize / open question</text>
+<rect x="700" y="90" width="212" height="328" rx="7" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1.2"/>
+<text x="806" y="116" font-size="11.5" font-weight="600" fill="#3C3489" text-anchor="middle">Does the limiter…</text>
+<text x="712" y="146" font-size="10" fill="#2C2C2A">FLIP (per-CTA →</text>
+<text x="712" y="162" font-size="10" fill="#2C2C2A">compute / tensor-</text>
+<text x="712" y="178" font-size="10" fill="#2C2C2A">core-bound)?</text>
+<text x="806" y="200" font-size="10.5" font-weight="600" fill="#3C3489" text-anchor="middle">— or —</text>
+<text x="712" y="222" font-size="10" fill="#2C2C2A">just MOVE to smem-</text>
+<text x="712" y="238" font-size="10" fill="#2C2C2A">capacity (absorbed</text>
+<text x="712" y="254" font-size="10" fill="#2C2C2A">weight on-chip)?</text>
+<line x1="712" y1="272" x2="900" y2="272" stroke="#C9C3E6" stroke-width="1"/>
+<text x="806" y="294" font-size="10.5" font-weight="600" fill="#3C3489" text-anchor="middle">Either sign publishable.</text>
+<text x="712" y="324" font-size="9.7" fill="#5F5E5A">M = 128 also lights the</text>
+<text x="712" y="340" font-size="9.7" fill="#5F5E5A">FP4 cores (15 PF) + many</text>
+<text x="712" y="356" font-size="9.7" fill="#5F5E5A">independent exps for the</text>
+<text x="712" y="372" font-size="9.7" fill="#5F5E5A">2×-exp SFU.</text>
+
+<!-- ===== BOTTOM: mini roofline arrow ===== -->
+<rect x="30" y="446" width="882" height="74" rx="7" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="0.9"/>
+<text x="56" y="474" font-size="11" font-weight="600" fill="#185FA5">AI:  GQA-8 ≈ 8</text>
+<!-- the arrow -->
+<line x1="200" y1="470" x2="540" y2="470" stroke="#185FA5" stroke-width="2.4"/>
+<polygon points="540,470 528,464 528,476" fill="#185FA5"/>
+<text x="560" y="474" font-size="11" font-weight="600" fill="#3C3489">MLA ≈ 256</text>
+<text x="56" y="500" font-size="10" fill="#5F5E5A">B300 FP16 ridge ≈ 312 FLOP/B — MLA crosses toward compute-bound for the first time in the arc.</text>
+<!-- ridge marker tick near AI≈256 -->
+<line x1="640" y1="460" x2="640" y2="480" stroke="#C9322B" stroke-width="1.4" stroke-dasharray="3 2"/>
+<text x="648" y="466" font-size="9" fill="#C9322B">ridge ≈ 312</text>
+</svg>

@@ -1098,3 +1098,44 @@ lever I'd have most liked to bank (the 2× exp), and placed the open kernel ~3×
 roofline explaining exactly why — per-CTA-bound, not bandwidth-bound, on Blackwell Ultra." Measured arch
 constants (148 SMs not 160, L2 132.6 MB not 192, clock 2032 not 2600) went into `roofline/archs.py`. Only
 ncu (Pass 2, bare-metal) + the Gate-2 quiz remain.
+
+## C16 — Closing out v10 under my own adversaries, and choosing v11 by elimination (the shape change)
+
+**The setup.** After v10 I ran an 18-agent close-out *against myself* — 7 forensics re-extracting every notebook
+number, 5 adversaries told to refute my load-bearing claims, 5 researching B300/v11, 1 synthesizing. The point
+wasn't to bless the work; it was to find where I'd overstated. **Say-this:** "I treat a step as suspect until my
+own adversaries fail to break it — and I write down the cases where they *half*-succeed."
+
+**What survived, and the honesty tax I paid.** Every load-bearing number reconciled (capacity 3.56×, accuracy
+~4× FP8, NVFP4 latency-negative, the arch-independent ~40 GB/s ceiling) and all five adversarial verdicts were
+*holds-with-caveat* — the science stood. But the caveats were real and I folded them in: I'd written "settled
+**definitively**" when ncu was never even *installed* on the Blackwell box (so the L2-vs-HBM split is pigeonhole
+from a 1 GB working set, not a measured counter); the nsys 99.4% schedule table was a **hand-pasted `.txt`** from
+an off-notebook run (the committed cell recorded an empty trace) — broken provenance; and my headline **"~40 GB/s
+ceiling"** is the *FP16* number — FP8 is ~20 and NVFP4 ~10 because eff_bw = bytes/time, so the three precisions
+are the *same latency* restated, not three independent confirmations. **Say-this:** "None of it changed the
+verdict, but 'settled definitively' and a hand-saved profiler table are exactly the cracks a reviewer pries open,
+so I sealed them before they cost me the paper."
+
+**Choosing v11 by elimination — the per-CTA verdict does the work.** v10's whole contribution is that decode is
+per-CTA/low-MLP latency-bound: 1 active warp at N_q=1, bytes aren't the wall. That single finding *forecloses*
+three of the four obvious next moves. **More bytes?** v9/v10 exhausted it — NVFP4 is latency-*negative*.
+**More occupancy?** Caps at ~2.3% HBM even SM-saturated. **Tensor cores at M=1?** v8 measured them null, and v10's
+FP4 cores stay dark below the tcgen05 `M≥128` gate. **The only lever left is to change the SHAPE so M>1 and more
+than one warp runs.** That's not a preference; it's what's left after subtraction. **Say-this:** "I didn't pick
+v11 from a menu — my own v10 data crossed three options off, and the survivor is the shape change."
+
+**Why MLA specifically, over speculative decode.** Both raise M, but MLA shares **one** latent across all
+`h_q=128` query heads, so it packs **M=128 by construction at N_q=1** — it meets the FP4 tensor-core gate with no
+draft model, no acceptance-rate gamble, and it lifts decode AI from `2G/b` (≤8–16) to `2·h_q` ≈ **256**, just
+under the B300 FP16 ridge (~312) — the first decode shape in the whole arc that's plausibly compute-bound.
+Speculative/tree decode needs `q_len ≥ 8–16` just to clear M=64 and pays for rejected tokens, so it's the
+*fallback* shape-lever, not the lead. **Say-this:** "MLA is the one decode shape where the tensor-core M-gate
+falls out of the math instead of out of a draft model's luck."
+
+**The honest framing, and the question that keeps the through-line alive.** I'm not "first MLA decode" — FlashMLA
+ships it Blackwell-native. What's empty is the **open, kernel-level roofline** for MLA decode on sm_103. And the
+project's signature question survives the transition intact: MLA's absorbed up-projection weight must stay
+on-chip, so raising AI might **flip** the limiter to compute — or just **rename** it to smem-capacity. **Say-this:**
+"Either MLA leaves the per-CTA wall and the byte/exp levers finally convert, or it trades per-CTA for on-chip
+capacity — and *that's* still a publishable per-CTA-class result. I scoped v11 so I can't lose the argument."

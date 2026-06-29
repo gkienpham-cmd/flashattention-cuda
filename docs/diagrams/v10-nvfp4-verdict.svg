@@ -1,0 +1,43 @@
+<svg width="100%" viewBox="0 0 820 560" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>NVFP4 KV decode verdict — capacity is a durable win, accuracy is the cost, and latency does not improve on a per-CTA-bound decode kernel</title>
+<desc>v10 forks v9 changing only KV storage from FP8 at 1 byte per element to NVFP4 at 0.5625 bytes per element, a clean byte-only A/B test. Five verdict cards. One, green: capacity is durable at 3.56x versus FP16 and 1.78x versus FP8; the measured KV pool of shape 1 by 8 by 65536 by 128 goes from 268.44 MB at FP16 to 134.22 MB at FP8 to 75.50 MB at NVFP4, where 0.5625 bytes per element counts the per-16 E4M3 micro-scale; architecture independent. Two, orange: accuracy is the cost, about 4x more RMSE than FP8, NVFP4 quant RMSE about 2.4e-3 versus FP8 about 6e-4 due to E2M1's 1-bit mantissa; asymmetric per-channel-K helps only where channel outliers are strong, GPT-2 layer 2 being 16 percent better, so block16 is the robust default; the score must stay at or above FP16 because an FP4 score collapses softmax with 4.6 to 6.6x RMSE. Three, orange: latency is negative past L2, 12 to 30 percent slower than FP16; on B300 at 2M tokens FP16 is 24,798 versus NVFP4 27,579 microseconds per token; the nibble unpack plus micro-scale ALU sits on the per-CTA critical path and percent HBM falls from FP16 to FP8 to NVFP4, gate d128 G8 going 10.4 to 6.3 to 3.0 percent, so bytes are not the wall. Four, orange: the sm_103 2x-exp lever is a measured miss; a dependent-EX2 microkernel hit 5.33 TeraExp per second, 0.50x the 10.7 vendor claim, and mufu share of decode is under 3 percent and N_k-invariant, so it is negligible for M=1 decode. Five, purple: the reason is that decode is per-CTA, low-MLP latency-bound with 1 active warp at N_q=1; versus FlashInfer trtllm-gen NVFP4 we are about 3x off, 4491 versus 1485 microseconds per step, FP16-Q versus its FP8-Q, complementing not beating; the byte and precision levers are capacity plus accuracy, while the latency lever is shape, which is v11. Prediction versus measured was 4 of 4 plus 1 honest miss, the EX2 2x.</desc>
+<rect x="0" y="0" width="820" height="560" fill="#ffffff"/>
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">NVFP4 KV decode — capacity yes, accuracy is the cost, latency no</text>
+<text x="30" y="49" font-size="11" fill="#888780">v10 forks v9 changing ONLY KV storage (FP8 1 B → NVFP4 0.5625 B/elem) — a clean byte-only A/B; the byte cut buys no decode latency.</text>
+
+<!-- Card 1: Capacity (green) -->
+<rect x="30" y="66" width="760" height="74" rx="6" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1"/>
+<text x="44" y="88" font-size="12.5" font-weight="600" fill="#226B40">✓ Capacity — DURABLE (3.56× vs FP16, 1.78× vs FP8)</text>
+<text x="44" y="107" font-size="10" fill="#2C2C2A">Measured KV-pool [1, 8, 65536, 128]:  FP16 268.44 MB  →  FP8 134.22 MB  →  NVFP4 75.50 MB.</text>
+<text x="44" y="124" font-size="10" fill="#5F5E5A">0.5625 B/elem (counts the per-16 E4M3 micro-scale). Arch-independent.</text>
+
+<!-- Card 2: Accuracy (orange) -->
+<rect x="30" y="150" width="760" height="90" rx="6" fill="#FAECE7" stroke="#D85A30" stroke-width="1"/>
+<text x="44" y="172" font-size="12.5" font-weight="600" fill="#993C1D">~ Accuracy — THE COST (~4× more RMSE than FP8)</text>
+<text x="44" y="191" font-size="10" fill="#2C2C2A">NVFP4 quant RMSE ~2.4e-3 vs FP8 ~6e-4 (E2M1's 1-bit mantissa). Asymmetric per-channel-K helps ONLY</text>
+<text x="44" y="208" font-size="10" fill="#2C2C2A">where channel outliers are strong (GPT-2 layer 2: 16% better) — block16 is the robust default.</text>
+<text x="44" y="225" font-size="10" fill="#5F5E5A">Score must stay ≥ FP16 (FP4 score collapses softmax, RMSE 4.6–6.6×).</text>
+
+<!-- Card 3: Latency (orange) -->
+<rect x="30" y="250" width="760" height="90" rx="6" fill="#FAECE7" stroke="#D85A30" stroke-width="1"/>
+<text x="44" y="272" font-size="12.5" font-weight="600" fill="#993C1D">✗ Latency — NEGATIVE past L2 (12–30% slower than FP16)</text>
+<text x="44" y="291" font-size="10" fill="#2C2C2A">B300 2M tokens:  FP16 24,798  vs  NVFP4 27,579 µs/tok. The nibble-unpack + micro-scale ALU sits on</text>
+<text x="44" y="308" font-size="10" fill="#2C2C2A">the per-CTA critical path; %HBM FALLS FP16→FP8→NVFP4 (gate d128 G8: 10.4% → 6.3% → 3.0%).</text>
+<text x="44" y="325" font-size="10" fill="#5F5E5A">Bytes are not the wall.</text>
+
+<!-- Card 4: 2x-exp miss (orange) -->
+<rect x="30" y="350" width="760" height="74" rx="6" fill="#FAECE7" stroke="#D85A30" stroke-width="1"/>
+<text x="44" y="372" font-size="12.5" font-weight="600" fill="#993C1D">✗ sm_103 2×-exp lever — a measured MISS</text>
+<text x="44" y="391" font-size="10" fill="#2C2C2A">Dependent-EX2 microkernel hit 5.33 TExp/s = 0.50× the 10.7 vendor claim; mufu share of decode is</text>
+<text x="44" y="408" font-size="10" fill="#5F5E5A">&lt;3% (N_k-invariant) → negligible for M=1 decode.</text>
+
+<!-- Card 5: Why per-CTA (purple) -->
+<rect x="30" y="434" width="760" height="86" rx="6" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
+<text x="44" y="456" font-size="12.5" font-weight="600" fill="#3C3489">Why: decode is per-CTA / low-MLP latency-bound</text>
+<text x="44" y="475" font-size="10" fill="#2C2C2A">1 active warp at N_q=1. vs FlashInfer trtllm-gen NVFP4 we are ~3× off (4491 vs 1485 µs/step,</text>
+<text x="44" y="492" font-size="10" fill="#2C2C2A">FP16-Q vs its FP8-Q) — complementing, not beating.</text>
+<text x="44" y="509" font-size="10" fill="#5F5E5A">The byte/precision levers are capacity + accuracy; the latency lever is SHAPE (v11).</text>
+
+<!-- bottom italic line -->
+<text x="30" y="546" font-size="10.5" font-style="italic" fill="#888780">Prediction-vs-measured: 4/4 + 1 honest miss (the EX2 2×).</text>
+</svg>

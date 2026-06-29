@@ -366,7 +366,9 @@ the SM count, capped at 32 and floored at a 256-key chunk; **prefill (large `N_q
 v6 reduces to plain attention** (which is what makes the square-shape correctness tests pass). No
 tensor cores: at `N_q = 1` the matmuls are M=1 (GEMV), so WMMA would idle on a 1-row tile.
 
-**What changes on B300 (research §3):** 160 SMs ⇒ more splits (retune `choose_splits` `num_sm` 40→160);
+**What changes on B300 (research §3; SM count now MEASURED in v10):** **148 SMs** (MEASURED on the vast.ai
+B300 — the 160 figure is the spec/marketing number, refuted by the device readout) ⇒ more splits (retune
+`choose_splits` `num_sm` 40→148);
 **HBM bandwidth is FLAT vs B200** ⇒ the real decode wins are **precision** (NVFP4 KV ≈ 3.5× fewer bytes,
 v10), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
 2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v9/v10 (GQA
@@ -390,7 +392,9 @@ M-packing is now v8 — reordered ahead of the byte cuts; see "What this measure
   `%HBM` are meaningless (correctness still matches — it's in the 25/25). Realistic causal decode needs
   the query at position `N_k−1`; the non-causal rows already measure that. Filed as a harness fix.
 
-**What changes on B300 (research §3):** 160 SMs ⇒ more splits (retune `choose_splits` `num_sm` 40→160);
+**What changes on B300 (research §3; SM count now MEASURED in v10):** **148 SMs** (MEASURED on the vast.ai
+B300 — the 160 figure is the spec/marketing number, refuted by the device readout) ⇒ more splits (retune
+`choose_splits` `num_sm` 40→148);
 **HBM bandwidth is FLAT vs B200** ⇒ the real decode wins are **precision** (NVFP4 KV ≈ 3.5× fewer bytes,
 v10), **occupancy**, and **2× hardware exp** — *not* GB/s. The separate merge kernel becomes an on-chip
 2-CTA-cluster + DSMEM merge (Blackwell-only). FP8/NVFP4 KV + asymmetric precision arrive at v9/v10 (GQA
@@ -772,7 +776,7 @@ differentiator.)* Regime-method dev stays on T4 (4 MB L2 spills at tractable N_k
 roofline (huge L2) is itself a paper figure.
 
 **What changes on another arch:** the L2 confound is arch-relative — bigger L2 (A100 40 MB, H100 50 MB,
-B200/B300 126–192 MB) pushes the L2-spill N_k far higher, so the "bandwidth-bound regime" needs proportionally
+B200/B300 **132.6 MB MEASURED** in v10 — refutes the 126–192 MB estimates) pushes the L2-spill N_k far higher, so the "bandwidth-bound regime" needs proportionally
 longer context there. The decode roofline math (AI=2/b, memory-bound at every reachable precision) is
 arch-independent; only *where the kernel reaches the floor* moves.
 
@@ -811,7 +815,7 @@ boundedness signal here and FP8's latency win lives past L2 / under load — whi
 
 **What changes on another arch:** FP8's **capacity** win (2× KV cache at fixed memory) is arch-independent
 and is the durable deliverable. The **latency** win is arch- and regime-dependent: it appears only where
-the kernel is genuinely bandwidth-bound, which a bigger L2 (A100 40 MB … B300 192 MB) pushes to far
+the kernel is genuinely bandwidth-bound, which a bigger L2 (A100 40 MB … B300 132.6 MB MEASURED in v10) pushes to far
 longer context. On B300 (sm_103, the paper) the same dequant machinery carries forward to NVFP4 (v10),
 where native FP4 throughput (15 PF dense) adds a *compute* lever this T4 GEMV doesn't have.
 
@@ -871,7 +875,7 @@ kernel that isn't bytes-bound doesn't care where the bytes live.
   → confirms it does nothing. Not a v10 blocker; v10 NVFP4 (capacity+accuracy) proceeds.
 
 **What changes on another arch:** the per-CTA cap is a *schedule* limit (1 active warp at N_q=1), so it's
-arch-independent in shape; bigger-L2 archs (A100 40 MB … B300 192 MB) just push the L2-spill N_k far higher,
+arch-independent in shape; bigger-L2 archs (A100 40 MB … B300 132.6 MB MEASURED in v10) just push the L2-spill N_k far higher,
 so the confound-free measurement there needs proportionally longer context (why Task 1 was done on the T4's
 small 4 MB L2). On B300 the same kernel would still be per-CTA-bound at short context; the bandwidth-bound
 regime only appears at very long context where even ~28% of 8 TB/s is large in absolute terms.
@@ -1045,7 +1049,11 @@ the cusparse-header build, `bindings/load.py`). **Decision-relevant findings:** 
 *without ncu* (the 1 GB WS kills the L2-residency confound by construction). (2) **Architecture-independent
 latency ceiling:** ~40 GB/s achieved at B=1 on BOTH T4 and B200 (11% of 320 GB/s vs 0.5% of 8 TB/s) — the
 strongest latency-bound evidence in the project. (3) **NVFP4 is latency-NEGATIVE past L2** (12–30% slower
-than FP16; FP8 ≈ FP16) → **NVFP4 = capacity + accuracy, NOT latency, settled definitively**. (4) Occupancy
+than FP16; FP8 ≈ FP16) → **NVFP4 = capacity + accuracy, NOT latency, settled for every regime measured**
+(to 2M tokens / B=128 on T4, B200 *and* sm_103) — the ncu L2-hit-rate cross-check on Blackwell and a
+clock-locked rerun remain owed as belt-and-suspenders, so "settled" here means "across the measured
+regimes," matching this record's own "corroboration, not discovery" framing, not "proven for all regimes."
+(4) Occupancy
 (batch) is the only throughput lever (4× from batching) but caps at 2.3% HBM. (5) Arch constants measured
 (L2 **132.6 MB** refutes the 192 MB aggregator claim; 148 SMs; 1965 MHz suggests B300's 2600 estimate is
 high). **Net: the B300/sm_103 run is now corroboration, not discovery** — reproduce the flat %HBM + add the
@@ -1086,3 +1094,54 @@ constant not a regime change. **Net: the sm_103 record is in hand; only ncu (Pas
 Gate-2 quiz remain before v10 DONE.** Data of record: `notebooks/v10_b300_*_output*.ipynb`,
 `v10_b300_nsys_kernsum.txt`, `docs/diagrams/v10-b300-regime.svg`. See `results.md` Step 10 sm_103 record,
 `interview-prep.md` C15.
+
+## Step 10 deep-research close-out + v11 decision (2026-06-30, 18-agent verify+adversarial+research pass)
+
+**An 18-agent pass (7 data-forensics re-extracting every notebook number, 5 adversarial refute-first verifiers
+on the load-bearing interpretations, 5 B300/v11 web-research, 1 synthesis) verified v10 and decided v11.**
+Full record in `results.md` Step 10 close-out. Decision-relevant deltas:
+
+**Verified (no science change).** Every load-bearing number reconciles to the notebooks (146-passed; capacity
+268.44→134.22→75.50 MB = 3.56×/1.78×; accuracy NVFP4 ~2.1–2.7e-3 vs FP8 ~6–7e-4; %HBM monotone fall
+10.4→6.3→3.0%; NVFP4 latency-negative 24798 vs 27579 µs/tok @ 2M; arch 148 SMs / 132.6 MB L2 / 2032 MHz;
+FlashInfer 1484.51 vs 4491.43; EX2 5.33 vs 10.7). **Prediction-vs-measured is genuinely 4/4 + 1 honest miss.**
+All 5 adversarial verdicts: **HOLDS-WITH-CAVEAT (high confidence)** — the per-CTA-bound verdict and "NVFP4 =
+capacity+accuracy not latency" stand on the strongest evidence (the arch-independent ~40 GB/s ceiling + flat
+%HBM past an 8× L2 overflow); the caveats are honesty hedges now folded into the docs.
+
+**Honesty/provenance corrections applied (this pass).** (1) **"settled definitively" → "settled for every regime
+measured"** (ncu on Blackwell + a clock-locked rerun still owed). (2) **nsys provenance flagged** — the 99.4%/99.3%
+tables are hand-saved `.txt`; the committed notebook's nsys cell ran 2025.1.3 → *empty* trace, the 2025.3.2 run was
+off-notebook (cross-checks the sweep within 0.46%/2.3%; regenerate in-notebook before the paper). (3) **"~40 GB/s"
+scoped to FP16** (FP8 ~20, NVFP4 ~10 at B=1 — same latency restated; the cross-*arch* constancy is the real claim;
+do not attach it to the B=64 FlashInfer comparator, where the kernel runs ~478 GB/s). (4) **NVFP4 latency penalty
+stated as the full 12–30% range**, not the best-case 2M "~11%". (5) **ncu on the B300 box was not even installed**
+(never reached the `RmProfilingAdminOnly` gate) — Pass-2 needs an install *and* privilege. (6) Stale **160 SMs /
+192 MB** forward-looking notes corrected to the measured **148 / 132.6 MB**. Cosmetic-only and deferred: a `nanx`
+self-ratio in the gate's run-of-record, a "160 SMs" label string in a B300 notebook cell.
+
+**Decision: v11 = MLA (Multi-head Latent Attention) latent-KV decode — the SHAPE change.** Full plan:
+[`docs/v11-kickoff.md`](v11-kickoff.md). The reasoning, against the three required criteria:
+- **Justified by the per-CTA verdict.** v10 proved across T4/B200/B300 (confound-free, to 2M tokens) that decode
+  is per-CTA/low-MLP latency-bound and cutting bytes does *nothing* for latency. The only lever left is to change
+  the SHAPE so >1 warp is active and AI rises off the floor — not more bytes (v9/v10 exhausted that), not more
+  occupancy alone (caps at ~2.3% HBM), not tensor cores at M=1 (v8 measured them null; v10's FP4 cores stay dark).
+- **Why MLA over the alternatives.** MLA shares **one** latent across all `h_q` query heads → it packs **M=128 BY
+  CONSTRUCTION at N_q=1** (meets the tcgen05 NVFP4 `M≥128` gate with **no speculative draft**), and raises decode
+  AI from `2G/b` (≤8–16) to **`2·h_q` ≈ 256** (near the B300 FP16 ridge ~312) — the first decode shape in the arc
+  plausibly compute-bound. The **speculative/multi-token** path (EAGLE-3 τ≈6.2, MTP ~1.8×) needs `q_len≥8–16` just
+  to clear M=64 and adds acceptance-rate risk → kept as the **fallback** shape-lever. The **occupancy v8.8**
+  finding (~1.4× at B≥32) is **not** a shape change → folded into v11's kernel for the serving regime, not its own step.
+- **Most defensible contribution.** FlashMLA (Blackwell-native, tcgen05+TMEM) and FlashInfer are concrete SOTA
+  comparators, yet **no published kernel-level roofline (compute-vs-memory-vs-per-CTA) for MLA decode on sm_103
+  exists** — the exact empty cell, and a *stronger* novelty than continuing the GQA+FP4 line FlashInfer already
+  beats us ~3× on. It keeps the project's signature question alive: **does the limiter FLIP to compute, or just
+  MOVE to smem-capacity** (the absorbed `W^UK`/`W^UV` weight must stay on-chip)? Either sign is publishable.
+- **ONLY-IF the data warrants:** commit to the full tcgen05/TMEM warp-specialized **native-FP4-compute** rewrite
+  only after the B200/T4 dev-rung confirms M=128 packs as **one** GEMM (not fragmented by the decoupled-RoPE /
+  absorbed-matrix layout) and that the limiter actually flips. Default v11 = CUDA-core/dequant-to-FP16 MLA, a clean
+  single-variable A/B vs v10 (same storage + split-KV, only the shape changes). **What changes on another arch:**
+  the M≥128 FP4-compute gate is Blackwell-`sm_103a`-specific (no `mma.sync` FP4 fallback); the AI lift and the
+  capacity win are arch-independent. Field is moving to **sparse** (DeepSeek V3.2 DSA / V4 CSA) and **GLA** (Tri Dao,
+  beat FlashMLA ~20%) → flagged **v12** (dense MLA is the roofline-clean pedagogical rung first). See
+  [`v11-kickoff.md`](v11-kickoff.md), `results.md` Step 10 close-out, `interview-prep.md` C16, `decode-replan.md` §5.

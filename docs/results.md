@@ -1546,8 +1546,10 @@ The counter-free %HBM verdict above is a *bandwidth* read; `nsys` adds the ortho
 trace, no `ERR_NVGPUCTRPERM`, unlike ncu). Captured on the B200 with a complete Nsight Systems 2025.3.2
 (the AIO image's first `apt-get install nsight-systems` was an *incomplete* package missing the
 `QdstrmImporter` host-binary → `--stats` failed; fixed with `nsight-systems-cli` / `cuda-nsight-systems-12-9`
-from the already-configured NVIDIA CUDA repo, and §10b of the regime notebook now auto-finds a complete
-nsys + runs `nsys stats` as a separate step). Shape: 100 launches of `v10_nvfp4` @ B=1, H_kv=1, N_k=1M, d=128.
+from the already-configured NVIDIA CUDA repo). Shape: 100 launches of `v10_nvfp4` @ B=1, H_kv=1, N_k=1M, d=128.
+**⚠️ Same provenance caveat as the sm_103 nsys (below):** the working 2025.3.2 capture was a *terminal* step,
+not a re-runnable notebook cell; the `.txt` is hand-saved. Cross-checks the sweep within 2.3%; regenerate
+in-notebook before the paper.
 
 **CUDA GPU Kernel Summary (the per-CTA single-dominant-kernel schedule, confirmed):**
 
@@ -1573,8 +1575,10 @@ only owed cross-check, and it needs a privileged/bare-metal box (`docs/v10-b300-
 The paper's headline datapoint: the same counter-free knee-hunt + nsys schedule + arch-measure, now on a
 real **B300 (sm_103)**, the project's final target. Notebooks of record: `notebooks/v10_b300_regime_outputb300.ipynb`,
 `v10_b300_exp_ablation_output.ipynb`, `v10_b300_comparators_output.ipynb`, `notebooks/v10_b300_nsys_kernsum.txt`,
-figure `docs/diagrams/v10-b300-regime.svg`. **Counter-free + nsys, no ncu** (container blocks counters,
-`RmProfilingAdminOnly:1`; ncu deferred to an optional Pass-2 bare-metal session). The B200 dev-rung already
+figure `docs/diagrams/v10-b300-regime.svg`. **Counter-free + nsys, no ncu** — and to be precise (close-out
+2026-06-30): on **this** B300 box `ncu` was **not installed** at all (the cell printed "ncu not installed"),
+so the run never even reached the `RmProfilingAdminOnly:1` permission gate the runbook documents on other
+hosts. **Pass-2 therefore needs both** an `ncu` install **and** a privileged/bare-metal box. The B200 dev-rung already
 settled the L2 confound by construction, so this run **transfers the verdict to sm_103** rather than
 re-deriving it. Clocks unlocked but boosted to and held **2032 MHz** under load (intra-run %HBM trusted).
 
@@ -1592,9 +1596,17 @@ construction, so this is earned **without ncu**.
 **~40–46 GB/s on B300, B200, AND T4** — i.e. **0.5% of the B300's 8 TB/s, 0.5% of the B200's 8 TB/s, but
 ~11% of the T4's 320 GB/s.** Identical absolute throughput across a 25× bandwidth span → a per-CTA/latency
 ceiling that does not scale with the device. The cleanest latency-bound signature in the project.
+**⚠️ Precision-scoping (close-out 2026-06-30):** "~40 GB/s" is the **FP16** figure (`eff_bw = KV_bytes/time`);
+at B=1 FP8 lands **~20** and NVFP4 **~10 GB/s** because the byte count shrinks 2 : 1 : 0.56 — so the three
+precisions are **not** three independent confirmations of 40, they're the *same per-token latency* restated
+through different byte counts. The load-bearing claim is the **cross-ARCH** constancy of the FP16 number
+(T4/B200/B300), and it holds. Do **not** re-attach "~40 GB/s" to the B=64 FlashInfer comparator (item 8): at
+B=64 the kernel runs ~478 GB/s FP16-equiv (~6% of peak), an order of magnitude above this B=1 floor.
 
 **4. NVFP4 latency-NEGATIVE past L2 (settled on sm_103).** At d=128/N_k=2M: FP16 **24,798 µs/tok**, NVFP4
-**27,579 µs/tok** (~11% slower); NVFP4 ≤ FP16 at every shape. The nibble-unpack + per-16-microscale ALU
+**27,579 µs/tok** (~11% slower **at this 2M, ALU-amortized point** — but **20–28% slower across the rest of
+the sweep**, mirroring the B200 write-up's honest "12–30% slower"; don't headline the single best-case 11%);
+NVFP4 ≤ FP16 at every shape. The nibble-unpack + per-16-microscale ALU
 sits on the critical path of a compute/latency-bound kernel, so the byte cut buys nothing in time.
 **NVFP4 = capacity (3.55×) + accuracy, NOT latency** — confirmed on FP4 + Blackwell Ultra past L2.
 
@@ -1607,6 +1619,13 @@ SM-saturated (8.6 GB WS) the per-CTA serial recurrence caps achieved BW at ~2.3%
 `nsight-systems-2025.3.2` package and invoke that binary explicitly). The split-KV `nvfp4_partial_kernel`
 is **99.4%** of GPU time, the LSE-merge **0.04%** (~2500× smaller), the rest a one-time NVFP4 quant prepass
 (2–6 instances, not 100). Single-dominant-kernel per-CTA schedule — matches B200 (99.3% / 0.04%).
+**⚠️ Provenance (close-out 2026-06-30) — a debt to clear before the paper:** the 99.4%/99.3% tables live
+**only** in the hand-saved `.txt` files (`v10_b300_nsys_kernsum.txt` / `v10_nsys_kernsum.txt`). The *committed
+regime notebook's* nsys cell ran **2025.1.3** and recorded an **empty** sm_103 trace ("sqlite does not contain
+CUDA kernel data"); the working **2025.3.2** capture was done **off-notebook (terminal)** and pasted in. The
+numbers are credible — they cross-check the regime sweep within **0.46%** (B300: 14.71 ms nsys vs 14.64 ms
+sweep) / **2.3%** (B200) — but the capture is **not reproducible from the committed `.ipynb`**. Regenerate
+in-notebook with a working 2025.3.2 cell (alongside the deferred ncu Pass-2) before quoting it in the paper.
 
 **7. sm_103 2×-exp softmax delta — a measured MISS.** A dependent-EX2 microkernel achieved **5.33 TExp/s
 vs the 10.7 TExp/s vendor claim = ratio 0.50×** (B300 lands at ~B200's level on this kernel; the advertised
@@ -1629,5 +1648,62 @@ reachable context, NVFP4 is a capacity+accuracy lever not a latency one, and the
 FlashInfer's tuned NVFP4 path. The verdict that was hedged-by-L2 on T4 and demonstrated at scale on B200 is
 now on the paper's record arch. **Only owed:** the ncu L2-hit-rate (Pass 2, bare-metal) + the deferred
 Gate-2 quiz. See `decisions.md` Step 10 sm_103 record, `interview-prep.md` C15.
+
+### Deep-research close-out (2026-06-30, 18-agent verify + adversarial + B300/v11 research pass)
+
+**An 18-agent pass — 7 data-forensics (independent number re-extraction + doc fact-check, one per notebook),
+5 adversarial (refute-first on the load-bearing interpretations), 5 B300/v11 web-research, 1 synthesis —
+verified v10 and set v11.** Headline: **v10 ran successfully and the docs are substantively faithful** —
+every load-bearing number reconciles to the notebook outputs, prediction-vs-measured is genuinely 4/4 + 1
+honest miss, and **all 5 adversarial verdicts came back HOLDS-WITH-CAVEAT (high confidence)** — the science
+stands on its strongest evidence (the arch-independent ~40 GB/s B=1 ceiling + flat %HBM past an 8× L2 overflow),
+the caveats are honesty hedges now folded into the text above.
+
+**Confirmed surprises / sharpenings worth keeping (the "keen-eye" layer):**
+- **The clock-throttle pattern INVERTS between the two gate cells:** in the G-sweep v8.7 runs hot (1365 MHz)
+  while v9/v10 throttle (585); in the batch-sweep it flips (v8.7 throttles, v9/v10 run 1590). Which backend gets
+  power-capped is order/thermal-dependent, not intrinsic — a vivid proof that absolute µs/tok is untrustworthy
+  and **only same-process clock-matched `vs naive` ratios survive.** v11 mandate: lock clocks or one-process.
+- **NVFP4 is consistently *slower* than FP16 (12–30%), not merely neutral**, past L2 on both Blackwell arches,
+  while FP8 ≈ FP16 (±5%): the dequant ALU sits on the per-CTA critical path. The cleanest refutation of
+  "fewer bytes = faster decode" and a direct v11 caution — **FP4 is a STORAGE format, not a decode-latency lever,
+  until the kernel is compute/TC-bound (M≥128).**
+- **The roofline mufu (exp) share is exactly N_k-invariant** (0.42% G=1 → 3.01% G=8, identical at every N_k)
+  because t_mma/t_hbm/t_mufu all scale linearly in N_k for decode → the ratio cancels. So "long context makes the
+  2×-exp lever matter for decode" is contradicted by the project's own model — the exp lever is a multi-token/MLA
+  (M≫1) story (v11), **not** a long-context-decode one. The EX2 0.50× "miss" is *expected* (a dependent EX2 chain
+  at M=1 cannot saturate the SFU's throughput peak).
+- **FlashInfer's ~3× edge at B=64 is NOT at the ~40 GB/s wall:** at that shape our kernel runs ~478 GB/s
+  FP16-equiv (~6% of peak) and FlashInfer ~1447 GB/s (~18%) — both compute/schedule-bound, well below HBM
+  saturation. The gap is an efficiency/precision-format gap (FP8-Q + tensor-core trtllm-gen schedule vs our
+  FP16-Q CUDA-core 1-warp GEMV), **not** a bandwidth-regime crossover. "Complementing, not beating" is right; the
+  ~40 GB/s figure must stay attached to **B=1** only.
+- **On real GPT-2 KV the K channel-outlier strength is non-monotone in depth** (max/mean 11.6 at layer 2 →
+  5.7 by layer 11, *below* Gaussian), so per-channel-K beats block16 exactly where outliers are strong and loses
+  where they vanish — block16 stays the robust default, V=token never clearly wins (gpt2-small sinks too weak,
+  1.5–2.2 vs 10–100× in known-sink models). The "ship block16, skip the Stage-B kernel" decision is data-correct;
+  citing the asymmetric recipe in the paper needs a **known-sink GQA model** (Llama/Mistral/Qwen) re-run first.
+
+**Corrections applied to the record (honesty/provenance — none overturn the science):** "settled definitively"
+→ "settled for every regime measured"; the nsys 99.4%/99.3% **provenance flagged** (hand-saved `.txt`, the
+committed notebook cell ran 2025.1.3 → empty trace, the 2025.3.2 capture was off-notebook — regenerate
+in-notebook before the paper); "~40 GB/s" **scoped to FP16** (not three independent precision confirmations);
+the NVFP4 penalty stated as the **full 12–30%** range (not best-case 11%); **ncu was not installed** on the B300
+box (never reached the permission gate); stale **160 SM / 192 MB** forward-looking notes → measured **148 /
+132.6 MB**. Deferred cosmetic-only: a `nanx` self-ratio in the gate run-of-record, a "160 SMs" label string in a
+B300 notebook cell.
+
+**New result figures (this pass):** [`diagrams/v10-per-cta-wall.svg`](diagrams/v10-per-cta-wall.svg) (the
+arch-independent ~40 GB/s ceiling + the no-knee curve), [`diagrams/v10-nvfp4-verdict.svg`](diagrams/v10-nvfp4-verdict.svg)
+(capacity ✓ / accuracy = cost / latency ✗ / exp ✗ / FlashInfer 3×), and
+[`diagrams/v10-to-v11-shape.svg`](diagrams/v10-to-v11-shape.svg) (the v11 shape-change decision).
+
+**v11 decision = MLA latent-KV decode (the SHAPE change).** v10 proved bytes/occupancy/M=1-tensor-cores are all
+exhausted; the only lever left is to raise M above 1. **MLA packs all `h_q=128` heads → M=128 by construction
+(meets the tcgen05 NVFP4 `M≥128` gate, no speculative draft) and lifts decode AI `2G/b`→`2·h_q`≈256 toward the
+B300 FP16 ridge** — the first decode shape in the arc plausibly compute-bound, and the empty cell (no open
+kernel-level MLA-decode roofline on sm_103). Speculative/multi-token is the **fallback** shape-lever; occupancy
+v8.8 folds in for the serving regime. Plan to paste into a fresh session:
+[`docs/v11-kickoff.md`](v11-kickoff.md). See `decisions.md` Step 10 close-out, `interview-prep.md` C16.
 
 ---

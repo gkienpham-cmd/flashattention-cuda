@@ -1,0 +1,113 @@
+<svg width="100%" viewBox="0 0 880 470" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Decode hits a per-CTA wall, not a bandwidth wall — at B=1 FP16 extracts only ~40 GB/s on T4, B200 and B300 alike, and %HBM stays flat past an 8x L2 overflow on B300</title>
+<desc>Left panel: a bar comparison of three GPUs showing achieved B=1 FP16 bandwidth against peak HBM. T4 sm_75 peak 320 GB/s, achieved about 40 GB/s, which is about 12 percent of peak. B200 sm_100 peak 8000 GB/s, achieved about 45 GB/s, about 0.6 percent of peak. B300 sm_103 peak 8000 GB/s, achieved about 45 GB/s, about 0.6 percent of peak. A 25x bigger bus extracts no more throughput at B=1, so this is a per-CTA latency ceiling that does not scale with the device. The ~40 GB/s is the FP16 figure measured as KV bytes over time; FP8 is about 20 and NVFP4 about 10 GB/s because the byte count shrinks 2 to 1 to 0.56, which is the same per-token latency restated. Right panel: a line plot of percent HBM versus context length N_k from 8K to 2M on B300, FP16 flat at about 0.5 to 0.6 percent the whole range. A vertical dashed line marks the L2 spill at N_k about 259K where the 132.6 MB L2 overflows. A pre-registered counter-prediction that percent HBM would climb if the kernel were bandwidth-bound is drawn as a faint rising dashed line, and the measured flat line ignores it. The working set reaches 1.07 GB, an 8x overflow of the 132.6 MB L2, with no bandwidth knee, confirming the kernel is per-CTA-bound on Blackwell Ultra, confound-free without ncu.</desc>
+<rect x="0" y="0" width="880" height="470" fill="#ffffff"/>
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">Decode hits a per-CTA wall, not a bandwidth wall (B300/sm_103 record)</text>
+<text x="30" y="49" font-size="11" fill="#888780">B=1 FP16 achieved ~40 GB/s on T4, B200 AND B300 — a 25× bigger bus extracts no more throughput; and no bandwidth knee past an 8× L2 overflow</text>
+
+<!-- divider between panels -->
+<line x1="440" y1="74" x2="440" y2="448" stroke="#E3E1DA" stroke-width="1"/>
+
+<!-- ============ PANEL A (left) ============ -->
+<text x="30" y="80" font-size="12" font-weight="600" fill="#5F5E5A">A — Architecture-independent ~40 GB/s B=1 ceiling (FP16)</text>
+
+<!-- Bar comparison: peak as tall faint bar, achieved as tiny solid bar. -->
+<!-- y axis: 0 GB/s at y=300, top (8000) at y=110 for the full-height B200/B300 peaks; T4 peak 320 scaled separately so its tiny achieved bar is visible -->
+<rect x="44" y="98" width="372" height="232" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- baseline -->
+<line x1="60" y1="300" x2="404" y2="300" stroke="#B4B2A9" stroke-width="1"/>
+<text x="56" y="316" font-size="9" fill="#888780" text-anchor="end">0</text>
+
+<!-- T4 group -->
+<!-- peak 320 GB/s faint bar; achieved 40 = 12% solid bar. Scale: 320 GB/s -> 150 px tall (this group uses its own visible scale so 40 is readable) -->
+<rect x="78" y="150" width="40" height="150" fill="#EAF0F6" stroke="#A9C4DD" stroke-width="0.8"/>
+<rect x="124" y="282" width="24" height="18" fill="#185FA5"/>
+<text x="98" y="144" font-size="9" fill="#888780" text-anchor="middle">peak 320</text>
+<text x="136" y="276" font-size="9" fill="#185FA5" text-anchor="middle">~40</text>
+<text x="113" y="338" font-size="10" font-weight="600" fill="#2C2C2A" text-anchor="middle">T4 (sm_75)</text>
+<text x="113" y="352" font-size="9" fill="#993C1D" text-anchor="middle">~12% of peak</text>
+
+<!-- B200 group -->
+<!-- peak 8000 GB/s -> full 190 px (y 110->300); achieved 45 = 0.6% -> ~1.1 px (draw a tiny solid sliver, min 3px so it's visible, labelled) -->
+<rect x="196" y="110" width="40" height="190" fill="#EAF0F6" stroke="#A9C4DD" stroke-width="0.8"/>
+<rect x="242" y="296" width="24" height="4" fill="#185FA5"/>
+<text x="216" y="104" font-size="9" fill="#888780" text-anchor="middle">peak 8000</text>
+<text x="254" y="290" font-size="9" fill="#185FA5" text-anchor="middle">~45</text>
+<text x="231" y="338" font-size="10" font-weight="600" fill="#2C2C2A" text-anchor="middle">B200 (sm_100)</text>
+<text x="231" y="352" font-size="9" fill="#993C1D" text-anchor="middle">~0.6% of peak</text>
+
+<!-- B300 group -->
+<rect x="314" y="110" width="40" height="190" fill="#EAF0F6" stroke="#A9C4DD" stroke-width="0.8"/>
+<rect x="360" y="296" width="24" height="4" fill="#185FA5"/>
+<text x="334" y="104" font-size="9" fill="#888780" text-anchor="middle">peak 8000</text>
+<text x="372" y="290" font-size="9" fill="#185FA5" text-anchor="middle">~45</text>
+<text x="349" y="338" font-size="10" font-weight="600" fill="#2C2C2A" text-anchor="middle">B300 (sm_103)</text>
+<text x="349" y="352" font-size="9" fill="#993C1D" text-anchor="middle">~0.6% of peak</text>
+
+<!-- legend -->
+<rect x="60" y="108" width="11" height="11" fill="#EAF0F6" stroke="#A9C4DD" stroke-width="0.8"/>
+<text x="75" y="117" font-size="8.5" fill="#888780">peak HBM</text>
+<rect x="128" y="108" width="11" height="11" fill="#185FA5"/>
+<text x="143" y="117" font-size="8.5" fill="#888780">achieved B=1</text>
+<text x="232" y="117" font-size="8.5" fill="#888780" font-style="italic">(T4 group on its own scale)</text>
+
+<!-- punchline card -->
+<rect x="44" y="366" width="372" height="44" rx="5" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
+<text x="54" y="382" font-size="9.5" fill="#3C3489">25× more bus → same ~40 GB/s extracted at B=1 → a per-CTA /</text>
+<text x="54" y="396" font-size="9.5" fill="#3C3489">latency ceiling that does NOT scale with the device.</text>
+
+<!-- byte-count caption -->
+<rect x="44" y="416" width="372" height="36" rx="5" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="0.8"/>
+<text x="54" y="430" font-size="8.5" fill="#5F5E5A">~40 GB/s is the FP16 figure (eff_bw = KV_bytes/time); FP8 ≈ 20,</text>
+<text x="54" y="442" font-size="8.5" fill="#5F5E5A">NVFP4 ≈ 10 GB/s — bytes shrink 2:1:0.56, same per-token LATENCY restated.</text>
+
+<!-- ============ PANEL B (right) ============ -->
+<text x="456" y="80" font-size="12" font-weight="600" fill="#5F5E5A">B — No bandwidth knee (B300, %HBM vs context)</text>
+
+<!-- plot frame -->
+<rect x="500" y="98" width="346" height="212" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- y axis 0..3% : y=300 (0%) -> y=110 (3%) -->
+<line x1="500" y1="300" x2="500" y2="110" stroke="#B4B2A9" stroke-width="1"/>
+<line x1="500" y1="300" x2="846" y2="300" stroke="#B4B2A9" stroke-width="1"/>
+<!-- y ticks -->
+<line x1="496" y1="300" x2="500" y2="300" stroke="#888780" stroke-width="1"/><text x="492" y="303" font-size="9" fill="#888780" text-anchor="end">0%</text>
+<line x1="496" y1="236.7" x2="500" y2="236.7" stroke="#888780" stroke-width="1"/><text x="492" y="240" font-size="9" fill="#888780" text-anchor="end">1%</text>
+<line x1="496" y1="173.3" x2="500" y2="173.3" stroke="#888780" stroke-width="1"/><text x="492" y="177" font-size="9" fill="#888780" text-anchor="end">2%</text>
+<line x1="496" y1="110" x2="500" y2="110" stroke="#888780" stroke-width="1"/><text x="492" y="114" font-size="9" fill="#888780" text-anchor="end">3%</text>
+<text x="470" y="205" font-size="9" fill="#888780" text-anchor="middle" transform="rotate(-90 470 205)">% of peak HBM</text>
+
+<!-- x axis log-ish ticks: 8K, 131K, 1M, 2M. map x=510..836 -->
+<!-- positions: 8K @ 520, 131K @ 620, 1M @ 740, 2M @ 820 (L2 spill 259K @ 666) -->
+<text x="520" y="316" font-size="9" fill="#888780" text-anchor="middle">8K</text>
+<text x="620" y="316" font-size="9" fill="#888780" text-anchor="middle">131K</text>
+<text x="740" y="316" font-size="9" fill="#888780" text-anchor="middle">1M</text>
+<text x="820" y="316" font-size="9" fill="#888780" text-anchor="middle">2M</text>
+<text x="673" y="334" font-size="10" fill="#5F5E5A" text-anchor="middle">context length N_k (tokens)</text>
+
+<!-- L2 spill vertical dashed line at ~259K -> x=666 -->
+<line x1="666" y1="110" x2="666" y2="300" stroke="#D85A30" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="670" y="126" font-size="9" font-weight="600" fill="#993C1D">L2 spill</text>
+<text x="670" y="138" font-size="9" fill="#993C1D">(132.6 MB)</text>
+
+<!-- counter-prediction: faint rising dashed line from the L2 crossing -->
+<polyline points="666,290 740,235 820,168" fill="none" stroke="#9B92D8" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.85"/>
+<text x="742" y="216" font-size="8.5" fill="#3C3489" transform="rotate(-26 742 216)">pre-registered counter-prediction:</text>
+<text x="742" y="227" font-size="8.5" fill="#3C3489" transform="rotate(-26 742 227)">IF bandwidth-bound → %HBM climbs</text>
+
+<!-- measured flat FP16 line at ~0.55% -> y = 300 - 0.55*63.33 = 265.2 -->
+<polyline points="520,265 620,265 666,264 740,264 820,264" fill="none" stroke="#185FA5" stroke-width="2.4"/>
+<g fill="#185FA5">
+<circle cx="520" cy="265" r="3"/><circle cx="620" cy="265" r="3"/><circle cx="666" cy="264" r="3"/><circle cx="740" cy="264" r="3"/><circle cx="820" cy="264" r="3"/>
+</g>
+<text x="566" y="259" font-size="9" fill="#185FA5">FP16 — measured, flat ~0.5–0.6%</text>
+
+<!-- punchline card -->
+<rect x="456" y="366" width="390" height="86" rx="5" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
+<text x="466" y="384" font-size="10" font-weight="600" fill="#3C3489">Flat to 2M tokens past an 8× L2 overflow</text>
+<text x="466" y="400" font-size="9.5" fill="#3C3489">1.07 GB working set ≫ 132.6 MB L2 — no knee at the crossing.</text>
+<text x="466" y="420" font-size="9.5" fill="#2C2C2A">→ per-CTA-bound on Blackwell Ultra,</text>
+<text x="466" y="434" font-size="9.5" fill="#2C2C2A">   confound-free without ncu.</text>
+<text x="466" y="448" font-size="8.5" font-style="italic" fill="#888780">(the 1 GB WS kills the L2 confound by construction)</text>
+</svg>

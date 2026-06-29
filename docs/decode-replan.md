@@ -382,13 +382,21 @@ See [`diagrams/build-roadmap-v6-v11.svg`](diagrams/build-roadmap-v6-v11.svg).
 - **Math:** `AI ≈ 3.57` (NVFP4) / `≈ 28.6` (GQA-8); B300 FP4 ridge 1875 ⇒ ~50–500× below ⇒ firmly
   memory-bound, so ~3.5× fewer bytes → ~3.5× `µs/tok` **iff** bandwidth-bound (the v8/v9 precondition).
 
-### v11 — MLA / latent-KV decode + speculative (stretch) · **[B300]** (sm_103)
-- **Why last:** most architecturally invasive, highest `AI`. MLA shares **one** latent KV across all `H`
-  heads (`AI → 2H/b`), pushing furthest toward the ridge — the only decode regime where tensor cores
-  stop idling. Speculative decoding restores `M = k` (draft length) → small GEMM along the query-time
-  axis, the same `M>1` win as GQA but temporal. **Also runs on B300** (the paper's "how far can sm_103
-  decode be pushed toward the ridge" closer).
-- **Deliverable:** `µs/tok` for MLA-shaped KV vs the GQA path; the `AI`-toward-ridge curve; closes the arc.
+### v11 — MLA / latent-KV decode (the SHAPE change) · **[B300]** (sm_103a) — full plan: [`v11-kickoff.md`](v11-kickoff.md)
+- **Decided MLA-first in the v10 deep-research close-out (2026-06-30).** v10 measured decode per-CTA-bound on
+  T4/B200/B300 to 2M tokens → bytes/occupancy/M=1-tensor-cores are exhausted; the only lever left is to raise M
+  above 1 (change the shape). **MLA shares one latent across all `h_q` heads** (`AI → 2·h_q ≈ 256`, toward the
+  B300 FP16 ridge ~312 — the only decode regime where tensor cores stop idling) **and packs `M=128` BY
+  CONSTRUCTION at N_q=1**, meeting Blackwell's tcgen05 NVFP4 gate (now known to be **`M≥128`**, stricter than the
+  old M≥16/64 assumption) **with no speculative draft**. That is why MLA leads and **speculative/multi-token**
+  (`M=k`, EAGLE-3 τ≈6.2) is the **fallback** shape-lever, not the co-headline.
+- **The open question (either sign publishable):** does the higher AI **flip** the limiter to compute, or just
+  **move** it to smem-capacity (the absorbed `W^UK`/`W^UV` must stay on-chip)? Native FP4 *compute* (tcgen05/TMEM,
+  `sm_103a`) is ONLY-IF the dev-rung shows M=128 packs as one GEMM and the limiter flips. Fold v8.8's 4-blocks/SM
+  occupancy in for the serving regime. GLA / sparse (DSA, CSA) → **v12**.
+- **Deliverable:** the open **kernel-level compute-vs-memory-vs-per-CTA roofline** for MLA decode on sm_103 (the
+  empty cell — FlashMLA ships the kernel, nobody published the roofline); `µs/tok` MLA vs the GQA path; the
+  `AI`-toward-ridge curve; vs FlashMLA/FlashInfer clock-locked + matched-precision. Closes the arc.
 
 ---
 

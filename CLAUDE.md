@@ -69,7 +69,7 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   keys `j > i` excluded; tested both ways vs SDPA). Hardware leaks in only at the build `-gencode`
   and `roofline/archs.py`.
 
-## Status (2026-06-28)
+## Status (2026-06-30)
 
 - **Step 1 (v1 naive)** — DONE: tests green, benched, quiz passed. Key finding: naive beats its
   cache-free roofline floor at mid-N (L2 absorbs redundant operand reads), converges to it at
@@ -429,14 +429,30 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   measured core). **Author machine can't compile `.cu`** → build + Gate-1 correctness/capacity/accuracy +
   bench + quiz (Gate 2) are the outstanding GPU work. Gate notebook `notebooks/v10_nvfp4_gate.ipynb`. See
   `results.md`/`decisions.md` Step 10, `interview-prep.md` C15, `docs/v10-kickoff.md`.
+- **Step 10 deep-research close-out — DONE (2026-06-30, 18-agent verify+adversarial+research pass).** v10
+  **verified** (every load-bearing number reconciles to the notebooks; prediction-vs-measured 4/4 + 1 honest
+  miss; all 5 adversarial verdicts HOLDS-WITH-CAVEAT). Honesty/provenance fixes applied to results/decisions
+  ("settled definitively"→"for every regime measured"; nsys 99.4% tables are hand-saved `.txt` from an
+  off-notebook 2025.3.2 run — the committed cell ran 2025.1.3→empty; "~40 GB/s" scoped to FP16; NVFP4 penalty
+  is the full 12–30%; ncu was *not installed* on the B300 box; stale 160 SM/192 MB→measured 148/132.6). New
+  figures `diagrams/v10-{per-cta-wall,nvfp4-verdict,to-v11-shape}.svg`. **Decision: v11 = MLA latent-KV decode**
+  (the SHAPE change — packs M=128 by construction, lifts AI `2G/b`→`2·h_q`≈256 toward compute-bound; speculative
+  is the fallback, occupancy-v8.8 folds in). Plan to paste: [`docs/v11-kickoff.md`](docs/v11-kickoff.md). See
+  `results.md`/`decisions.md` Step 10 close-out, `interview-prep.md` C16.
 
 ## Next steps
 
 **The reordered decode arc is `docs/decode-replan.md` §5 (math + per-step deliverable); summary:**
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV + regime-fix (T4) — DONE** →
-**v10 NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper)** → **v11 MLA/speculative + native
-FP4 compute (B300)**. **v10 plan to paste into a fresh session: [`docs/v10-kickoff.md`](docs/v10-kickoff.md)**
-(supersedes the now-complete `v9-kickoff.md`).
+**v10 NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper) — DONE + closed-out 2026-06-30** →
+**v11 MLA latent-KV decode (the SHAPE change, B300/sm_103a)**. **v11 = MLA** (decided in the v10 close-out):
+the only lever left after v10 proved bytes/occupancy/M=1-tensor-cores are exhausted is to raise M above 1 — MLA
+packs all `h_q=128` heads → **M=128 by construction** (meets the tcgen05 NVFP4 `M≥128` gate, no speculative
+draft) and lifts decode AI `2G/b`→`2·h_q`≈256 toward the B300 FP16 ridge (~312), the first decode shape in the
+arc plausibly compute-bound. Native FP4 *compute* is ONLY-IF the dev-rung shows M=128 packs as one GEMM and the
+limiter flips; speculative/multi-token is the fallback shape-lever; occupancy-v8.8 folds in for the serving
+regime; GLA/sparse (DSA/CSA) → v12. **v11 plan to paste into a fresh session:
+[`docs/v11-kickoff.md`](docs/v11-kickoff.md)** (supersedes the now-complete `v10-kickoff.md`).
 
 **Cheap pre-v10 experiment — DONE (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test; figure
 `diagrams/v8_5_v8_6_pastL2.svg`; data `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`).** Re-ran v8.5
