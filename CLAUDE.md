@@ -439,8 +439,18 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (the SHAPE change — packs M=128 by construction, lifts AI `2G/b`→`2·h_q`≈256 toward compute-bound; speculative
   is the fallback, occupancy-v8.8 folds in). Plan to paste: [`docs/v11-kickoff.md`](docs/v11-kickoff.md). See
   `results.md`/`decisions.md` Step 10 close-out, `interview-prep.md` C16.
-- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **Roofline RECORDED + full source BUILT
-  (2026-06-30); Gate 1 (Colab T4) PENDING.** The **SHAPE change**: forks v10 changing only GQA-over-`H_kv`-heads
+- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **Roofline RECORDED + full source BUILT +
+  Gate 1 MEASURED GREEN (Colab T4, 2026-06-30); B300/sm_103 measured core + quiz PENDING.** Gate 1: build
+  clean (the real 576/512 ~46 KB-smem template compiled on sm_75, no opt-in), **148 correctness passed**
+  incl. the §9-Q4 **absorption identity** (latent-absorbed kernel == explicit per-head materialization);
+  **capacity 202× vs MHA / 12.6× vs GQA-8 / 99.5%** measured; accuracy NVFP4-latent ~2.5e-3 = **~3.5× FP8**
+  ("FP8 floor", latent-width-independent, same as v10); **limiter MEASURED per-CTA-bound** (clock-locked
+  %HBM ~0.1%, confound-free past L2 at N_k=32768 WS 10.6 MB > 4 MB) — **the per-CTA-corrected prediction
+  LANDED; the pure-roofline compute-flip did NOT realize on CUDA cores** (M=128 packs as 16 blocks×8 warps,
+  not one TC GEMM; latent so byte-cheap %HBM collapses below GQA's ~10%). Prediction-vs-measured: the
+  two-layer model called it. (T4 can't settle the native-FP4-TC flip — no FP4 cores; us/tok emulated-FP4 +
+  partly unlocked; dense-latent OOM'd at N_k≥131072 on the 16 GB T4 → B300 reaches past-L2.) Data:
+  `notebooks/v11_mla_gate_t4output.ipynb`. The **SHAPE change**: forks v10 changing only GQA-over-`H_kv`-heads
   → **MQA-over-ONE-shared-latent** (`H_kv=1`, `G=h_q`, M=`h_q` not `G`). All `h_q` query heads share one latent
   (read once) → >1 warp active at N_q=1 (the per-CTA wall v10 proved is the decode limiter), decode **AI = 
   `2·h_q·(2L+R)/((L+R)·b)` ≈ 3.78·h_q/b** (h_q=128 fp16 ≈ 235, ~30× GQA-8's 8; tool incl. Q/O bytes). **Roofline

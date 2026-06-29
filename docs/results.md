@@ -1777,7 +1777,44 @@ cheap rung too. (A100 fp16-TC ridge ≈ 153 → also compute-bound.)
    compute (AI > ridge at fp8/nvfp4); per-CTA-corrected says capacity-bound at small batch, compute-bound
    only once batch fills the TC pipes. **This crossover IS the T1 deliverable — resolve by measurement.**
 
-### Status — roofline recorded (✅), full source BUILT (✅), Gate 1 PENDING (Colab T4)
+### Gate 1 — T4, MEASURED (Colab T4, 2026-06-30) — GREEN, and the per-CTA-corrected prediction LANDED
+
+Data of record: `notebooks/v11_mla_gate_t4output.ipynb`. **Build clean** — the real DeepSeek-V3
+**(576,512) template's ~46 KB static smem compiled on sm_75 with no opt-in** (confirming the §9-Q2
+~1-block/SM tightness *without* breaking the build). **Correctness ✅ 148 passed** (`-k "v11_mla or
+v10_nvfp4 or v8_gqa_ss"`, 354 deselected, 0 failed), including the **absorption-identity test →
+§9-Q4 confirmed: the latent-absorbed kernel equals explicit per-head materialization** (synthetic
+`W^UK`/`W^UV`). Apples-to-apples oracle RMSE **1–5e-5** (kernel math near-exact on the dequantized latent).
+
+**Capacity (the durable headline) — MEASURED.** N_k=65536: MHA fp16 **4294.97 MB** → GQA-8 fp16
+**268.44 MB** (16×) → **MLA NVFP4 latent 21.23 MB = 202× smaller than MHA, 12.6× vs GQA-8, a 99.5%
+reduction** (56.9× shape × 3.55× NVFP4 bytes). The shape change's signature win.
+
+**Accuracy — NVFP4-latent costs ~3.5× FP8 (same as v10's KV).** NVFP4-latent quant RMSE **~2.4–2.7e-3**
+vs FP8's **~6.5–8.5e-4** (~3.5×), **latent-width-independent** (576/512 ≈ 96/64) → "FP8 is the accuracy
+floor" everywhere. Identical to v10; the asymmetric per-channel-K/per-token-V recipe is the recovery
+lever, untested on the latent (a v12 concern).
+
+**Limiter — the PURE-roofline compute-flip did NOT realize; the per-CTA-corrected (real) prediction WON.**
+Clock-**LOCKED** regime sweep (1590 MHz, L2-flushed): **%HBM = 0.1% flat** at N_k=8192 (WS 2.65 MB,
+L2-resident) AND N_k=32768 (**WS 10.62 MB > the 4 MB L2 → confound-free past L2**); eff_bw ~0.4 GB/s,
+`L2served=no`. So raising decode AI ~30× did **not** move the limiter off per-CTA on CUDA cores: pure
+roofline said MMA (AI 835 ≫ ridge 203) — unrealized; the kernel is bound by **neither HBM (~0.1%) nor
+saturated compute → per-CTA / latency-bound**. Two honest reasons: (1) the CUDA-core default packs M=128
+as 16 blocks × 8 warps, **NOT one tensor-core GEMM**, so it structurally cannot reach the TC peak the MMA
+roofline assumes; (2) the latent read is so byte-cheap (ONE head) that %HBM collapses *below* even GQA
+decode's ~10%. The ~46 KB latent staging caps residency at ~1 block/SM — the structural per-CTA limit.
+**Prediction-vs-measured: the two-layer model called it (pure = flip, the REAL per-CTA-corrected layer =
+stays per-CTA; counter-prediction landed).**
+
+**What T4 cannot settle (→ the B300/sm_103 deliverable):** (a) T4 has **no FP4 tensor cores** and the
+CUDA-core packing can't engage tcgen05 regardless — so whether the **native-FP4-TC arm flips the limiter
+on sm_103** is the open §9-Q1/Q2 question; (b) `us/tok` is emulated-FP4 (+ the cell-16 A/B ran unlocked at
+585 MHz) → NOT a valid latency number, read %HBM; (c) the dense-latent build **OOM'd at N_k≥131072 on the
+16 GB T4** (the 288 GB B300 reaches the past-L2 regime); (d) "vs sdpa ~2×" is vs a hand-MQA torch reference
+(materializes the score matrix), not an optimized kernel — modest, don't over-claim.
+
+### Status — roofline recorded (✅), full source BUILT (✅), Gate 1 MEASURED GREEN (✅ Colab T4), B300 core PENDING
 
 Roofline extended (`roofline/model.py` MLA branch + `roofline/predict.py --mla`; non-MLA paths
 byte-identical — GQA-8 nvfp4 still 28.4, v1 naive still 0.2). Prediction recorded above BEFORE any
@@ -1806,10 +1843,17 @@ is built-blind for the Colab/B300 gate):**
   `roofline.predict --mla` matches the recorded table; the absorption identity holds by derivation
   (numeric check runs on Colab — torch is GPU-side).
 
-**Outstanding (the next gate):** Gate 1 on Colab T4 (build + correctness + capacity + accuracy via the
-gate notebook), then the B300/sm_103 measured core (latency / the T1 compute-vs-memory crossover /
-sm_103 2×-exp / FlashMLA comparator), then the quiz (deferred to the very end per Kien). The native FP4
-tcgen05 arm stays gated on the dev rung proving §9 Q1 (M=128 one GEMM) + Q2 (limiter flips). See
-`docs/v11-kickoff.md`, `decisions.md` Step 11, `interview-prep.md` C16.
+**Gate 1 — DONE (Colab T4, 2026-06-30, GREEN — see the Gate-1 MEASURED section above):** build clean,
+148 correctness passed (incl. the §9-Q4 absorption identity), capacity 202×/12.6×/99.5% measured,
+accuracy ~3.5× FP8 ("FP8 floor"), and the limiter MEASURED per-CTA-bound (~0.1% HBM, confound-free past
+L2 at N_k=32768) — the per-CTA-corrected prediction landed; the pure-roofline compute-flip did NOT
+realize on CUDA cores.
+
+**Outstanding:** the B300/sm_103 measured core (clock-locked + ncu past-L2 crossover via
+`bench.regime --backend v11_mla --dim 576`; same-session clock-matched `vs naive` vs v10-GQA; the
+native-FP4 tcgen05 arm IFF the dev rung proves §9 Q1 M=128-one-GEMM + Q2 limiter-flip; the sm_103 2×-exp
+re-ablation now M=128 puts many exps in flight; FlashMLA/FlashInfer comparators) — then the quiz
+(deferred to the very end per Kien). See `docs/v11-kickoff.md`, `decisions.md` Step 11,
+`interview-prep.md` C16.
 
 ---
