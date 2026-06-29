@@ -1,0 +1,31 @@
+v10 B300 (sm_103) — nsys schedule corroboration (Pass 1, unprivileged container)
+Captured with Nsight Systems 2025.3.2 (the sm_103-capable CUPTI; the image's default
+2025.1.3 records an empty trace on Blackwell Ultra). Shape: B=1, H_kv=1, N_k=1048576,
+d=128, backend=v10_nvfp4, 100 profiled launches.
+
+Command:
+  nsys profile -o /tmp/v10_nsys3 --force-overwrite true --trace=cuda --cuda-event-trace=false \
+    python -m bench.regime --profile 1,1,1048576,128 --backend v10_nvfp4
+  nsys stats --force-export=true --report cuda_gpu_kern_sum /tmp/v10_nsys3.nsys-rep
+
+READ: the split-KV PARTIAL kernel is 99.4% of GPU time; the LSE-merge is 0.04%. The decode
+loop is just those two kernels (everything else is the one-time NVFP4 quant prepass, run 2-6x
+not 100x). Per-CTA single-dominant-kernel schedule confirmed on sm_103 — matches the B200
+dev-rung (partial 99.3% / merge 0.04%).
+
+ ** CUDA GPU Kernel Summary (cuda_gpu_kern_sum):
+
+ Time (%)  Total Time (ns)  Instances   Avg (ns)    Med (ns)   Min (ns)  Max (ns)  StdDev (ns)   Name
+ --------  ---------------  ---------  ----------  ----------  --------  --------  -----------  ----------------------------------------------------
+     99.4       1471080495        100  14710804.9  14712211.0  14526370  14729988      20013.8  void nvfp4_partial_kernel<(int)32, (int)128>(const __half *, const unsigned char *, ...)
+      0.1          1952971          4    488242.8    488322.5    103776    872550     443574.6  void at::native::reduce_kernel<512,1,ReduceOp<float,...>>(...)            [quant prepass]
+      0.1          1067302          4    266825.5    266689.5    217793    316130      56599.9  void at::native::unrolled_elementwise_kernel<direct_copy_kernel_cuda>(...) [quant prepass]
+      0.1           928422          6    154737.0    155937.0    150433    157889       3118.8  void at::native::vectorized_elementwise_kernel<4, AbsFunctor<float>>(...)  [quant prepass]
+      0.1           897093          2    448546.5    448546.5    448515    448578         44.5  void at::native::searchsorted_cuda_kernel<float,long>(...)               [quant prepass]
+      0.1           778340          2    389170.0    389170.0    387938    390402       1742.3  void at::native::elementwise_kernel<128,2,...>(...)                      [quant prepass]
+      0.0           732005          4    183001.3    182529.5     20928    346018     187147.7  void at::native::unrolled_elementwise_kernel<direct_copy_kernel_cuda>(...) [quant prepass]
+      0.0           675492          4    168873.0    168897.0     32576    305122     157105.3  void at::native::index_elementwise_kernel<128,4,gpu_index_kernel>(...)    [quant prepass]
+      0.0           555460        100      5554.6      5600.0      5312      5760        112.1  void nvfp4_merge_kernel(const float *, const float *, const float *, float *, int, int, int)
+      0.0           498467          3    166155.7    247490.0      2176    248801     142012.1  void at::native::distribution_elementwise_grid_stride_kernel<float,4,...>(...) [quant prepass]
+      (remaining rows all <0.05%: elementwise/compare/radixsort/fill/arange kernels — the rest of the
+       one-time NVFP4 quant prepass; full table in the captured /tmp/v10_nsys3.nsys-rep on the box.)
