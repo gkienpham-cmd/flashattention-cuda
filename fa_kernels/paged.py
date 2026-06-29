@@ -72,11 +72,15 @@ def build_paged_kv(k, v, page_size: int, *, shuffle: bool = True, seed: int | No
         perm = torch.arange(B * n_logical, device=k.device)
 
     def to_pool(x):
-        # [B,H,N_k,d] -> pad seq -> [B,H,n_logical,page_size,d] -> [B,n_logical,page_size,H,d]
+        # [B,H,N_k,dx] -> pad seq -> [B,H,n_logical,page_size,dx] -> [B,n_logical,page_size,H,dx].
+        # Use x's OWN last dim (dx), not the captured `d`: build_paged_kv_mla pages the packed-nibble
+        # pool (dx=DQK/2) and the micro-scale pool (dx=DQK/16) in ONE call, so k and v differ in width.
+        # (v10 always pages same-width pairs, so dx==d there — this is a no-op for every prior caller.)
+        dx = x.shape[-1]
         xp = F.pad(x, (0, 0, 0, pad))                       # pad the N_k (2nd-to-last) dim with zeros
-        logical = (xp.reshape(B, H, n_logical, page_size, d)
-                     .permute(0, 2, 3, 1, 4)                # [B, n_logical, page_size, H, d]
-                     .reshape(B * n_logical, page_size, H, d)
+        logical = (xp.reshape(B, H, n_logical, page_size, dx)
+                     .permute(0, 2, 3, 1, 4)                # [B, n_logical, page_size, H, dx]
+                     .reshape(B * n_logical, page_size, H, dx)
                      .contiguous())
         pool = torch.empty_like(logical)
         pool[perm] = logical                                # physical block perm[i] holds logical i
