@@ -19,9 +19,11 @@ import subprocess
 
 import torch
 
-from fa_kernels import attention, fp8_attention, gqa_attention, nvfp4_attention, paged_attention
-from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_nvfp4,
-                             dequantize_fp8_e4m3, dequantize_nvfp4, quantize_fp8_e4m3, quantize_nvfp4)
+from fa_kernels import (attention, fp8_attention, gqa_attention, mla_attention, nvfp4_attention,
+                        paged_attention)
+from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_mla,
+                             build_paged_kv_nvfp4, dequantize_fp8_e4m3, dequantize_nvfp4,
+                             quantize_fp8_e4m3, quantize_nvfp4)
 from fa_kernels.reference import sdpa_reference, sdpa_reference_gqa
 from roofline.archs import get_arch
 from roofline.model import estimate
@@ -29,6 +31,11 @@ from roofline.model import estimate
 SEQ_LENS = [512, 2048, 8192]
 HEAD_DIMS = [64, 128]
 DECODE_KV_LENS = [2048, 8192, 16384]   # KV-cache lengths swept in --decode mode (N_q collapses to 1)
+
+# v11 MLA: --dim selects the latent score-width DQK; this maps DQK -> the content/output width DV
+# (kv_lora_rank); the trailing DQK-DV dims are the decoupled RoPE. The kernel templates the same three
+# (DQK,DV) pairs. The real DeepSeek-V3 latent is 576/512 (--dim 576); 96/64 is the cheap smoke config.
+_MLA_DV = {96: 64, 160: 128, 576: 512}
 
 
 def _time_ms(fn, *, warmup: int = 10, iters: int = 50) -> tuple[float, float]:
@@ -107,6 +114,7 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
     is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8", "v10_nvfp4")
     is_fp8 = backend == "v9_fp8"   # v9: GQA-class shapes/sweep, but FP8 pools + scales + a quantizing oracle
     is_nvfp4 = backend == "v10_nvfp4"   # v10: GQA-class, but NVFP4 packed pools + micro-scales + scales
+    is_mla = backend == "v11_mla"  # v11: the SHAPE change — ONE shared latent (M=h_q), --dim = DQK
     groups = gqa_groups or [1]
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
@@ -145,8 +153,13 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 continue
             H_kv = (H // G) if is_gqa else H
             q = torch.randn(B, H,    qn, d, device=dev, dtype=dt)
-            k = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
-            v = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
+            # MLA builds its own single shared latent inside the is_mla branch; skip the (unused, and at
+            # h_q=128/large-N potentially OOM-sized) per-head K/V allocation here.
+            if is_mla:
+                k = v = None
+            else:
+                k = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
+                v = torch.randn(B, H_kv, N,  d, device=dev, dtype=dt)
 
             q_off = (N - qn) if causal else 0
             if is_fp8:
@@ -175,6 +188,28 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 base = lambda: sdpa_reference_gqa(q, k_hat, v_hat, causal=causal)
                 ours = lambda: nvfp4_attention(q, kp, km, vp, vm, bt_n, page_size, nkn, sk, sv,
                                                causal=causal, q_offset=q_off, backend=backend)
+            elif is_mla:
+                # v11 MLA: ONE shared latent (read once by all h_q=H query heads). --dim = DQK (the
+                # score width = kv_lora_rank + rope); DV = the content/output width. The generic q above
+                # IS q_absorbed (width d=DQK, H query heads). Oracle = MQA over the SAME dequantized NVFP4
+                # latent, dequantized ONCE outside the timed lambda (the v9 lesson). NVFP4 latent storage
+                # is carried from v10, so vs the kernel this isolates the SHAPE (GQA->MQA-over-latent).
+                DV = _MLA_DV.get(d)
+                if DV is None:
+                    print(f"  # skip MLA --dim {d}: supported DQK in {sorted(_MLA_DV)} (e.g. 576 real, 96 smoke)")
+                    continue
+                latent = torch.randn(B, 1, N, d, device=dev, dtype=dt)        # [B,1,N_k,DQK] one latent head
+                lp, lm, bt_m, nkm, sl = build_paged_kv_mla(latent, page_size)
+                lpb, lmb, slb = quantize_nvfp4(latent)
+                lat_hat = dequantize_nvfp4(lpb, lmb, slb).to(latent.dtype)     # exact bytes the kernel reads
+                mla_s = 1.0 / (d ** 0.5)
+                def _mla_base(qq=q, lh=lat_hat, dv=DV, ss=mla_s):             # MQA-over-latent reference
+                    sc = torch.matmul(qq, lh.transpose(-1, -2)) * ss
+                    p = torch.softmax(sc - sc.amax(dim=-1, keepdim=True), dim=-1)
+                    return torch.matmul(p, lh[..., :dv])
+                base = _mla_base
+                ours = lambda: mla_attention(q, lp, lm, bt_m, page_size, nkm, DV, sl,
+                                             causal=causal, q_offset=q_off, backend=backend)
             elif is_gqa:
                 # v8 reads a PAGED GQA KV (H_kv heads); the oracle expands KV by G (repeat_interleave).
                 base = lambda: sdpa_reference_gqa(q, k, v, causal=causal)
@@ -217,15 +252,22 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # doubles vs fp16). Other FP16-KV backends use fp16 regardless of the input dtype.
                 if is_fp8:
                     rp = "fp8"
-                elif is_nvfp4:
-                    rp = "nvfp4"   # KV stored as 0.5625 B/elem -> decode AI = 2G/b (~3.55x vs fp16)
+                elif is_nvfp4 or is_mla:
+                    rp = "nvfp4"   # KV/latent stored as 0.5625 B/elem
                 elif backend in ("v5_wmma", "v6_splitkv", "v7_paged", "v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss"):
                     rp = "fp16"
                 else:
                     rp = precision
-                est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
-                               materialize_s=backend in ("v1_naive", "v2_tiled"),
-                               tile_m=tile_m, tile_n=tile_n, G=(G if is_gqa else 1))
+                if is_mla:
+                    # MLA: ONE shared latent over all h_q=H heads -> AI = 2*h_q*(2L+R)/((L+R)*b). d=DQK,
+                    # DV=kv_lora_rank, R=DQK-DV. The model uses the TC peak (M=h_q>=16 engages it).
+                    dv = _MLA_DV[d]
+                    est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
+                                   mla=True, h_q=H, kv_lora_rank=dv, rope_dim=d - dv)
+                else:
+                    est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
+                                   materialize_s=backend in ("v1_naive", "v2_tiled"),
+                                   tile_m=tile_m, tile_n=tile_n, G=(G if is_gqa else 1))
                 roof = f"{est.limiter.upper()} (~{est.seconds*1e3:.2f}ms)"
 
             if decode:
@@ -238,15 +280,26 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 us_tok = o_p50 * 1e3 / tokens
                 # KV bytes/elem: FP16=2, FP8=1, NVFP4=0.5625 (4-bit nibble + per-16 E4M3 micro-scale —
                 # count the scale, or the %HBM is overstated).
-                kv_b = 0.5625 if is_nvfp4 else (1 if is_fp8 else 2)
+                kv_b = 0.5625 if (is_nvfp4 or is_mla) else (1 if is_fp8 else 2)
                 if arch is not None:
-                    kv_bytes = 2.0 * B * H_kv * N * d * kv_b   # K and V; H_kv KV heads
+                    if is_mla:
+                        # MLA reads ONE shared latent of width DQK=d, ONCE for all heads (no 2x K/V, no
+                        # H_kv factor) — the per-token byte count that makes AI = ~3.78*h_q/b.
+                        kv_bytes = 1.0 * B * N * d * kv_b
+                    else:
+                        kv_bytes = 2.0 * B * H_kv * N * d * kv_b   # K and V; H_kv KV heads
                     eff_bw = kv_bytes / (o_p50 / 1e3)          # achieved bytes/s on the KV read
                     hbm_pct = eff_bw / (arch.hbm_bw_gbps * 1e9) * 100.0
                 else:
                     hbm_pct = float("nan")
+                # No clean same-shape "no-packing" baseline for MLA (the meaningful matched-work A/B vs
+                # v10-GQA is a modeling choice made explicitly in the gate notebook). The honest in-harness
+                # signal is the ABSOLUTE us/tok + %HBM + roofline columns: does MLA leave the ~0.5%-HBM
+                # per-CTA floor GQA decode never left (the T1 deliverable)? So vs_naive is N/A for MLA.
                 try:
-                    if is_fp8 or is_nvfp4:
+                    if is_mla:
+                        vs_naive = float("nan")
+                    elif is_fp8 or is_nvfp4:
                         # v9/v10 baseline = v8.7 (score-stationary, FP16 KV) on the SAME GQA shape, so the
                         # A/B isolates the ONE variable: KV storage precision (FP8/NVFP4 vs FP16). Same
                         # packing. (The gate notebook also runs a v10-vs-v9 byte-only A/B for the FP4 step.)
@@ -261,8 +314,9 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                                                         causal=causal, q_offset=q_off)
                     else:
                         naive = lambda: attention(q, k, v, causal=causal, backend="v5_wmma")
-                    n_p50, _ = _time_ms(naive)
-                    vs_naive = n_p50 / o_p50
+                    if not is_mla:
+                        n_p50, _ = _time_ms(naive)
+                        vs_naive = n_p50 / o_p50
                 except Exception:
                     vs_naive = float("nan")
                 # Counter-free L2 test (no ncu): if the KV working set streamed from L2 (~4x HBM on T4),

@@ -28,6 +28,7 @@ DEFAULT_PAGED_BACKEND = "v7_paged"
 DEFAULT_GQA_BACKEND = "v8_gqa"
 DEFAULT_FP8_BACKEND = "v9_fp8"
 DEFAULT_NVFP4_BACKEND = "v10_nvfp4"
+DEFAULT_MLA_BACKEND = "v11_mla"
 
 # Max magnitude representable by FP8 E4M3 (e4m3fn: no inf, max normal 448). Per-tensor scale maps the
 # tensor's amax onto this so the full dynamic range is used. (int8-symmetric fallback would use 127.)
@@ -276,6 +277,62 @@ def nvfp4_attention(q, k_pack, k_micro, v_pack, v_micro, block_table, page_size,
     module = get_backend(backend)
     return module.forward(q, k_pack, k_micro, v_pack, v_micro, block_table, int(page_size), int(n_k),
                           float(scale_k), float(scale_v), scale, causal, int(q_offset))
+
+
+def build_paged_kv_mla(latent, page_size: int, *, shuffle: bool = True, seed: int | None = None):
+    """MLA (v11) latent-KV pager: quantize ONE shared latent to NVFP4, then page the packed nibbles AND
+    the per-16 micro-scales through the SAME physical permutation.
+
+    Unlike `build_paged_kv_nvfp4` (separate K and V pools), MLA stores a SINGLE latent per token that
+    serves as both K (full DQK width = kv_lora_rank + rope_dim) and V (the first kv_lora_rank dims), so
+    there is no V pool — the real ~93% KV-cache reduction. `latent` is `[B, 1, N_k, DQK]` (one latent
+    "head"; H=1). Returns `(l_pack, l_micro, block_table, n_k, scale_l)`: the packed pool is
+    `[B*n_logical, page_size, 1, DQK/2]` and the micro pool `[..., 1, DQK/16]`, both uint8 in the same
+    shuffled physical order so ONE `block_table` indexes them together. Quantize BEFORE paging so each
+    physical byte is final — the kernel reads + dequantizes per tile (fused, no prepass). Pass the pools,
+    `kv_lora_rank`, and `scale_l` to `mla_attention`; build the oracle with `sdpa_reference_mla`.
+    """
+    import torch
+
+    assert latent.dim() == 4 and latent.shape[1] == 1, \
+        f"latent must be [B, 1, N_k, DQK] (one latent head); got {tuple(latent.shape)}"
+    if seed is None:
+        seed = int(torch.randint(0, 2**31 - 1, (1,)).item())   # pin a seed so both perms match
+    l_pack, l_micro, scale_l = quantize_nvfp4(latent)
+    lp_pool, lm_pool, block_table, n_k = build_paged_kv(l_pack, l_micro, page_size,
+                                                        shuffle=shuffle, seed=seed)
+    return lp_pool, lm_pool, block_table, n_k, scale_l
+
+
+def mla_attention(q, l_pack, l_micro, block_table, page_size, n_k, kv_lora_rank, scale_l, *,
+                  scale: float | None = None, causal: bool = False, q_offset: int = 0,
+                  backend: str = DEFAULT_MLA_BACKEND):
+    """MLA latent-KV decode (v11). Forks v10 (nvfp4_attention) changing ONE variable — the attention
+    SHAPE: GQA-over-H_kv-heads -> MQA-over-ONE-shared-latent. All `h_q` query heads share the single
+    latent (M = h_q, not M = G), so >1 warp is active at N_q=1 (the per-CTA lever v10 proved is the
+    decode wall) and decode AI rises 2G/b -> ~3.78*h_q/b. The latent serves as both K (full DQK) and V
+    (first `kv_lora_rank` dims), so there is ONE pool (no V pool). The absorbed W^UK/W^UV fold into the
+    OFFLINE Q/O projections, so `q` is `q_absorbed` (already in the latent basis) and the output is
+    `O_latent` (re-projected by W^UV offline). NVFP4 latent storage is carried byte-identical from v10 so
+    this is a clean SHAPE-only A/B vs `nvfp4_attention`.
+
+    Build the inputs with `build_paged_kv_mla`. Shapes:
+        q (q_absorbed) : [B, H_q, N_q, DQK]   (FP16/FP32; decode N_q = 1; DQK = kv_lora_rank + rope_dim)
+        l_pack         : [num_blocks, page_size, 1, DQK/2]   uint8 (packed E2M1 nibbles)
+        l_micro        : [num_blocks, page_size, 1, DQK/16]  uint8 (E4M3 micro-scales)
+        block_table    : [B, n_logical]  int32
+        kv_lora_rank   : DV — the PV/output width (the first DV latent dims; RoPE dims carry no value)
+        scale_l        : per-tensor FP32 scale from `build_paged_kv_mla`.
+    Returns O_latent [B, H_q, N_q, kv_lora_rank] (FP32). NOTE the default `scale` is 1/sqrt(DQK); a real
+    model should pass the MLA scale 1/sqrt(qk_head_dim) explicitly (kernel and oracle must agree).
+    """
+    from .dispatch import get_backend
+
+    if scale is None:
+        scale = 1.0 / (q.shape[-1] ** 0.5)
+    module = get_backend(backend)
+    return module.forward(q, l_pack, l_micro, block_table, int(page_size), int(n_k),
+                          int(kv_lora_rank), float(scale_l), scale, causal, int(q_offset))
 
 
 def gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, *,

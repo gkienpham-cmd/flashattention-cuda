@@ -53,7 +53,57 @@ class RooflineEstimate:
 def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
              precision: str = "fp16", materialize_s: bool = False,
              use_tensor_core: bool = True, tile_m: int = 1, tile_n: int = 1,
-             G: int = 1) -> RooflineEstimate:
+             G: int = 1, mla: bool = False, h_q: int = 128,
+             kv_lora_rank: int = 512, rope_dim: int = 64) -> RooflineEstimate:
+    # --- MLA (v11) latent-KV decode: the SHAPE change ---
+    # MLA (Multi-head Latent Attention) shares ONE low-rank latent KV across all h_q query heads, so
+    # decode packs M = h_q (>1, unlike GQA's M=1 single-warp) and reads the latent ONCE for every head.
+    # Two things change vs the GQA decode branch below: (1) the latent serves as BOTH K and V, so the
+    # usual 2x K/V read collapses to 1x; (2) all h_q heads share that one read (bh/G -> B) while FLOPs
+    # stay proportional to h_q. DeepSeek-V2/V3 shape: L=kv_lora_rank=512 content dims + R=rope_dim=64
+    # decoupled-RoPE dims = ~576 dims/token stored. The QK dot is over (L+R); the PV weighted-sum is
+    # over L (RoPE carries no value). The absorbed up-projections W^UK/W^UV fold into the OFFLINE Q/O
+    # projections, so the attention kernel reconstructs the score as q_absorbed . c_latent (an MQA over
+    # a 512-wide latent) and never materializes full K/V. Net decode AI:
+    #     AI = 2*h_q*(2L+R) / ((L+R)*b)  =  ~3.78*h_q/b  (fp16 h_q=128 -> ~242; "2*h_q"~=256 is the
+    # round shorthand). At h_q=128 this is ~30x the GQA-8 fp16 AI of 8 and lands AT/PAST the FP16-TC
+    # ridge -> the first decode shape in the v1->v11 arc the PURE roofline puts compute-bound (fp8/nvfp4
+    # latent push it firmly past the ridge). M=h_q>=16 genuinely engages tensor cores, so the mma bound
+    # uses the TC peak (unlike the GQA decode branch, where M=1 keeps the cores dark). The model is
+    # BLIND to on-chip capacity: staging q_absorbed (h_q*(L+R) fp16 ~= 147 KB at h_q=128) may cap
+    # occupancy at ~1 block/SM and RENAME the limiter to smem/TMEM-capacity rather than flip it to
+    # compute -- that per-CTA-corrected layer lives in results.md Step 11, not in this math.
+    if mla:
+        nbytes = _BYTES[precision]
+        L, R = kv_lora_rank, rope_dim
+        if precision == "fp32":
+            peak = arch.fp32_cuda_flops
+        elif precision == "int8":
+            peak = arch.int8_tc_ops
+        else:  # fp16/bf16 + fp8/nvfp4 latent storage, dequant-to-fp16 compute on the TC path
+            peak = arch.fp16_tc_flops if use_tensor_core else arch.fp32_cuda_flops
+        mma_flops = 2.0 * B * h_q * N_q * N_k * (L + R)   # QK^T over (L+R)
+        mma_flops += 2.0 * B * h_q * N_q * N_k * L         # PV over L (RoPE carries no value)
+        t_mma = mma_flops / peak
+
+        kv_bytes = B * N_k * (L + R) * nbytes              # latent read ONCE for all h_q heads
+        q_bytes = B * h_q * N_q * (L + R) * nbytes
+        o_bytes = B * h_q * N_q * L * nbytes
+        hbm_bytes = kv_bytes + q_bytes + o_bytes
+        t_hbm = hbm_bytes / (arch.hbm_bw_gbps * 1e9)
+
+        exp_count = float(B) * h_q * N_q * N_k             # one exp per (head, key) score entry
+        mufu_rate = (arch.fp32_cuda_flops / 2.0) * arch.mufu_ratio
+        t_mufu = exp_count / mufu_rate
+
+        times = {"mma": t_mma, "hbm": t_hbm, "mufu": t_mufu}
+        limiter = max(times, key=times.get)
+        ai = mma_flops / hbm_bytes
+        ridge = peak / (arch.hbm_bw_gbps * 1e9)
+        return RooflineEstimate(limiter=limiter, seconds=times[limiter],
+                                t_mma=t_mma, t_hbm=t_hbm, t_mufu=t_mufu,
+                                arithmetic_intensity=ai, ridge=ridge)
+
     bh = B * H
     nbytes = _BYTES[precision]
     # GQA group factor: G query heads share one KV head (H_kv = H/G). The G query heads still each

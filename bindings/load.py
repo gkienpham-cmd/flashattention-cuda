@@ -34,6 +34,7 @@ _SOURCES = {
     "v8_gqa_ss": ["gqa_ss_attention.cu", "binding.cpp"],
     "v9_fp8": ["fp8_attention.cu", "binding.cpp"],
     "v10_nvfp4": ["nvfp4_attention.cu", "binding.cpp"],
+    "v11_mla": ["mla_attention.cu", "binding.cpp"],
 }
 
 

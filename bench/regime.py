@@ -139,11 +139,18 @@ def time_ms_l2flush(fn, flush_buf=None, *, warmup: int = 10, iters: int = 50) ->
 # --------------------------------------------------------------------------------------------------
 # The sweep.
 # --------------------------------------------------------------------------------------------------
+# v11 MLA: --dim is the latent score-width DQK; this maps it to the content/output width DV
+# (kv_lora_rank). The trailing DQK-DV dims are the decoupled RoPE. Real DeepSeek-V3 = 576/512.
+_MLA_DV = {96: 64, 160: 128, 576: 512}
+
+
 def _build_ours(backend, q, k, v, page_size, q_off):
     """Construct the timed decode-kernel lambda for `backend`, plus a human note. FP8 pools are uint8;
-    NVFP4 pools are packed nibbles + per-16 E4M3 micro-scales (both uint8)."""
-    from fa_kernels import fp8_attention, gqa_attention, nvfp4_attention
-    from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8, build_paged_kv_nvfp4
+    NVFP4 pools are packed nibbles + per-16 E4M3 micro-scales (both uint8). For v11_mla, `k` carries the
+    single latent [B,1,N,DQK] (`v` unused) and the DV is read from _MLA_DV[DQK=k.shape[-1]]."""
+    from fa_kernels import fp8_attention, gqa_attention, mla_attention, nvfp4_attention
+    from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_mla,
+                                  build_paged_kv_nvfp4)
 
     if backend == "v9_fp8":
         kp, vp, bt, nk, sk, sv = build_paged_kv_fp8(k, v, page_size)
@@ -153,6 +160,12 @@ def _build_ours(backend, q, k, v, page_size, q_off):
         kp, km, vp, vm, bt, nk, sk, sv = build_paged_kv_nvfp4(k, v, page_size)
         return lambda: nvfp4_attention(q, kp, km, vp, vm, bt, page_size, nk, sk, sv,
                                        causal=False, q_offset=q_off, backend=backend)
+    if backend == "v11_mla":
+        latent = k                                       # [B,1,N,DQK] — the shared latent (one head)
+        DV = _MLA_DV[latent.shape[-1]]
+        lp, lm, bt, nk, sl = build_paged_kv_mla(latent, page_size)
+        return lambda: mla_attention(q, lp, lm, bt, page_size, nk, DV, sl,
+                                     causal=False, q_offset=q_off, backend=backend)
     kp, vp, bt, nk = build_paged_kv(k, v, page_size)
     return lambda: gqa_attention(q, kp, vp, bt, page_size, nk,
                                  causal=False, q_offset=q_off, backend=backend)
@@ -170,9 +183,10 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
 
     is_fp8 = backend == "v9_fp8"
     is_nvfp4 = backend == "v10_nvfp4"
+    is_mla = backend == "v11_mla"   # v11: ONE shared latent (read once), --dim = DQK; NVFP4-stored
     # KV bytes/elem: FP16=2, FP8=1, NVFP4=0.5625 (4-bit nibble + per-16 E4M3 micro-scale — count the
     # scale, or the working-set/eff_bw/%HBM numbers and the L2-crossing point are wrong).
-    b_bytes = 0.5625 if is_nvfp4 else (1 if is_fp8 else 2)
+    b_bytes = 0.5625 if (is_nvfp4 or is_mla) else (1 if is_fp8 else 2)
     dev = torch.device("cuda")
     cap = torch.cuda.get_device_capability()
     sm = f"sm_{cap[0]}{cap[1]}"
@@ -186,9 +200,9 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
     clk_cur, clk_max = _sm_clock_mhz()
     flush = _l2_flush_buf() if l2_flush else None
     name = torch.cuda.get_device_name()
+    kv_kind = "nvfp4-latent" if is_mla else ("nvfp4" if is_nvfp4 else ("fp8" if is_fp8 else "fp16"))
     print(f"# device: {name} ({sm})  clock~{clk_cur}/{clk_max}MHz  backend={backend}  "
-          f"KV={'nvfp4' if is_nvfp4 else ('fp8' if is_fp8 else 'fp16')}  l2_flush={l2_flush}  "
-          f"gqa_group={gqa_group}")
+          f"KV={kv_kind}  l2_flush={l2_flush}  gqa_group={gqa_group}")
     print(f"# {'shape(BxHq x1x d /Nk) Hkv':>27} | {'us/tok':>8} | {'eff_bw':>9} | {'%HBM':>6} | "
           f"{'WS(MB)':>8} | {'L2res?':>6} | {'L2served':>8}")
 
@@ -198,15 +212,24 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
             for d in head_dims:
                 for H_kv in h_kvs:
                     H_q = gqa_group * H_kv
-                    ws = 2.0 * B * H_kv * N * d * b_bytes          # K+V working set, bytes
+                    if is_mla and d not in _MLA_DV:
+                        print(f"  # skip MLA d{d}: supported DQK in {sorted(_MLA_DV)} (576 real, 96 smoke)")
+                        continue
+                    # MLA reads ONE shared latent of width DQK=d, ONCE for all H_q heads (no 2x K/V, no
+                    # H_kv factor); every other backend reads K+V over H_kv heads.
+                    ws = (1.0 * B * N * d * b_bytes) if is_mla else (2.0 * B * H_kv * N * d * b_bytes)
                     if ws > max_ws_gb * 1e9:
                         print(f"  # skip B{B} H_kv{H_kv} d{d} N{N}: working set "
                               f"{ws/1e9:.1f} GB > --max-ws-gb {max_ws_gb}")
                         continue
                     try:
                         q = torch.randn(B, H_q,  1, d, device=dev, dtype=torch.float16)
-                        k = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
-                        v = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
+                        if is_mla:
+                            k = torch.randn(B, 1, N, d, device=dev, dtype=torch.float16)  # the latent
+                            v = k                                                          # unused by MLA
+                        else:
+                            k = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
+                            v = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
                         ours = _build_ours(backend, q, k, v, page_size, q_off=0)
                         p50, _ = time_ms_l2flush(ours, flush, warmup=warmup, iters=iters)
                     except RuntimeError as e:                       # OOM or build failure
@@ -215,7 +238,7 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
                         continue
 
                     tokens = B * H_q
-                    kv_bytes = 2.0 * B * H_kv * N * d * b_bytes
+                    kv_bytes = (1.0 * B * N * d * b_bytes) if is_mla else (2.0 * B * H_kv * N * d * b_bytes)
                     eff_bw = kv_bytes / (p50 / 1e3)                 # bytes/s achieved on the KV read
                     us_tok = p50 * 1e3 / tokens
                     hbm_pct = (eff_bw / hbm_peak * 100.0) if arch else float("nan")
@@ -244,8 +267,12 @@ def profile_one(backend: str, B: int, H_kv: int, N: int, d: int, *, gqa_group: i
     dev = torch.device("cuda")
     H_q = gqa_group * H_kv
     q = torch.randn(B, H_q,  1, d, device=dev, dtype=torch.float16)
-    k = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
-    v = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
+    if backend == "v11_mla":
+        k = torch.randn(B, 1, N, d, device=dev, dtype=torch.float16)   # the shared latent (one head)
+        v = k                                                          # unused by MLA
+    else:
+        k = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
+        v = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
     ours = _build_ours(backend, q, k, v, page_size, q_off=0)
     for _ in range(iters):
         ours()
@@ -257,7 +284,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="v9 Task 1 — clock-locked, L2-flushed decode regime sweep.")
     p.add_argument("--backend", default="v8_gqa_ss",
                    help="decode kernel to characterize (v8_gqa_ss = FP16, v9_fp8 = FP8 KV, "
-                        "v10_nvfp4 = NVFP4 KV).")
+                        "v10_nvfp4 = NVFP4 KV, v11_mla = MLA latent-KV — use --dim 576 for the real "
+                        "DeepSeek-V3 latent; the T1 crossover deliverable).")
     p.add_argument("--kv-lens", type=int, nargs="+", dest="kv_lens",
                    default=[1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
                    help="KV lengths to sweep (crosses the 4 MB L2 around N_k=8192 for B1/H_kv1/d128).")

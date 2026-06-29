@@ -439,6 +439,32 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (the SHAPE change — packs M=128 by construction, lifts AI `2G/b`→`2·h_q`≈256 toward compute-bound; speculative
   is the fallback, occupancy-v8.8 folds in). Plan to paste: [`docs/v11-kickoff.md`](docs/v11-kickoff.md). See
   `results.md`/`decisions.md` Step 10 close-out, `interview-prep.md` C16.
+- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **Roofline RECORDED + full source BUILT
+  (2026-06-30); Gate 1 (Colab T4) PENDING.** The **SHAPE change**: forks v10 changing only GQA-over-`H_kv`-heads
+  → **MQA-over-ONE-shared-latent** (`H_kv=1`, `G=h_q`, M=`h_q` not `G`). All `h_q` query heads share one latent
+  (read once) → >1 warp active at N_q=1 (the per-CTA wall v10 proved is the decode limiter), decode **AI = 
+  `2·h_q·(2L+R)/((L+R)·b)` ≈ 3.78·h_q/b** (h_q=128 fp16 ≈ 235, ~30× GQA-8's 8; tool incl. Q/O bytes). **Roofline
+  (`roofline/model.py` MLA branch + `predict.py --mla`) recorded BEFORE coding** (results.md Step 11): on B300
+  fp16 AI 234.8 (0.75× the 312.5 FP16-TC ridge → HBM knife-edge), fp8 469.7 / nvfp4 835.0 (**both MMA — pure
+  roofline FLIPS compute-bound, first in the arc**). **Two-layer:** pure roofline = flip; **per-CTA-corrected
+  (real) = RENAME to smem-capacity** (the (576,512) latent stages ~46 KB ≈ the T4 48 KB static limit → ~1
+  block/SM — §9 Q2 made concrete); **counter-prediction (prize): if %HBM stays at the ~0.5%/~40 GB/s per-CTA
+  floor, MLA did NOT leave per-CTA-bound → speculative q_len>1 is the fallback.** §9 Q1 (M=128 = ONE GEMM):
+  predicted YES structurally (RoPE splits the K-dim, not the M-tile). **Default = CUDA-core/dequant-to-FP16**,
+  NVFP4 latent storage carried byte-identical from v10 (clean SHAPE-only A/B); native FP4 tcgen05 (M≥128 one
+  GEMM) deferred to ONLY-IF the dev rung proves Q1+Q2. **One latent pool** (latent = both K (full `DQK=576`) and
+  V (first `DV=512`), no V pool — the real ~93% capacity win); **single transposed `sK_T[DQK][TN+1]` smem buffer**
+  serves both the conflict-free lane=key QK and PV. Built: kernel `{mla_attention.cu,binding.cpp}` (score-stationary
+  loop / split-KV / LSE merge / `choose_splits` / fused NVFP4 dequant byte-identical from v10, generalized
+  `D→(DQK,DV)`); `mla_attention()` + `build_paged_kv_mla()` + `sdpa_reference_mla()` + the §9-Q4
+  `sdpa_reference_mla_materialized()` absorption-identity oracle (synthetic `W^UK`/`W^UV`); wired
+  (`load.py`, `dispatch.py` `(7,0)`, `__init__.py`, harness + regime `v11_mla` branches with the ONE-latent
+  byte count, `__all__`); tests (h_q∈{16,32,64,128} × non-mult N_k × causal × seed, idle/multi-tile, real
+  (576,512), square, absorption identity; tol 5e-2); gate notebook `notebooks/v11_mla_gate.ipynb`. **Author
+  machine can't compile `.cu`** → build + Gate-1 correctness/capacity/accuracy (Colab T4) + the B300/sm_103
+  measured core (latency / the T1 compute-vs-memory crossover / sm_103 2×-exp / FlashMLA comparator) + the quiz
+  (deferred to the very end per Kien) are the outstanding GPU work. See `results.md`/`decisions.md` Step 11,
+  `interview-prep.md` C16, `docs/v11-kickoff.md`.
 
 ## Next steps
 

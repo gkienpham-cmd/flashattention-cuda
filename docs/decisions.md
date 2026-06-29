@@ -1145,3 +1145,30 @@ self-ratio in the gate's run-of-record, a "160 SMs" label string in a B300 noteb
   capacity win are arch-independent. Field is moving to **sparse** (DeepSeek V3.2 DSA / V4 CSA) and **GLA** (Tri Dao,
   beat FlashMLA ~20%) → flagged **v12** (dense MLA is the roofline-clean pedagogical rung first). See
   [`v11-kickoff.md`](v11-kickoff.md), `results.md` Step 10 close-out, `interview-prep.md` C16, `decode-replan.md` §5.
+
+## Step 11 — MLA latent-KV decode (v11_mla) — kickoff (prediction recorded before coding, 2026-06-30)
+
+**Roofline FIRST, per the per-step loop.** Extended `roofline/model.py` with an MLA branch (`mla=True`,
+`h_q`/`kv_lora_rank`/`rope_dim`) + a `--mla` knob in `roofline/predict.py`, and recorded the prediction
+in `results.md` Step 11 **before** any kernel. Non-MLA paths are byte-identical (GQA-8 nvfp4 still 28.4,
+v1 naive still 0.2).
+
+- **The model.** MLA shares ONE latent across all `h_q` query heads (latent serves as both K and V →
+  the `2×` K/V read collapses to `1×`; `bh/G → B`), so decode **AI = 2·h_q·(2L+R)/((L+R)·b) ≈ 3.78·h_q/b**
+  with `L=512`, `R=64`. The mma bound uses the **tensor-core peak** because M=h_q≥16 engages the cores.
+- **Recorded numbers (B300/sm_103, h_q=128, tool incl. Q/O bytes):** fp16 **AI 234.8** (0.75× the 312.5
+  FP16-TC ridge → HBM, knife-edge); fp8 **469.7** (1.50× → MMA, **flips compute-bound**); nvfp4 **835.0**
+  (2.67× → MMA, deep). ~30× the GQA-8 fp16 AI of 8. T4 cross-check: fp16 234.8 > 203.1 ridge → compute
+  even on the dev rung.
+- **The choice this records:** the mma peak is the **TC peak** (not the M=1 GQA "cores dark" peak) — the
+  defensible default because M=h_q≥16 genuinely engages tensor cores, which is the entire premise of the
+  shape change. The byte-lever ridge crossing (fp8/nvfp4 push AI past the FP16-TC ridge) is recorded as a
+  **pure-roofline flip prediction**; the **per-CTA-corrected** real prediction is a **rename to
+  smem/TMEM-capacity** (`q_absorbed` staging ≈ 147 KB ≈ most of 228 KB/SM → ~1 block/SM). **What changes
+  on another arch:** the AI lift + capacity win are arch-independent; whether the flip *realizes* depends
+  on smem/SM (228 KB Blackwell) and the M≥128 tcgen05 gate (`sm_103a`-specific).
+- **§9 roofline answers (resolve by dev-rung measurement):** Q1 M=128 is ONE GEMM in M (RoPE splits the
+  K-dim, not the M-tile) → T2 holds structurally; Q2 predict **rename to capacity**, not clean flip
+  (correction: `W^UK`/`W^UV` fold into the offline Q/O proj — the kernel stages `q_absorbed`, not the
+  weights); Q3 the compute-vs-memory crossover IS the deliverable. See `results.md` Step 11,
+  `v11-kickoff.md` §2/§9, `interview-prep.md` C16.

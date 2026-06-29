@@ -43,6 +43,13 @@ _MIN_CAPABILITY = {
                           # correctness + capacity + accuracy ONLY — emulated software unpack is MORE ALU than
                           # v9's E4M3, so T4 latency is NOT valid. Decode uses no FP4 MMA (M=G<64), so (7, 0)
                           # compiles. The byte lever (decode AI = 2G/b -> ~3.55x vs FP16).
+    "v11_mla": (7, 0),    # v11: forks v10 changing the SHAPE — GQA-over-H_kv-heads -> MQA-over-ONE-shared-
+                          # latent (M=G -> M=h_q). All h_q query heads share one latent (read once), so >1
+                          # warp is active at N_q=1 (the per-CTA lever v10 proved is the decode wall) and AI
+                          # rises 2G/b -> ~3.78*h_q/b. Default = CUDA-core / dequant-to-FP16 (NVFP4 latent
+                          # storage carried byte-identical from v10), so (7, 0) builds on T4/Colab for the
+                          # correctness + capacity + accuracy gate. The native FP4 tcgen05 compute arm
+                          # (M>=128 ONE GEMM) would gate sm_103a and is deferred (kickoff §9 Q1/Q2).
 }
 
 

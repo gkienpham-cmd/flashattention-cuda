@@ -17,11 +17,14 @@ from .model import estimate
 
 def predict_bottleneck(sm: str, B: int, H: int, N_q: int, N_k: int, d: int,
                        precision: str, materialize_s: bool, use_tensor_core: bool,
-                       tile_m: int = 1, tile_n: int = 1, G: int = 1):
+                       tile_m: int = 1, tile_n: int = 1, G: int = 1,
+                       mla: bool = False, h_q: int = 128,
+                       kv_lora_rank: int = 512, rope_dim: int = 64):
     arch = get_arch(sm)
     return arch, estimate(arch, B=B, H=H, N_q=N_q, N_k=N_k, d=d,
                           precision=precision, materialize_s=materialize_s,
-                          use_tensor_core=use_tensor_core, tile_m=tile_m, tile_n=tile_n, G=G)
+                          use_tensor_core=use_tensor_core, tile_m=tile_m, tile_n=tile_n, G=G,
+                          mla=mla, h_q=h_q, kv_lora_rank=kv_lora_rank, rope_dim=rope_dim)
 
 
 def _parse_shape(s: str) -> tuple[int, int, int, int]:
@@ -49,6 +52,16 @@ def main() -> None:
     p.add_argument("--gqa-group", type=int, default=1, dest="gqa_group",
                    help="GQA group factor G = H_q/H_kv (G query heads share one KV head). Decode AI "
                         "= 2G/b; G=1 is plain MHA. The v8 lever.")
+    p.add_argument("--mla", action="store_true",
+                   help="MLA (v11) latent-KV decode: all h_q query heads share ONE low-rank latent "
+                        "read -> M=h_q, decode AI = 2*h_q*(2L+R)/((L+R)*b) ~= 3.78*h_q/b. Ignores "
+                        "H/G/--tile; uses --h-q/--kv-lora-rank/--rope-dim. The v11 shape change.")
+    p.add_argument("--h-q", type=int, default=128, dest="h_q",
+                   help="MLA: number of query heads packed into M (default 128 = DeepSeek-V3).")
+    p.add_argument("--kv-lora-rank", type=int, default=512, dest="kv_lora_rank",
+                   help="MLA: latent content rank L (default 512 = DeepSeek-V2/V3).")
+    p.add_argument("--rope-dim", type=int, default=64, dest="rope_dim",
+                   help="MLA: decoupled-RoPE key dims R carried alongside the latent (default 64).")
     a = p.parse_args()
 
     B, H, N, d = _parse_shape(a.shape)
@@ -57,12 +70,18 @@ def main() -> None:
     tile_m, tile_n = (int(x) for x in a.tile.lower().split("x"))
     arch, est = predict_bottleneck(a.arch, B, H, N_q, N_k, d, a.precision,
                                    a.materialize_s, not a.no_tensor_core,
-                                   tile_m=tile_m, tile_n=tile_n, G=a.gqa_group)
+                                   tile_m=tile_m, tile_n=tile_n, G=a.gqa_group,
+                                   mla=a.mla, h_q=a.h_q, kv_lora_rank=a.kv_lora_rank,
+                                   rope_dim=a.rope_dim)
 
     util = est.utilization()
     print(f"arch        : {arch.name} ({arch.sm})")
-    print(f"shape       : B={B} H={H} N_q={N_q} N_k={N_k} d={d}  precision={a.precision}  "
-          f"materialize_S={a.materialize_s}  tile={tile_m}x{tile_n}  G={a.gqa_group}")
+    if a.mla:
+        print(f"shape       : B={B} N_q={N_q} N_k={N_k}  MLA latent (h_q={a.h_q} "
+              f"kv_lora_rank={a.kv_lora_rank} rope_dim={a.rope_dim})  precision={a.precision}")
+    else:
+        print(f"shape       : B={B} H={H} N_q={N_q} N_k={N_k} d={d}  precision={a.precision}  "
+              f"materialize_S={a.materialize_s}  tile={tile_m}x{tile_n}  G={a.gqa_group}")
     print(f"LIMITER     : {est.limiter.upper()}   (predicted lower bound {est.seconds*1e3:.3f} ms)")
     print(f"  t_mma     : {est.t_mma*1e3:8.3f} ms   util {util['mma']*100:5.1f}%")
     print(f"  t_hbm     : {est.t_hbm*1e3:8.3f} ms   util {util['hbm']*100:5.1f}%")

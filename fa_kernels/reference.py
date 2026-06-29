@@ -81,6 +81,70 @@ def sdpa_reference_gqa_nvfp4(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return sdpa_reference_gqa(q, k_hat, v_hat, causal=causal, scale=scale)
 
 
+def sdpa_reference_mla(q_absorbed: torch.Tensor, latent: torch.Tensor, kv_lora_rank: int,
+                       *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
+    """Apples-to-apples MLA oracle for v11 (the primary correctness gate): dequantize the SAME NVFP4
+    latent bytes the kernel reads, then compute MQA over the shared latent IN THE LATENT BASIS — exactly
+    what the latent-absorbed kernel computes. `q_absorbed` is `[B,H_q,N_q,DQK]` (the query already in the
+    latent basis); `latent` is `[B,1,N_k,DQK]` (one shared latent head). The score is a DQK-wide dot vs
+    the latent (it serves as K); the output is the p-weighted sum of the first `kv_lora_rank` latent dims
+    (the latent serves as V; the trailing RoPE dims carry no value). Returns `O_latent`
+    `[B,H_q,N_q,kv_lora_rank]`. matmul broadcasts the single latent head across all H_q query heads.
+
+    Pass the SAME `scale` the kernel used (default 1/sqrt(DQK)). At decode the kernel masks via
+    `q_offset`, so the decode test calls this with `causal=False` (the query attends the whole cache),
+    mirroring the v10 pattern.
+    """
+    from .paged import quantize_nvfp4, dequantize_nvfp4
+
+    lp, lm, sl = quantize_nvfp4(latent)
+    lat_hat = dequantize_nvfp4(lp, lm, sl).to(q_absorbed.dtype)        # [B,1,N_k,DQK] — kernel's operand
+    DQK = q_absorbed.shape[-1]
+    s = scale if scale is not None else 1.0 / (DQK ** 0.5)
+    scores = torch.matmul(q_absorbed, lat_hat.transpose(-1, -2)) * s   # [B,H_q,N_q,N_k] (broadcast head)
+    if causal:
+        n_q, n_k = scores.shape[-2], scores.shape[-1]
+        mask = torch.triu(torch.ones(n_q, n_k, dtype=torch.bool, device=scores.device), diagonal=1)
+        scores = scores.masked_fill(mask, float("-inf"))
+    scores = scores - scores.amax(dim=-1, keepdim=True)               # stabilize before exp
+    probs = torch.softmax(scores, dim=-1)
+    return torch.matmul(probs, lat_hat[..., :kv_lora_rank])           # [B,H_q,N_q,kv_lora_rank]
+
+
+def sdpa_reference_mla_materialized(q_nope: torch.Tensor, q_rope: torch.Tensor, latent: torch.Tensor,
+                                    kv_lora_rank: int, W_UK: torch.Tensor, W_UV: torch.Tensor,
+                                    *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
+    """MLA absorption-identity oracle (kickoff §9 Q4): EXPAND the (dequantized) latent through synthetic
+    low-rank up-projections `W^UK`/`W^UV` to full per-head K/V, then run standard SDPA. This is the
+    explicit-materialization truth the latent-absorbed kernel must equal — the identity that makes MLA
+    correct (`q_absorbed·latent == q_full·K_full`, `O_latent·W^UV == p·V_full`). The test re-projects the
+    kernel's `O_latent` through `W^UV` and compares to this. Inputs:
+        q_nope : [B,H_q,N_q,Dn]            per-head query (content)
+        q_rope : [B,H_q,N_q,R]             per-head query (decoupled RoPE)
+        latent : [B,1,N_k,DQK]             the shared latent (content L=kv_lora_rank + RoPE R); the SAME
+                                           tensor passed to the kernel — dequantized NVFP4-faithfully here
+        W_UK   : [H_q,Dn,L]                content up-proj: K_nope_h = c_hat @ W_UK_h^T
+        W_UV   : [H_q,Dv,L]                value   up-proj: V_h      = c_hat @ W_UV_h^T
+    Returns O_full `[B,H_q,N_q,Dv]`. Pass the SAME `scale` the kernel used so the equal dot products map
+    to equal scores (the absorbed dot spans DQK, the materialized dot spans Dn+R; they are numerically
+    equal by the identity, so one shared scalar scale matches both).
+    """
+    from .paged import quantize_nvfp4, dequantize_nvfp4
+
+    L, R = kv_lora_rank, latent.shape[-1] - kv_lora_rank
+    lp, lm, sl = quantize_nvfp4(latent)
+    lat_hat = dequantize_nvfp4(lp, lm, sl).to(q_nope.dtype)           # [B,1,N_k,DQK] — kernel's operand
+    c_hat, rope_hat = lat_hat[..., :L], lat_hat[..., L:]             # [B,1,N_k,L], [B,1,N_k,R]
+    # Materialize full per-head K and V from the shared latent (the up-projection MLA absorbs offline).
+    K_nope = torch.einsum("bgnl,hdl->bhnd", c_hat, W_UK)             # [B,H_q,N_k,Dn]
+    V_full = torch.einsum("bgnl,hdl->bhnd", c_hat, W_UV)             # [B,H_q,N_k,Dv]
+    B, H_q, N_k, _ = K_nope.shape
+    K_full = torch.cat([K_nope, rope_hat.expand(B, H_q, N_k, R)], dim=-1)   # [B,H_q,N_k,Dn+R]
+    q_full = torch.cat([q_nope, q_rope], dim=-1)                            # [B,H_q,N_q,Dn+R]
+    s = scale if scale is not None else 1.0 / (q_full.shape[-1] ** 0.5)
+    return F.scaled_dot_product_attention(q_full, K_full, V_full, is_causal=causal, scale=s)
+
+
 def fp64_reference(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                    *, causal: bool = False, scale: float | None = None) -> torch.Tensor:
     """Ground-truth attention in float64. Used to measure quantization RMSE in Phase 3.

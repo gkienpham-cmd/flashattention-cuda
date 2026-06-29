@@ -1707,3 +1707,109 @@ v8.8 folds in for the serving regime. Plan to paste into a fresh session:
 [`docs/v11-kickoff.md`](v11-kickoff.md). See `decisions.md` Step 10 close-out, `interview-prep.md` C16.
 
 ---
+
+## Step 11 — MLA latent-KV decode (v11_mla) — PREDICTION (recorded before coding, 2026-06-30)
+
+v11 forks v10 (NVFP4 KV) changing **one variable — the attention SHAPE** (GQA-over-128-heads →
+MQA-over-a-512-wide-latent). MLA (Multi-head Latent Attention, DeepSeek-V2/V3) shares **one** low-rank
+latent KV across **all** `h_q=128` query heads: the absorbed up-projections `W^UK`/`W^UV` fold into the
+**offline** Q/O projections, so the kernel reconstructs the score as `q_absorbed · c_latent` and never
+materializes full K/V. Two consequences drive the whole step: (1) decode packs **M = h_q = 128 BY
+CONSTRUCTION at N_q=1** (clears the tcgen05 NVFP4 `M≥128` gate with no speculative draft — T2), and
+(2) the latent is read **once** for all heads. **This is the first step whose reason to exist is to
+RAISE M above 1** — v10 measured, confound-free across T4/B200/B300 to 2M tokens, that decode is
+per-CTA/low-MLP latency-bound (1 active warp at N_q=1) and bytes aren't the wall, so the only lever
+left is the shape.
+
+### The recorded roofline (decode AI, `python -m roofline.predict --arch sm_103 --shape 1x128x1x512 --kv-len 8192 --mla --precision …`)
+
+MLA changes two terms vs the GQA decode branch: the latent serves as **both** K and V (the `2×` K/V
+read collapses to `1×`) and all `h_q` heads **share** that one read (`bh/G → B`) while FLOPs stay
+`∝ h_q`. With latent `L = kv_lora_rank = 512` + decoupled-RoPE `R = rope_dim = 64`:
+
+- `mma_flops = 2·B·h_q·N_q·N_k·(L+R)` (QK over 576) `+ 2·B·h_q·N_q·N_k·L` (PV over 512)
+- `hbm_bytes = B·N_k·(L+R)·b` (latent read **once**) `+` Q-read `B·h_q·(L+R)·b` `+` O-write `B·h_q·L·b`
+- **AI = 2·h_q·(2L+R) / ((L+R)·b) ≈ 3.78·h_q/b** → fp16 `h_q=128` ≈ **242** ignoring Q/O, **235**
+  measured by the tool (Q/O add ~3% bytes). The kickoff's "`2·h_q`≈256" is the round shorthand.
+
+| latent precision | b (B/elem) | AI (tool, h_q=128) | vs B300 FP16-TC ridge 312.5 | pure-roofline limiter |
+|---|---|---|---|---|
+| FP16 | 2 | **234.8** | 0.75× | **HBM** — knife-edge just below the ridge |
+| FP8 (v9 storage) | 1 | **469.7** | 1.50× | **MMA — flips compute-bound** |
+| NVFP4 (v10 storage) | 0.5625 | **835.0** | 2.67× | **MMA — deep compute-bound** |
+
+This is **~30× the GQA-8 fp16 decode AI of 8** (Step 10 table, unchanged: GQA-8 nvfp4 still 28.4). The
+mma bound uses the **tensor-core peak** because M=h_q≥16 genuinely engages the cores (unlike GQA decode,
+where M=1 keeps them dark). **Dev-rung cross-check (T4 sm_75, fp16-TC ridge 203.1):** MLA fp16 AI 234.8
+> 203.1 → **MMA/compute-bound even on the T4** — the flip should be visible in the prediction on the
+cheap rung too. (A100 fp16-TC ridge ≈ 153 → also compute-bound.)
+
+### Two-layer prediction (the honesty constraint — v10 measured decode per-CTA-bound, ~0.5%-HBM/~40 GB/s B=1 floor)
+
+- **Pure roofline:** near-ridge at fp16 (0.75×), **compute-bound at fp8/nvfp4 latent** → predicts a
+  **limiter FLIP to compute — the first in the v1→v11 arc.**
+- **Per-CTA-corrected (the REAL prediction):** the model is **blind to on-chip capacity**. Staging
+  `q_absorbed` (`h_q·(L+R)` fp16 ≈ **147 KB** at h_q=128 ≈ most of the 228 KB/SM budget) + the latent
+  tile + the score tile likely caps occupancy at **~1 block/SM**. So I predict the limiter **RENAMES to
+  smem/TMEM-capacity / register-pressure**, NOT cleanly flips to compute — the project's signature T3
+  outcome. Genuine compute-bound only **iff** M=128 packs as **one** tensor-core GEMM **and** the
+  staging fits.
+- **Counter-prediction (the prize):** if measured achieved-%HBM stays pinned at the ~0.5% / ~40 GB/s
+  per-CTA floor that GQA decode never left → MLA did **not** raise MLP, the wall is intrinsic to N_q=1
+  decode → the **speculative/multi-token (`q_len>1`)** shape-lever is the fallback. If achieved TFLOPS
+  climbs toward the FP16/FP4 ridge → flip confirmed, and the v9/v10 byte cut + the sm_103 2×-exp lever
+  (T4) finally convert. **Either sign is publishable.**
+
+### §9 open questions — answered as roofline predictions (resolve by dev-rung measurement)
+
+1. **Does M=128 pack as ONE GEMM at N_q=1, or fragment?** **Predict: one GEMM in M, structurally.**
+   Absorbed-QK is `Q'[128×576] · C[N_k×576]ᵀ → [128×N_k]` score (M=128). The decoupled-RoPE term
+   `q_R[128×64] · k_R[N_k×64]ᵀ` **accumulates into the same score** → it splits the **K-dimension** (an
+   extra small-K=64 GEMM), *not* the M-tile. PV `P[128×N_k] · C[N_k×512]` is also M=128. So the
+   fragmentation risk migrates to K-splitting + register/smem pressure (→ Q2), **not** M-fragmentation.
+   This gates the native-FP4-compute thesis (T2) — verify on the T4/B200 dev rung before banking it.
+2. **Does the higher AI FLIP the limiter, or just RENAME it to smem-capacity?** **Predict: rename.**
+   M=128 genuinely lifts MLP (many warps / a TC tile vs GQA's 1 warp), so it *does* attack the 1-warp
+   wall — but `q_absorbed` staging is the binding constraint, so I expect smem/TMEM-capacity-bound at
+   ~1 block/SM. *Correction to the kickoff phrasing:* `W^UK`/`W^UV` fold into the **offline** Q/O
+   projections, so the attention kernel stages **`q_absorbed`**, not the weight matrices themselves.
+3. **Compute- or memory-bound at the project's reachable batch/context on B300?** Pure roofline says
+   compute (AI > ridge at fp8/nvfp4); per-CTA-corrected says capacity-bound at small batch, compute-bound
+   only once batch fills the TC pipes. **This crossover IS the T1 deliverable — resolve by measurement.**
+
+### Status — roofline recorded (✅), full source BUILT (✅), Gate 1 PENDING (Colab T4)
+
+Roofline extended (`roofline/model.py` MLA branch + `roofline/predict.py --mla`; non-MLA paths
+byte-identical — GQA-8 nvfp4 still 28.4, v1 naive still 0.2). Prediction recorded above BEFORE any
+kernel, per the per-step loop.
+
+**Full v11 source then built (CUDA-core/dequant-to-FP16 default; author machine can't compile, so this
+is built-blind for the Colab/B300 gate):**
+- **Kernel** `kernels/v11_mla/{mla_attention.cu,binding.cpp}` — forks v10 changing only the SHAPE:
+  `H_kv=1`, `G=h_q`, ONE shared latent pool (`d_qk = kv_lora_rank + rope_dim = 576`; V reads the first
+  `d_v = 512`), and a **single transposed smem buffer** `sK_T[DQK][TN+1]` serving both the conflict-free
+  lane=key QK dot (over 576) and PV (over the first 512). At TN=32 the real (576,512) template stages
+  **~46 KB < the T4's 48 KB static smem limit** — the §9 Q2 capacity prediction made concrete (~1 block/SM).
+  Score-stationary inner loop / split-KV / LSE merge / `choose_splits` / fused NVFP4 dequant carried
+  byte-identical from v10.
+- **API/oracle** `fa_kernels/`: `mla_attention()` + `build_paged_kv_mla()` (one latent pool) +
+  `sdpa_reference_mla()` (apples-to-apples latent-basis oracle) + `sdpa_reference_mla_materialized()`
+  (the §9-Q4 absorption-identity oracle: synthetic `W^UK`/`W^UV`, expand-vs-absorbed). Registered in
+  `dispatch.py` `(7,0)`, `bindings/load.py`, `__init__.py`.
+- **Tests** `tests/test_correctness.py`: `test_v11_mla_decode` (h_q∈{16,32,64,128} × non-mult N_k × causal
+  × seed), idle/multi-row-tile (h_q=3,20), real (576,512), square reduction, and the absorption identity
+  (tol 5e-2). **Bench** `bench/harness.py` + `bench/regime.py` `v11_mla` branches (one-latent byte count,
+  the counter-free %HBM/L2 test, the past-L2 crossover sweep). **Gate notebook**
+  `notebooks/v11_mla_gate.ipynb` (roofline recap → build → pytest → accuracy → capacity → the T1 %HBM-vs-N_k
+  A/B → the `[RENT root B300]` regime/native-FP4 deliverables).
+- **Local CPU checks green:** `py_compile` all edits; `import fa_kernels` exposes `mla_attention`;
+  `roofline.predict --mla` matches the recorded table; the absorption identity holds by derivation
+  (numeric check runs on Colab — torch is GPU-side).
+
+**Outstanding (the next gate):** Gate 1 on Colab T4 (build + correctness + capacity + accuracy via the
+gate notebook), then the B300/sm_103 measured core (latency / the T1 compute-vs-memory crossover /
+sm_103 2×-exp / FlashMLA comparator), then the quiz (deferred to the very end per Kien). The native FP4
+tcgen05 arm stays gated on the dev rung proving §9 Q1 (M=128 one GEMM) + Q2 (limiter flips). See
+`docs/v11-kickoff.md`, `decisions.md` Step 11, `interview-prep.md` C16.
+
+---

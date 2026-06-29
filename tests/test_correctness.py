@@ -16,10 +16,13 @@ import pytest
 import torch
 
 from conftest import requires_cuda
-from fa_kernels import attention, fp8_attention, gqa_attention, nvfp4_attention, paged_attention
-from fa_kernels.paged import build_paged_kv, build_paged_kv_fp8, build_paged_kv_nvfp4
+from fa_kernels import (attention, fp8_attention, gqa_attention, mla_attention, nvfp4_attention,
+                        paged_attention)
+from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_mla,
+                              build_paged_kv_nvfp4)
 from fa_kernels.reference import (sdpa_reference, sdpa_reference_gqa, sdpa_reference_gqa_fp8,
-                                  sdpa_reference_gqa_nvfp4)
+                                  sdpa_reference_gqa_nvfp4, sdpa_reference_mla,
+                                  sdpa_reference_mla_materialized)
 
 # (B, H, N, d) shapes spanning the sweep we care about. Small + the head dims 64/128. The last
 # two have N that is NOT a multiple of v2's tile (64 at d=64, 32 at d=128) to exercise the
@@ -81,6 +84,11 @@ _TOL = {
     # dequantizes the SAME NVFP4 bytes) is compared at 5e-2; the larger QUANTIZATION error vs the
     # original fp16 KV is reported separately as RMSE (the accuracy deliverable), NOT gated by this tol.
     "v10_nvfp4": (5e-2, 5e-2),
+    # v11_mla forks v10 changing the SHAPE (GQA-over-H_kv-heads -> MQA-over-one-shared-latent), carrying
+    # the NVFP4 latent storage byte-identical. So it inherits v10's lossy class (FP16-in + NVFP4 latent
+    # dequant); the apples-to-apples oracle (sdpa_reference_mla, dequantizing the SAME latent bytes) is
+    # compared at 5e-2, same as v10.
+    "v11_mla": (5e-2, 5e-2),
 }
 
 # GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core), Cut 2a (Turing WMMA), and v8.5
@@ -510,3 +518,136 @@ def test_v10_nvfp4_square_reduces(causal):
     ref = sdpa_reference_gqa_nvfp4(q, k, v, causal=causal)
     atol, rtol = tol_for(NVFP4_BACKEND)
     torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+# --- v11 MLA latent-KV decode -----------------------------------------------------------------------
+# v11 forks v10 changing the SHAPE: GQA-over-H_kv-heads -> MQA-over-ONE-shared-latent. All h_q query
+# heads share the single latent (M = h_q, not M = G), so >1 warp is active at N_q=1 (the per-CTA lever
+# v10 proved is the decode wall) and decode AI rises 2G/b -> ~3.78*h_q/b. The latent serves as both K
+# (full DQK = kv_lora_rank + rope_dim) and V (first kv_lora_rank dims) — ONE pool, no V pool. NVFP4
+# latent storage is carried byte-identical from v10, so the kernel/oracle dequant the SAME latent bytes
+# (apples-to-apples at 5e-2). Tests sweep h_q (the M-packing range), exercise idle + multi-row-tile
+# edges, the real DeepSeek-V3 (576,512) latent, the square prefill reduction, AND the absorption
+# identity (kickoff §9 Q4) — that the latent-absorbed kernel equals explicit per-head materialization.
+MLA_BACKEND = "v11_mla"
+
+
+@requires_cuda()
+@pytest.mark.parametrize("N_k", [4096, 8190])              # 8190 -> non-multiple last page/split
+@pytest.mark.parametrize("h_q", [16, 32, 64, 128])         # the M-packing range (128 = DeepSeek-V3)
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("seed", [9, 17])                  # vary the seed (close v9/v10's single-seed gap)
+def test_v11_mla_decode(seed, causal, h_q, N_k):
+    torch.manual_seed(seed)
+    B = 1
+    L, R = 64, 32                       # small latent (DQK=96, DV=64) -> tiny smem, fast sweep
+    DQK = L + R
+    page_size = 128
+    q = torch.randn(B, h_q, 1, DQK, device="cuda", dtype=torch.float32)        # decode: q_absorbed
+    latent = torch.randn(B, 1, N_k, DQK, device="cuda", dtype=torch.float32)   # ONE shared latent head
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=seed)
+    q_offset = (n_k - 1) if causal else 0
+    out = mla_attention(q, lp, lm, bt, page_size, n_k, L, sl,
+                        causal=causal, q_offset=q_offset, backend=MLA_BACKEND)   # default scale = 1/sqrt(DQK)
+    # Apples-to-apples: kernel vs MQA-over-latent on the SAME dequantized NVFP4 latent (same scale).
+    ref = sdpa_reference_mla(q, latent, L, causal=False)
+    atol, rtol = tol_for(MLA_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+    assert torch.isfinite(out).all(), "MLA output has non-finite entries"
+
+
+@requires_cuda()
+@pytest.mark.parametrize("h_q", [3, 20])                   # h_q=3 idles warps (M=3<8); h_q=20 -> 3 row-tiles
+def test_v11_mla_idle_warps_and_multiblock(h_q):
+    torch.manual_seed(100)
+    B, N_k = 1, 8192
+    L, R = 64, 32
+    DQK = L + R
+    page_size = 256
+    q = torch.randn(B, h_q, 1, DQK, device="cuda", dtype=torch.float32)
+    latent = torch.randn(B, 1, N_k, DQK, device="cuda", dtype=torch.float32)
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=100)
+    out = mla_attention(q, lp, lm, bt, page_size, n_k, L, sl,
+                        causal=False, q_offset=0, backend=MLA_BACKEND)
+    ref = sdpa_reference_mla(q, latent, L, causal=False)
+    atol, rtol = tol_for(MLA_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+@requires_cuda()
+@pytest.mark.parametrize("N_k", [4096, 8190])
+def test_v11_mla_real_shape(N_k):
+    # The real DeepSeek-V3 latent (kv_lora_rank=512 + rope=64 = 576) at h_q=128 — exercises the (576,512)
+    # template whose ~46 KB smem sits just under the T4's 48 KB static limit (the §9 Q2 capacity story).
+    torch.manual_seed(7)
+    B, h_q, L, R = 1, 128, 512, 64
+    DQK = L + R
+    page_size = 128
+    q = torch.randn(B, h_q, 1, DQK, device="cuda", dtype=torch.float32)
+    latent = torch.randn(B, 1, N_k, DQK, device="cuda", dtype=torch.float32)
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=7)
+    out = mla_attention(q, lp, lm, bt, page_size, n_k, L, sl,
+                        causal=False, q_offset=0, backend=MLA_BACKEND)
+    ref = sdpa_reference_mla(q, latent, L, causal=False)
+    atol, rtol = tol_for(MLA_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+@requires_cuda()
+@pytest.mark.parametrize("causal", [False, True])
+def test_v11_mla_square_reduces(causal):
+    # Prefill (N_q = N_k) with the MLA shape -> num_splits collapses to 1 (the split-KV reduction).
+    torch.manual_seed(101)
+    B, h_q, N = 1, 8, 512
+    L, R = 64, 32
+    DQK = L + R
+    page_size = 128
+    q = torch.randn(B, h_q, N, DQK, device="cuda", dtype=torch.float32)
+    latent = torch.randn(B, 1, N, DQK, device="cuda", dtype=torch.float32)
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=101)
+    out = mla_attention(q, lp, lm, bt, page_size, n_k, L, sl,
+                        causal=causal, q_offset=0, backend=MLA_BACKEND)
+    ref = sdpa_reference_mla(q, latent, L, causal=causal)
+    atol, rtol = tol_for(MLA_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+@requires_cuda()
+@pytest.mark.parametrize("h_q", [16, 64])
+def test_v11_mla_absorption_identity(h_q):
+    # The MLA correctness identity (kickoff §9 Q4): the latent-ABSORBED kernel must equal EXPLICIT
+    # per-head materialization. Build synthetic low-rank up-projections W^UK/W^UV; form q_absorbed =
+    # concat(q_nope @ W^UK, q_rope) and the latent = concat(c, rope_k); run the kernel; re-project its
+    # O_latent through W^UV; compare to standard SDPA on the materialized full-rank K/V. Both paths
+    # dequant the SAME NVFP4 latent and share one scale, so equal dot products map to equal scores.
+    torch.manual_seed(5)
+    B, N_k = 1, 4096
+    Dn, R, L, Dv = 48, 32, 64, 40       # DQK = L+R = 96 (the small template); per-head content/value dims
+    DQK = L + R
+    page_size = 128
+    scale = 1.0 / (DQK ** 0.5)          # SAME scalar for kernel (default) and the materialized oracle
+
+    q_nope = torch.randn(B, h_q, 1, Dn, device="cuda", dtype=torch.float32)
+    q_rope = torch.randn(B, h_q, 1, R,  device="cuda", dtype=torch.float32)
+    c_latent = torch.randn(B, 1, N_k, L, device="cuda", dtype=torch.float32)
+    rope_k   = torch.randn(B, 1, N_k, R, device="cuda", dtype=torch.float32)
+    W_UK = torch.randn(h_q, Dn, L, device="cuda", dtype=torch.float32) / (L ** 0.5)
+    W_UV = torch.randn(h_q, Dv, L, device="cuda", dtype=torch.float32) / (L ** 0.5)
+
+    latent = torch.cat([c_latent, rope_k], dim=-1)                              # [B,1,N_k,DQK]
+    q_abs_content = torch.einsum("bhnd,hdl->bhnl", q_nope, W_UK)                # [B,h_q,1,L]
+    q_absorbed = torch.cat([q_abs_content, q_rope], dim=-1)                     # [B,h_q,1,DQK]
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=5)
+    o_latent = mla_attention(q_absorbed, lp, lm, bt, page_size, n_k, L, sl,
+                             scale=scale, causal=False, q_offset=0, backend=MLA_BACKEND)  # [B,h_q,1,L]
+    o_full = torch.einsum("bhnl,hdl->bhnd", o_latent, W_UV)                     # [B,h_q,1,Dv]
+
+    ref = sdpa_reference_mla_materialized(q_nope, q_rope, latent, L, W_UK, W_UV,
+                                          causal=False, scale=scale)            # [B,h_q,1,Dv]
+    atol, rtol = tol_for(MLA_BACKEND)
+    torch.testing.assert_close(o_full, ref, atol=atol, rtol=rtol)
