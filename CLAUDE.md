@@ -402,8 +402,9 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   items: 2×-exp delta is a MISS (EX2 5.33 TExp/s = 0.50× the 10.7 claim, mufu share <3% so irrelevant to
   M=1 decode); FlashInfer trtllm-gen NVFP4 ~3× faster (1485 vs our 4491 µs/step, FP8-Q vs FP16-Q →
   "complementing, not beating"). Prediction-vs-measured 4/4 + 1 honest miss. Data: `notebooks/v10_b300_*_output*.ipynb`,
-  `v10_b300_nsys_kernsum.txt`, `diagrams/v10-b300-regime.svg`. ONLY ncu (Pass 2 bare-metal) + Gate-2 quiz
-  remain → v10 DONE.** Forks v9 (`fp8_attention.cu`)
+  `v10_b300_nsys_kernsum.txt`, `diagrams/v10-b300-regime.svg`. Gate-2 quiz PASSED 2026-06-29 → **v10 DONE**
+  (only the optional ncu L2-hit-rate Pass-2 on a bare-metal box is deferred — belt-and-suspenders, not
+  gating).** Forks v9 (`fp8_attention.cu`)
   changing the SINGLE variable **KV storage format**: the paged K/V pool holds **NVFP4 (packed 4-bit
   E2M1 nibble + one E4M3 micro-scale per 16 elems + per-tensor FP32 scale = 0.5625 B/elem)** instead of
   FP8 E4M3 (1 B). Score-stationary inner loop / M-packing grid / split-KV / LSE merge / host
