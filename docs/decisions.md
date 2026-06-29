@@ -1052,3 +1052,17 @@ high). **Net: the B300/sm_103 run is now corroboration, not discovery** — repr
 ncu L2-hit-rate (needs a **privileged/bare-metal** box; vast.ai containers block counters at the host
 kernel-module level) + the 2×-exp delta. The science answer won't change. See `results.md` Step 10 B200
 result, `notebooks/v10_b300_regime_output.ipynb`, `docs/v10-b300-runbook.md` §0.
+
+**B200 nsys schedule corroboration (MEASURED 2026-06-29).** Added the *schedule* read to complement the
+*bandwidth* read: `nsys` (CUPTI trace) runs on the unprivileged AIO container (no `ERR_NVGPUCTRPERM`,
+unlike ncu), so it's the free way to confirm which kernels run. **Decision-relevant:** the
+`nvfp4_partial_kernel` owns **99.3% of GPU time**, the `nvfp4_merge_kernel` is **0.04%** (~2550× smaller),
+and the torch quant/paging kernels are one-time (≤0.1% each) — i.e. decode is **one under-occupied
+dominant kernel with no hidden second phase**, exactly the per-CTA-bound schedule the %HBM verdict
+predicts. So both the bandwidth axis (flat %HBM past a 1 GB WS) and the schedule axis (single dominant
+kernel) now agree; **the only owed cross-check is ncu's L2-hit-rate** (privileged box). Tooling decision:
+the AIO image's bare `apt-get install nsight-systems` ships an *incomplete* nsys (missing `QdstrmImporter`
+→ `--stats` fails); install `cuda-nsight-systems-12-9` (pulls a complete 2025.x) from the
+already-configured NVIDIA CUDA repo, and the regime notebook's §10b now auto-finds a complete nsys and
+runs `nsys stats` as a separate step. Data of record: `notebooks/v10_nsys_kernsum.txt`. See `results.md`
+Step 10 "B200 nsys schedule corroboration", `interview-prep.md` C15.

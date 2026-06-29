@@ -1063,3 +1063,19 @@ counter-free / ncu) precisely so I can tell which regime I'm in.**
 "first to run." The contribution is the **open, roofline-documented, prediction-vs-measured sm_103
 decode study with an asymmetric FP4 recipe and a confound-free per-CTA methodology — complementing, not
 beating, FlashInfer/FlashMLA.** The per-CTA-bound verdict is the spine, not a caveat I bury.
+
+**The knee-hunt answered (B200, 2026-06-29) — no knee, and two axes agree.** I ran the regime notebook
+on a B200 (sm_100 dev-rung) past a **1 GB working set** (≫ the measured **132.6 MB** L2): %HBM stayed
+**dead flat ~0.5%** for FP16/FP8/NVFP4 across N_k 8K→2M — **no bandwidth knee even at an 8× L2 overflow**,
+so the counter-prediction lost and the *more surprising* result won: per-CTA-bound to 2M tokens, now
+confound-free on the L2 axis *without* ncu (the 1 GB WS kills the residency confound by construction).
+The cleanest evidence is **architecture-independent**: B=1 achieves ~40 GB/s on *both* T4 and B200 —
+11% of 320 GB/s vs 0.5% of 8 TB/s, a latency ceiling that doesn't scale with the device. And NVFP4 is
+**latency-negative past L2** (12–30% slower than FP16; the dequant ALU sits on the critical path), which
+*definitively* settles NVFP4 = capacity + accuracy, not latency. **Say-this:** "I designed the experiment
+to be able to lose, brute-forced past L2 to remove the confound my T4 result was hedged on, and the
+verdict held on a second architecture." Then the **schedule** axis, via `nsys` (free on the unprivileged
+container — CUPTI trace, no `ERR_NVGPUCTRPERM`): the `nvfp4_partial_kernel` is **99.3% of GPU time**, the
+merge **0.04%** — one under-occupied dominant kernel, no hidden phase, exactly what per-CTA-bound predicts.
+Bandwidth axis (flat %HBM) and schedule axis (single dominant kernel) agree; the only owed cross-check is
+ncu's L2-hit-rate on a privileged box, and it's now belt-and-suspenders, not load-bearing.

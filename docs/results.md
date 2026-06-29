@@ -1539,4 +1539,33 @@ not change). **Outstanding for the paper record:** the sm_103 box + the ncu L2-h
 **privileged/bare-metal** host (vast.ai containers block counters — host kernel-module gate, see
 `docs/v10-b300-runbook.md` §0).
 
+### B200 nsys schedule corroboration (MEASURED 2026-06-29, `notebooks/v10_nsys_kernsum.txt`)
+
+The counter-free %HBM verdict above is a *bandwidth* read; `nsys` adds the orthogonal *schedule* read —
+**which kernels actually run and for how long** — and it works on the unprivileged AIO container (CUPTI
+trace, no `ERR_NVGPUCTRPERM`, unlike ncu). Captured on the B200 with a complete Nsight Systems 2025.3.2
+(the AIO image's first `apt-get install nsight-systems` was an *incomplete* package missing the
+`QdstrmImporter` host-binary → `--stats` failed; fixed with `nsight-systems-cli` / `cuda-nsight-systems-12-9`
+from the already-configured NVIDIA CUDA repo, and §10b of the regime notebook now auto-finds a complete
+nsys + runs `nsys stats` as a separate step). Shape: 100 launches of `v10_nvfp4` @ B=1, H_kv=1, N_k=1M, d=128.
+
+**CUDA GPU Kernel Summary (the per-CTA single-dominant-kernel schedule, confirmed):**
+
+| kernel | Time % | instances | avg | note |
+|---|---|---|---|---|
+| `nvfp4_partial_kernel<32,128>` | **99.3%** | 100 | **14.29 ms** | the split-KV decode (one per launch) |
+| `nvfp4_merge_kernel` | **0.04%** | 100 | 5.6 µs | the LSE merge — a sliver |
+| torch `at::native::` (quant/paging) | ≤0.1% each | 2–8 | one-time | NVFP4 KV-pool build, not attention |
+
+**Read:** the decode is **one dominant compute kernel** — the score-stationary split-KV partial owns
+**99.3% of all GPU time**, the LSE-merge is **~2550× smaller** (0.04%), and there is **no hidden second
+phase**. The torch elementwise/searchsorted/radix-sort/`float8_copy` kernels are the *one-time* NVFP4
+KV-cache quantization (each ≤0.1%, negligible against the 1.43 s of attention — an early truncated read
+that made setup look dominant was a `[-3500:]` tail artifact; the full table clears it). Partial timing
+is rock-steady (std 20 µs on 14.29 ms = **0.14% CV**) → a clean, stable measurement. This is exactly the
+schedule the per-CTA-bound verdict predicts: a single under-occupied kernel (1 active warp at N_q=1, serial
+online-softmax recurrence) doing essentially all the work, with the merge and setup as rounding error. The
+%HBM (bandwidth) and nsys (schedule) reads now agree from both sides; the **ncu L2-hit-rate** remains the
+only owed cross-check, and it needs a privileged/bare-metal box (`docs/v10-b300-runbook.md` §0/§0b).
+
 ---
