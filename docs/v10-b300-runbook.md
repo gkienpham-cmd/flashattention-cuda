@@ -6,7 +6,30 @@ this drives: `notebooks/v10_b300_regime.ipynb` (headline), `v10_b300_exp_ablatio
 `v10_b300_comparators.ipynb` (FlashInfer). Build auto-detects sm_103 (`bindings/load.py` —
 `_detect_arch_flags`), so no manual gencode editing.
 
-## 0. The one thing that decides the session: ncu must work
+## 0. ncu is now belt-and-suspenders — two-pass strategy (UPDATED 2026-06-29)
+
+**The B200 dev-rung already settled the science without ncu**, so ncu no longer *decides* the session.
+The B200 run (1 GB working set ≫ 132.6 MB L2, %HBM flat ~0.5% → per-CTA-bound, confirmed; nsys: partial
+kernel 99.3% of GPU time) killed the L2-residency confound *by construction* and corroborated the
+schedule. The ncu L2-hit-rate is the one *owed* cross-check, but it's now **confirming, not load-bearing.**
+
+**→ Two passes:**
+- **Pass 1 — sm_103 record on an UNPRIVILEGED vast.ai B300 container (cheap, do this first).** Gets the
+  whole deliverable *minus* ncu: arch-measure (sm_103 constants), the counter-free knee-hunt (reproduce
+  flat %HBM on Blackwell Ultra), the **nsys schedule corroboration** (works in a container — no
+  `ERR_NVGPUCTRPERM`), the 2×-exp ablation, and the FlashInfer comparator. This is the bulk of the paper.
+- **Pass 2 — bare-metal B300, ONLY if you want the ncu L2-hit-rate in the paper (optional).** Rent a
+  *bare-metal* B300 where you own the driver module, and do ncu **bundled with a re-confirm of the sm_103
+  record** in the SAME session (don't pay for a privileged box twice). The §0b modprobe flips the gate
+  there; then run regime §10 (ncu) + a quick §6 knee-hunt repeat. The container's `RmProfilingAdminOnly: 1`
+  cannot be flipped from inside (confirmed on vast.ai B200, 2026-06-29 — `rmmod` fails, you're
+  container-root not host-root); only a box you control the kernel on works.
+
+The original "ncu must work / probe-then-keep" method below still applies **to Pass 2 only.**
+
+---
+
+### 0a. (Pass 2) The ncu host gate + probe-then-keep
 
 `ncu`'s `ERR_NVGPUCTRPERM` is a **host kernel-module gate** (`NVreg_RestrictProfilingToAdminUsers`,
 default `=1`), set when the *host* loads the `nvidia` driver. **You cannot fix it from inside a tenant
