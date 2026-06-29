@@ -43,12 +43,14 @@ out = attention(q, k, v, causal=True, backend="v1_naive")  # backend advances as
 ```
 fa_kernels/   importable package: public API, config, dispatch, references
 kernels/      versioned CUDA sources (vN_*) — the journey
+bindings/     load.py — JIT build + arch-gencode auto-detect (T4/A100/B200/B300)
 roofline/     the analysis tool: predict the limiter before each step
-bench/        SDPA / FA-2 / cuDNN comparison harness
+bench/        SDPA / FA-2 / cuDNN comparison harness (+ regime.py for the decode sweeps)
 tests/        correctness vs SDPA (vs FP64 in the quantized phase)
 profiling/    Nsight Compute capture + reading guide
-docs/         results.md (the curve), decisions.md (the log), interview-prep.md (the concept chains), writeup.md (the essay)
-notebooks/    colab_bootstrap.ipynb — clone -> build -> test -> bench on a T4
+docs/         results.md (the curve), decisions.md (the log), interview-prep.md (the concept chains),
+              writeup.md (the essay), diagrams/ (figures), v*-kickoff.md + *-research.md (per-step plans)
+notebooks/    build/test/bench/profile — see notebooks/README.md for the per-step index
 ```
 
 ## Hardware
