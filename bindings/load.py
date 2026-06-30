@@ -35,6 +35,7 @@ _SOURCES = {
     "v9_fp8": ["fp8_attention.cu", "binding.cpp"],
     "v10_nvfp4": ["nvfp4_attention.cu", "binding.cpp"],
     "v11_mla": ["mla_attention.cu", "binding.cpp"],
+    "v12_mla_tc": ["mla_tc_attention.cu", "binding.cpp"],
 }
 
 
@@ -49,6 +50,13 @@ _DEFAULT_ARCH = [
 _ARCH = {
     # Cut 2b's cp.async + mma.m16n8k16 path (when written) is Ampere-only -> sm_80 alone:
     # "v8_gqa_tc_sm80": ["-gencode=arch=compute_80,code=sm_80"],
+    #
+    # v12 (native tcgen05 MLA): the SCAFFOLD here uses no arch-specific features, so the default
+    # _detect_arch_flags (compute_103 on a B300) compiles it. The REAL kernel forks CUTLASS ex77 and
+    # the native-NVFP4 (Arm 2) tcgen05 path is sm_103a-specific -> build it with FA_CUDA_ARCH=103a
+    # (-> -gencode=arch=compute_103a,code=sm_103a) AND add the CUTLASS 4.x include dir, e.g. set
+    # extra_include_paths / nvcc -I$CUTLASS/include + -I$CUTLASS/tools/util/include. Uncomment + edit:
+    # "v12_mla_tc": ["-gencode=arch=compute_103a,code=sm_103a"],
 }
 
 

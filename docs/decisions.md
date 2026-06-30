@@ -1237,3 +1237,47 @@ FlashInfer/FlashMLA" (faster by construction). The methodology itself is **not**
 (arXiv 2505.21487, open roofline-documented MLA decode on H100) → our delta is exactly **sm_103 + KV-quant**.
 Venue path: **PMBS@SC26 / ES-FoMo / IISWC 2027** (characterization venues; top-tier systems would
 desk-reject as a SKU-bump). See `docs/v12-kickoff.md`, `results.md` Step 11 close-out, `interview-prep.md` C17.
+
+## Step 12 — native tcgen05 tensor-core MLA decode (v12_mla_tc) — kickoff (prediction recorded before coding, 2026-06-30)
+
+**The one variable: the compute ENGINE.** v11 proved the MLA decode SHAPE is right (M=128) but measured it
+per-CTA-bound at 0.75 TFLOP/s — ~4× slower than torch dense-MQA, which routes M=128 into a cuBLAS
+tensor-core GEMM while v11 runs warp-per-head CUDA-core GEMV. v12 moves the M=128 QK/PV matmuls onto
+Blackwell **tcgen05 tensor cores** — Arm 1 FP8-dense MMA (M≥64) → Arm 2 native NVFP4 (M≥128/K=256/TN, gated
+on Arm 1). Everything else (split-KV, LSE merge, score-stationary structure, NVFP4 latent pool/layout,
+`choose_splits`) is byte-identical to v11 so the A/B isolates the engine. Build = fork **CUTLASS example 77**
+(`77_blackwell_fmha`, 2-SM `cta_group::2`), NOT the FA4 prefill kernel. Scores/softmax stay ≥ FP16.
+
+**Bottleneck (predicted).** Same NVFP4 storage → AI unchanged (835 @ h_q=128). The engine sets the *ridge*:
+the roofline model gained an `mma_engine` selector (storage `precision` and engine decoupled). Under the
+**engine-correct** ridge on B300 — FP8 625 / NVFP4 1875 — **Arm 1 (FP8) is pure-roofline compute-bound by
+1.34×; Arm 2 (NVFP4) falls BACK to HBM-bound** (AI 835 < 1875; the 15 PF peak overshoots), with softmax-exp
+(measured 0.5×) the #2 term. This **corrects kickoff §1** (which judged both arms against the fixed fp16
+ridge 312.5 → "both MMA"). **Two-layer prediction:** pure roofline as above; **per-CTA-corrected (the real
+one): SMEM-BW / MMA-pipeline-depth-bound either arm** — 1–4 MMAs in flight vs tcgen05's 256–1024, so
+realized TFLOP/s << peak and v12 will NOT beat FlashMLA's ~410 TFLOP/s. **Counter (the prize):** achieved
+TFLOP/s >~10× v11's 0.75 with high %SMEM-BW ⇒ the limiter LEFT per-CTA (first in the v1→v12 arc).
+
+**Options weighed.** (1) **native-FP4-TC engine [CHOSEN]** — the only lever left to close v11's measured 4×
+self-gap; M=128 meets the tcgen05 gate by construction. (2) **speculative q_len>1** — the *fallback*, only
+if M=128 fragments on tcgen05 (redundant since MLA already raised M). (3) **occupancy-v8.8** (~1.4× @ B≥32
+past L2) — not a shape change → fold into v12 residency tuning. (4) **GLA/sparse (DSA/CSA)** → v13. (5)
+**harden-v11-measurement** (ncu/clock-lock/torch-profile) → done *alongside* v12, not a competing kernel.
+
+**Why native-FP4-TC.** It realizes the GEMM v11 localized; the engine is the single unmeasured variable in
+the 4× gap. Risk flagged: CUTLASS ex77 `num_groups` reportedly caps at 32 (not 128) — verify the M=128
+mapping before banking Arm 2 (§9 Q1); Arm 2 may lose to Arm 1 even on TC (TRT-LLM #4412). Honest ceiling:
+v12 **complements, not beats** — the contribution is the open methodology + the measured SMEM-BW shortfall,
+not SOTA latency.
+
+**What changes on another arch.** The M≥128 NVFP4-*compute* gate is `sm_103a`-specific (no `mma.sync` FP4 on
+datacenter Blackwell); the SMEM-BW/pipeline-depth wall is arch-general (a property of single-token decode),
+which is what makes the result transferable. Dev rung B200/sm_100 (FP8 Arm 1); record on B300/sm_103a.
+
+**Status.** Roofline ✅ (model `mma_engine` selector + `--mma-engine` CLI; `results.md` Step 12). Author
+scaffold ✅ — `kernels/v12_mla_tc/` (documented CUTLASS-ex77 fork plan + binding), wiring (`load.py`,
+`dispatch.py` `(10,0)`, `mla_tc_attention()` API, `__init__.py`, harness `--mla-engine` + `vs-v11` A/B,
+regime `--engine`), tests (vs the v11 oracle + absorption identity, tol 5e-2, Blackwell-gated), gate
+notebook `notebooks/v12_mla_tc_gate.ipynb`. GPU work (rented root B300/sm_103a): implement the tcgen05
+body, Gate 1 correctness, the engine A/B + regime sweep, the four honesty debts (ncu/clock-lock/torch-fp16
+profile/2×-exp@M=128), then the quiz. See `docs/v12-kickoff.md`, `results.md` Step 12, `interview-prep.md` C18.

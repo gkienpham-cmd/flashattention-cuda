@@ -19,8 +19,8 @@ import subprocess
 
 import torch
 
-from fa_kernels import (attention, fp8_attention, gqa_attention, mla_attention, nvfp4_attention,
-                        paged_attention)
+from fa_kernels import (attention, fp8_attention, gqa_attention, mla_attention, mla_tc_attention,
+                        nvfp4_attention, paged_attention)
 from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_mla,
                              build_paged_kv_nvfp4, dequantize_fp8_e4m3, dequantize_nvfp4,
                              quantize_fp8_e4m3, quantize_nvfp4)
@@ -101,7 +101,7 @@ def _roofline_tile(backend: str, d: int) -> tuple[int, int]:
 def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
         seq_lens: list[int] | None = None, head_dims: list[int] | None = None,
         decode: bool = False, q_len: int | None = None, page_size: int = 256,
-        gqa_groups: list[int] | None = None) -> None:
+        gqa_groups: list[int] | None = None, mla_engine: str = "fp8") -> None:
     # Default to the full sweep; --seq/--dim narrow it so ncu can profile one shape's 3 passes.
     # In --decode mode the swept N is the KV length and the query length collapses to q_len (1) — the
     # regime v6/v7/v8 decode targets, where the metric shifts to us/token + % HBM bandwidth (research §8).
@@ -114,7 +114,12 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
     is_gqa = backend in ("v8_gqa", "v8_gqa_tc", "v8_gqa_db", "v8_gqa_occ", "v8_gqa_ilp", "v8_gqa_ss", "v9_fp8", "v10_nvfp4")
     is_fp8 = backend == "v9_fp8"   # v9: GQA-class shapes/sweep, but FP8 pools + scales + a quantizing oracle
     is_nvfp4 = backend == "v10_nvfp4"   # v10: GQA-class, but NVFP4 packed pools + micro-scales + scales
-    is_mla = backend == "v11_mla"  # v11: the SHAPE change — ONE shared latent (M=h_q), --dim = DQK
+    is_mla = backend in ("v11_mla", "v12_mla_tc")  # MLA path: ONE shared latent (M=h_q), --dim = DQK
+    is_mla_tc = backend == "v12_mla_tc"  # v12: the ENGINE change — tcgen05 MMA over the SAME latent bytes
+    # v12 engine (Arm 1 fp8 / Arm 2 nvfp4) is the `mla_engine` arg; it sets the roofline ridge (the
+    # engine-correct ridge: FP8 625 / NVFP4 1875 on B300 — results.md Step 12). v11 stays fp16 (the
+    # dequant-to-fp16 path). `precision` keeps its dtype meaning (q tensor dtype), decoupled from the engine.
+    engine = mla_engine if is_mla_tc else "fp16"
     groups = gqa_groups or [1]
     seq_lens = seq_lens or (DECODE_KV_LENS if decode else SEQ_LENS)
     head_dims = head_dims or HEAD_DIMS
@@ -208,8 +213,14 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                     p = torch.softmax(sc - sc.amax(dim=-1, keepdim=True), dim=-1)
                     return torch.matmul(p, lh[..., :dv])
                 base = _mla_base
-                ours = lambda: mla_attention(q, lp, lm, bt_m, page_size, nkm, DV, sl,
-                                             causal=causal, q_offset=q_off, backend=backend)
+                if is_mla_tc:
+                    # v12: SAME latent bytes/oracle as v11; only the inner matmul changes (CUDA-core GEMV
+                    # -> tcgen05 MMA). `engine` picks the arm (fp8 Arm 1 / nvfp4 Arm 2).
+                    ours = lambda eng=engine: mla_tc_attention(q, lp, lm, bt_m, page_size, nkm, DV, sl,
+                                                  engine=eng, causal=causal, q_offset=q_off, backend=backend)
+                else:
+                    ours = lambda: mla_attention(q, lp, lm, bt_m, page_size, nkm, DV, sl,
+                                                 causal=causal, q_offset=q_off, backend=backend)
             elif is_gqa:
                 # v8 reads a PAGED GQA KV (H_kv heads); the oracle expands KV by G (repeat_interleave).
                 base = lambda: sdpa_reference_gqa(q, k, v, causal=causal)
@@ -262,8 +273,10 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                     # MLA: ONE shared latent over all h_q=H heads -> AI = 2*h_q*(2L+R)/((L+R)*b). d=DQK,
                     # DV=kv_lora_rank, R=DQK-DV. The model uses the TC peak (M=h_q>=16 engages it).
                     dv = _MLA_DV[d]
+                    # v12: the engine sets the ridge (FP8/NVFP4 TC peak); v11 uses fp16 (dequant-to-fp16).
                     est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
-                                   mla=True, h_q=H, kv_lora_rank=dv, rope_dim=d - dv)
+                                   mla=True, h_q=H, kv_lora_rank=dv, rope_dim=d - dv,
+                                   mma_engine=engine)
                 else:
                     est = estimate(arch, B=B, H=H, N_q=qn, N_k=N, d=d, precision=rp,
                                    materialize_s=backend in ("v1_naive", "v2_tiled"),
@@ -297,7 +310,16 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # signal is the ABSOLUTE us/tok + %HBM + roofline columns: does MLA leave the ~0.5%-HBM
                 # per-CTA floor GQA decode never left (the T1 deliverable)? So vs_naive is N/A for MLA.
                 try:
-                    if is_mla:
+                    if is_mla_tc:
+                        # v12 baseline = v11 (CUDA-core MLA) on the SAME latent bytes/pools, so the A/B
+                        # isolates the ONE variable: the compute ENGINE (tcgen05 MMA vs CUDA-core GEMV).
+                        # This is the trustworthy same-session, clock-matched "vs v11" engine number — it
+                        # prints under the "vs naive" column for MLA-TC rows (label still B x H ...).
+                        naive = lambda: mla_attention(q, lp, lm, bt_m, page_size, nkm, DV, sl,
+                                                      causal=causal, q_offset=q_off, backend="v11_mla")
+                        n_p50, _ = _time_ms(naive)
+                        vs_naive = n_p50 / o_p50
+                    elif is_mla:
                         vs_naive = float("nan")
                     elif is_fp8 or is_nvfp4:
                         # v9/v10 baseline = v8.7 (score-stationary, FP16 KV) on the SAME GQA shape, so the
@@ -356,6 +378,9 @@ def main() -> None:
                         "over a naive seqlen_q=1 loop (v5_wmma). This is v6 split-KV's home turf.")
     p.add_argument("--q-len", type=int, default=None, dest="q_len",
                    help="query length in --decode mode (default 1); ignored without --decode.")
+    p.add_argument("--mla-engine", default="fp8", choices=["fp8", "nvfp4"], dest="mla_engine",
+                   help="v12_mla_tc only: the tcgen05 arm — fp8 (Arm 1) or nvfp4 (Arm 2). Sets the "
+                        "engine-correct roofline ridge; the 'vs naive' column is vs v11 (engine A/B).")
     p.add_argument("--gqa-group", type=int, nargs="+", default=None, dest="gqa_groups",
                    help="v8 only: sweep the GQA group factor G = H_q/H_kv over these values "
                         "(e.g. --gqa-group 1 2 4 8 16 32). --heads is H_q (held fixed; must be "
@@ -368,7 +393,8 @@ def main() -> None:
         raise SystemExit("no CUDA device; run this on the GPU (Colab T4 / rented box)")
     batches = a.batch_sweep if a.batch_sweep else [a.batch]
     run(a.backend, a.precision, batches, a.heads, a.causal, seq_lens=a.seq, head_dims=a.dim,
-        decode=a.decode, q_len=a.q_len, page_size=a.page_size, gqa_groups=a.gqa_groups)
+        decode=a.decode, q_len=a.q_len, page_size=a.page_size, gqa_groups=a.gqa_groups,
+        mla_engine=a.mla_engine)
 
 
 if __name__ == "__main__":

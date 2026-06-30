@@ -22,3 +22,16 @@ def requires_cuda():
     import torch
     return pytest.mark.skipif(not torch.cuda.is_available(),
                               reason="needs a CUDA GPU (runs on Colab T4 / rented box)")
+
+
+def requires_capability(major: int, minor: int = 0):
+    """Skip marker for arch-gated kernels (e.g. v12 tensor-core MLA needs Blackwell sm_100+). Skips
+    cleanly (rather than erroring on the dispatch capability gate) when no CUDA device is visible OR the
+    current GPU is below (major, minor)."""
+    import torch
+    if not torch.cuda.is_available():
+        return pytest.mark.skipif(True, reason="needs a CUDA GPU (runs on the rented Blackwell box)")
+    have = torch.cuda.get_device_capability()
+    return pytest.mark.skipif(
+        have < (major, minor),
+        reason=f"needs compute capability >= {major}.{minor}; this GPU is {have[0]}.{have[1]}")

@@ -19,12 +19,14 @@ def predict_bottleneck(sm: str, B: int, H: int, N_q: int, N_k: int, d: int,
                        precision: str, materialize_s: bool, use_tensor_core: bool,
                        tile_m: int = 1, tile_n: int = 1, G: int = 1,
                        mla: bool = False, h_q: int = 128,
-                       kv_lora_rank: int = 512, rope_dim: int = 64):
+                       kv_lora_rank: int = 512, rope_dim: int = 64,
+                       mma_engine: str = "fp16"):
     arch = get_arch(sm)
     return arch, estimate(arch, B=B, H=H, N_q=N_q, N_k=N_k, d=d,
                           precision=precision, materialize_s=materialize_s,
                           use_tensor_core=use_tensor_core, tile_m=tile_m, tile_n=tile_n, G=G,
-                          mla=mla, h_q=h_q, kv_lora_rank=kv_lora_rank, rope_dim=rope_dim)
+                          mla=mla, h_q=h_q, kv_lora_rank=kv_lora_rank, rope_dim=rope_dim,
+                          mma_engine=mma_engine)
 
 
 def _parse_shape(s: str) -> tuple[int, int, int, int]:
@@ -62,6 +64,11 @@ def main() -> None:
                    help="MLA: latent content rank L (default 512 = DeepSeek-V2/V3).")
     p.add_argument("--rope-dim", type=int, default=64, dest="rope_dim",
                    help="MLA: decoupled-RoPE key dims R carried alongside the latent (default 64).")
+    p.add_argument("--mma-engine", default="fp16", dest="mma_engine",
+                   choices=["fp16", "fp8", "nvfp4"],
+                   help="MLA only: the COMPUTE engine for the M=128 matmul, independent of --precision "
+                        "(storage). fp16 = v11 dequant-to-fp16 (default). fp8/nvfp4 = v12 native "
+                        "tcgen05 (Arm 1 / Arm 2): sets the ridge to the FP8-TC / NVFP4-TC peak.")
     a = p.parse_args()
 
     B, H, N, d = _parse_shape(a.shape)
@@ -72,13 +79,14 @@ def main() -> None:
                                    a.materialize_s, not a.no_tensor_core,
                                    tile_m=tile_m, tile_n=tile_n, G=a.gqa_group,
                                    mla=a.mla, h_q=a.h_q, kv_lora_rank=a.kv_lora_rank,
-                                   rope_dim=a.rope_dim)
+                                   rope_dim=a.rope_dim, mma_engine=a.mma_engine)
 
     util = est.utilization()
     print(f"arch        : {arch.name} ({arch.sm})")
     if a.mla:
         print(f"shape       : B={B} N_q={N_q} N_k={N_k}  MLA latent (h_q={a.h_q} "
-              f"kv_lora_rank={a.kv_lora_rank} rope_dim={a.rope_dim})  precision={a.precision}")
+              f"kv_lora_rank={a.kv_lora_rank} rope_dim={a.rope_dim})  storage={a.precision}  "
+              f"engine={a.mma_engine}")
     else:
         print(f"shape       : B={B} H={H} N_q={N_q} N_k={N_k} d={d}  precision={a.precision}  "
               f"materialize_S={a.materialize_s}  tile={tile_m}x{tile_n}  G={a.gqa_group}")

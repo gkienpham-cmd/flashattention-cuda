@@ -54,7 +54,8 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
              precision: str = "fp16", materialize_s: bool = False,
              use_tensor_core: bool = True, tile_m: int = 1, tile_n: int = 1,
              G: int = 1, mla: bool = False, h_q: int = 128,
-             kv_lora_rank: int = 512, rope_dim: int = 64) -> RooflineEstimate:
+             kv_lora_rank: int = 512, rope_dim: int = 64,
+             mma_engine: str = "fp16") -> RooflineEstimate:
     # --- MLA (v11) latent-KV decode: the SHAPE change ---
     # MLA (Multi-head Latent Attention) shares ONE low-rank latent KV across all h_q query heads, so
     # decode packs M = h_q (>1, unlike GQA's M=1 single-warp) and reads the latent ONCE for every head.
@@ -76,12 +77,33 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
     if mla:
         nbytes = _BYTES[precision]
         L, R = kv_lora_rank, rope_dim
+        # --- v12: the COMPUTE ENGINE is now a free variable, decoupled from the STORAGE precision ---
+        # v11 (mma_engine="fp16") dequants the fp8/nvfp4 latent to fp16 in smem and runs the matmul on
+        # the fp16 path -> the compute peak is ALWAYS fp16_tc regardless of how the latent is stored.
+        # v12 forks CUTLASS ex77 to run the M=128 QK/PV on native tcgen05 cores, so the peak (and thus
+        # the ridge) becomes the engine's own: FP8-TC (Arm 1) or NVFP4-TC (Arm 2). STORAGE bytes
+        # (`precision`) set the AI; the ENGINE (`mma_engine`) sets the ridge -- the two are independent,
+        # which is the whole point of the v12 A/B (same NVFP4 latent bytes, only the inner matmul changes).
+        # Key consequence the engine-correct ridge exposes (results.md Step 12): native NVFP4 (15 PF,
+        # ridge 1875 on B300) is so fast that even MLA's AI~835 lands BELOW it -> pure roofline flips the
+        # FP4 arm back to HBM-bound, NOT compute-bound; only the FP8 arm (ridge 625) stays compute-bound.
         if precision == "fp32":
             peak = arch.fp32_cuda_flops
         elif precision == "int8":
             peak = arch.int8_tc_ops
-        else:  # fp16/bf16 + fp8/nvfp4 latent storage, dequant-to-fp16 compute on the TC path
-            peak = arch.fp16_tc_flops if use_tensor_core else arch.fp32_cuda_flops
+        elif not use_tensor_core:
+            peak = arch.fp32_cuda_flops
+        elif mma_engine == "fp16":   # v11 dequant-to-fp16 compute path (default; keeps old numbers)
+            peak = arch.fp16_tc_flops
+        elif mma_engine == "fp8":    # v12 Arm 1: native FP8-dense MMA (dequant NVFP4->FP8 at smem)
+            peak = arch.fp8_tc_flops
+        elif mma_engine == "nvfp4":  # v12 Arm 2: native NVFP4 block-scaled MMA (M>=128, K=256, TN)
+            peak = arch.fp4_tc_flops
+        else:
+            raise ValueError(f"unknown mma_engine {mma_engine!r}; use fp16|fp8|nvfp4")
+        if peak is None:
+            raise ValueError(f"arch {arch.sm} has no {mma_engine!r} tensor-core peak defined "
+                             f"(native FP8/NVFP4 engines are only filled for Blackwell B200/B300)")
         mma_flops = 2.0 * B * h_q * N_q * N_k * (L + R)   # QK^T over (L+R)
         mma_flops += 2.0 * B * h_q * N_q * N_k * L         # PV over L (RoPE carries no value)
         t_mma = mma_flops / peak

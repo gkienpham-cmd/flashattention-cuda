@@ -1983,3 +1983,92 @@ on sm_103 (MHA→GQA→MLA, FP16→FP8→NVFP4)"* — **complementing, not beati
 Closest prior work = Tri Dao's GLA (arXiv 2505.21487, open roofline-documented MLA decode on H100) — our
 delta is exactly **sm_103 + KV-quant**. Venue path: PMBS@SC26 / ES-FoMo / IISWC 2027 (not top-tier systems;
 the methodology itself is not novel — only its application to this empty cell). See `interview-prep.md` C17.
+
+---
+
+## Step 12 — native tcgen05 tensor-core MLA decode (v12_mla_tc) — PREDICTION (recorded before coding, 2026-06-30)
+
+v12 forks v11 (CUDA-core MLA) changing **one variable — the compute ENGINE**: the M=128 QK/PV matmuls
+move from a warp-per-head CUDA-core GEMV onto **Blackwell tcgen05 tensor cores**, first in FP8 (Arm 1),
+then native NVFP4 (Arm 2). Build = fork **CUTLASS example 77** (`77_blackwell_fmha`, the weight-absorbed
+latent-512/rope-64 MLA *decode* kernel, 2-SM `cta_group::2`) — NOT the FA4 prefill kernel. Split-KV / LSE
+merge / score-stationary structure / NVFP4 latent storage / pool layout stay **byte-identical to v11** so
+the A/B isolates the engine. **Motivated by v11's measured 4× gap** (torch dense-MQA routes M=128 into a
+cuBLAS TC GEMM and beats our CUDA-core GEMV ~4×): the only lever left to close that self-gap is the TC path.
+
+### The recorded roofline — the engine sets the RIDGE; storage (unchanged) sets the AI
+
+v12 keeps the NVFP4 latent storage (0.5625 B/elem), so **AI is identical to v11**: B300/sm_103, h_q=128,
+N_q=1, N_k=8192 → **AI = 835.0** (`python -m roofline.predict --arch sm_103 --shape 1x128x1x512 --kv-len
+8192 --mla --h-q 128 --precision nvfp4 --mma-engine {fp8,nvfp4}`). What the engine swap moves is the
+**ridge** (compute peak ÷ 8 TB/s). The roofline model gained an `mma_engine` selector so STORAGE
+(`--precision`) and ENGINE (`--mma-engine`) are now independent — the whole point of the v12 A/B.
+
+| B300 engine | peak | ridge (FLOP/B) | AI 835 vs ridge | pure-roofline limiter |
+|---|---|---|---|---|
+| fp16-TC (what v11 *ran*, dequant-to-fp16) | 2.5 PF | 312.5 | 2.67× above | MMA (but CUDA-core never reached it → per-CTA) |
+| **FP8-TC (Arm 1)** | 5 PF | **625** | **1.34× above** | **compute-bound (FP8 MMA)** — knife-edge |
+| **NVFP4-TC (Arm 2)** | 15 PF | **1875** | **0.45× below** | **HBM-bound** — the 15 PF engine overshoots |
+
+**Engine-ridge refinement (correction of `docs/v12-kickoff.md` §1).** The kickoff §1 table judged every
+AI against the *fixed* fp16-TC ridge 312.5 (the v11 framing, because v11 ran fp16 compute) → "both fp8 &
+nvfp4 past the ridge → MMA". For v12 the engine **is** the changed variable, so each arm must be judged
+against **its own engine ridge**. Under that correct comparison **only the FP8 arm is pure-roofline
+compute-bound; the native-FP4 arm falls BACK to HBM-bound** — the 15 PF FP4 peak is too high to saturate
+at decode AI 835 (FP4 compute becomes the *smallest* of the three terms, t_mma util 44.5%). Verified in
+the tool: Arm 1 → LIMITER MMA (ridge 625, t_hbm util 74.8% = 1/1.34); Arm 2 → LIMITER HBM (ridge 1875,
+t_mma util 44.5% = 835/1875).
+
+### exp (MUFU) — the fast engine exposes softmax (sets up §9 Q3)
+
+At M=1 GQA decode the exp term was <3% (slow CUDA-core MMA dominated). A fast TC engine shrinks t_mma
+~6× (fp16→fp4) while t_mufu is unchanged, so the **exp share rises**. Per-resource times at the bench
+shape (exp_count = 1·128·1·8192 = 1.05e6; mma_flops = 2.28e9; hbm_bytes = 2.73e6 B):
+
+| term | time | note |
+|---|---|---|
+| t_hbm | 3.42e-7 s | NVFP4 latent read once |
+| t_mma (FP8, 5 PF) | 4.56e-7 s | Arm 1 limiter |
+| t_mma (NVFP4, 15 PF) | 1.52e-7 s | Arm 2 — *smallest* term |
+| t_mufu (model fallback 13.1 TExp/s) | 0.80e-7 s | the tool's number |
+| t_mufu (**measured** B300 EX2 5.33 TExp/s, 0.5×) | **1.97e-7 s** | **exceeds t_mma-fp4 (1.52e-7)** |
+
+So **Arm 2 ordering (measured exp): HBM (3.42e-7) > exp (1.97e-7) > FP4-compute (1.52e-7)** — the exp
+term, irrelevant at M=1, becomes the **#2 limiter** behind HBM once the engine is native FP4. **Arm 1
+ordering: FP8-compute (4.56e-7) > HBM (3.42e-7) > exp (1.97e-7)** — stays MMA-bound. This is exactly why
+§9 Q3 (re-ablate 2×-exp at M=128) matters now: the fast engine, not M alone, is what surfaces the exp term.
+
+### Two-layer prediction (the honesty constraint — v11 measured per-CTA-bound at 0.75 TFLOP/s)
+
+- **Pure roofline (layer 1):** Arm 1 → compute-bound (FP8 MMA, 1.34×); Arm 2 → **HBM-bound** (0.45×) +
+  exp-significant. The "headline" native-FP4 engine does NOT make decode compute-bound — under its own
+  ridge it overshoots into HBM-bound. **The FP4 peak is doubly unreachable for single-token decode.**
+- **Per-CTA-corrected (layer 2 — the prediction I actually believe):** single-token decode carries only
+  **1–4 MMAs in flight** per CTA; the tcgen05 pipeline wants **256–1024** to saturate. So even on tensor
+  cores, v12 is predicted **SMEM-bandwidth / MMA-pipeline-depth-bound** — realized throughput well below
+  the FP8/FP4 peak, below even the HBM roof. **v12 will NOT reach the FP4 FLOP peak and will NOT beat
+  FlashMLA's ~410 TFLOP/s decode** (~3 orders above v11's 0.75). The shortfall — *why even the right
+  engine can't fill a decode CTA* — IS the paper-grade result. Frame as **complementing, not beating**.
+- **Counter-prediction (the prize, either sign publishable):** if measured achieved-TFLOP/s climbs
+  **>~10× v11's 0.75** with high %SMEM-BW → the limiter finally **LEFT per-CTA** (first in the v1→v12 arc).
+  If it stays pinned at the per-CTA floor → *even the right engine can't fill a single-token decode CTA*
+  → motivates speculative q_len>1 (the fallback shape lever).
+
+### §9 questions — answered as roofline predictions (resolve on the dev rung BEFORE banking Arm 2)
+
+1. **Q1 — does M=128 pack as ONE tcgen05 GEMM?** v11 validated it *indirectly* (cuBLAS 4× on the shape),
+   never directly. **Build risk:** CUTLASS ex77's realized M-blocking `num_groups` is reportedly capped at
+   **32**, not 128 — verify the head-count→M=128 tile mapping on the target CUTLASS version before banking
+   the native-FP4 arm. If M splits, RoPE must split the **K-dim** (extra small-K=64 GEMM), not the M-tile.
+2. **Q2 — does the limiter flip, or rename to SMEM-BW?** *Predict: renames to SMEM-BW / pipeline-depth*,
+   not a clean compute flip. This is the deliverable: measure achieved TFLOP/s + the SMEM-load-cycles vs
+   math-cycles ratio (ncu `smsp__inst_executed_pipe_tensor` + `l1tex` SMEM throughput).
+3. **Q3 — sm_103 2×-exp at M=128.** v10/v11 measured EX2 = 5.33 TExp/s = 0.50× the 10.7 claim, but at M=1
+   (<3% of decode) → irrelevant. The table above shows that at M=128 with a native FP4 engine the exp term
+   becomes the #2 limiter → **re-ablate at M=128**; a clean answer completes the FA4-footnote engagement.
+
+**Status:** PREDICTION recorded (loop Step 1). Roofline ✅ · model/CLI engine selector ✅ · kernel + wiring
+scaffold (author machine) → GPU build/correctness/bench/profile on a rented root/bare-metal B300/sm_103a
+(CUDA 12.9+, CUTLASS 4.x). Step-by-step GPU guide: **`docs/v12-b300-runbook.md`** (implement → build →
+correctness → engine A/B → regime → the 4 honesty debts). See `docs/v12-kickoff.md`, `decisions.md`
+Step 12, `interview-prep.md` C18.

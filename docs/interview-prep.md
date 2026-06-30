@@ -1190,3 +1190,50 @@ methodology itself isn't novel — only its application to this empty cell. Clos
 (arXiv 2505.21487), an open roofline-documented MLA decode study on H100; my whole delta is **sm_103 +
 KV-quant**. **Say-this:** "I can name the single paper that's closest to mine and the two axes that separate
 us — that's the related-work slide that makes a reviewer trust the rest."
+
+---
+
+## C18 — v12: change the engine, and watch the FP4 peak become unreachable two different ways
+
+**The setup in one breath.** v11 left me a clean, measured problem: the MLA decode shape is right (M=128) but
+my CUDA-core kernel runs it as warp-per-head GEMV and lands 4× behind torch's cuBLAS tensor-core GEMM. v12
+changes exactly one variable — the compute engine — by forking CUTLASS example 77 onto tcgen05 tensor cores
+(FP8, then native NVFP4). **Say-this:** "Same shape, same bytes, same split-KV and merge — the only thing
+that moves is what does the matmul. That's the cleanest A/B I've run."
+
+**The roofline subtlety I'd lead with (and it's a correction to my own kickoff).** The AI doesn't change —
+storage is still NVFP4, so AI stays 835 at h_q=128. What the engine changes is the *ridge*: peak ÷ bandwidth.
+My kickoff table compared every AI against the fp16 ridge (312.5) because that's what v11 ran. But for v12 the
+engine IS the variable, so I have to judge each arm against its OWN ridge — FP8 625, NVFP4 1875. Do that and
+something nice falls out: **the FP8 arm is compute-bound by 1.34×, but the native-FP4 arm flips BACK to
+HBM-bound** — the 15 PF FP4 peak is so high that even AI 835 can't keep it fed, so FP4 compute becomes the
+*smallest* of the three terms. **Say-this:** "The headline FP4 engine, in pure roofline, doesn't make decode
+compute-bound — it overshoots into memory-bound. The peak is too big for the workload."
+
+**Two ways the FP4 peak stays unreachable — that's the whole result.** Layer 1 (pure roofline): HBM caps the
+FP4 arm before compute even bites. Layer 2 (per-CTA-corrected, the one I believe): single-token decode carries
+1–4 MMAs in flight against a pipeline that wants 256–1024, so it's SMEM-bandwidth / pipeline-depth-bound
+*below* even the HBM roof. So the FP4 peak is doubly out of reach. **Say-this:** "I'm pre-registering that
+even the right engine won't reach the FP4 FLOP peak and won't beat FlashMLA's ~410 TFLOP/s — and the measured
+shortfall, why even tensor cores can't fill a decode CTA, is exactly the open cell no production kernel
+publishes."
+
+**The exp term wakes up — and that's why Q3 matters now.** At M=1 the softmax exp was <3% because the slow
+CUDA-core MMA dwarfed it. A fast TC engine shrinks t_mma ~6× while t_mufu is unchanged, so with the *measured*
+B300 EX2 rate (0.5× the vendor claim) the exp term actually exceeds FP4 compute — it becomes the #2 limiter
+behind HBM on the NVFP4 arm. **Say-this:** "The 2×-exp claim was irrelevant at M=1; at M=128 with a real
+engine it surfaces — so I re-ablate it at M=128, which is where FA4's own prefill footnote would actually
+bite."
+
+**The counter-prediction is the part I'd actually be excited to measure.** If achieved TFLOP/s climbs past
+~10× v11's 0.75 with high %SMEM-BW, the limiter finally left per-CTA for the first time in the whole arc. If
+it stays pinned, then single-token decode is intrinsically per-CTA-bound regardless of engine, and the next
+lever is the shape again (speculative q_len>1). **Say-this:** "Either sign is publishable — I'm not betting on
+a win, I'm characterizing a ceiling, and I wrote down both outcomes before building."
+
+**Honest scope (so I survive the hostile reviewer, carried from C17).** Not first-to-run, not beat-anyone —
+FlashInfer/FlashMLA ship B300 decode and are faster by construction. The defensible claim is the open,
+prediction-vs-measured roofline characterization across MHA→GQA→MLA and FP16→FP8→NVFP4 on sm_103, and v12's
+specific contribution is the measured tensor-core *shortfall* + the engine-correct two-ridge story. **Say-this:**
+"v12 complements the production kernels — it explains why the FP4 peak is unreachable for decode, which is a
+result, not a loss."

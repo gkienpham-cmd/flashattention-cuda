@@ -50,6 +50,13 @@ _MIN_CAPABILITY = {
                           # storage carried byte-identical from v10), so (7, 0) builds on T4/Colab for the
                           # correctness + capacity + accuracy gate. The native FP4 tcgen05 compute arm
                           # (M>=128 ONE GEMM) would gate sm_103a and is deferred (kickoff §9 Q1/Q2).
+    "v12_mla_tc": (10, 0),# v12: forks v11 changing the ENGINE — the M=h_q QK/PV matmuls move from
+                          # CUDA-core GEMV onto Blackwell tcgen05 tensor cores (Arm 1 FP8 MMA M>=64;
+                          # Arm 2 native NVFP4 MMA M>=128/K=256/TN, gated on Arm 1). NVFP4 latent storage
+                          # carried byte-identical from v11 so the A/B isolates the engine. FIRST backend
+                          # past (7,0): tensor-core MLA needs Blackwell (sm_100 dev rung / sm_103 record);
+                          # it will NOT run on T4/A100. Arm 2's native-FP4 path is sm_103a-specific and is
+                          # gated inside the kernel/host at runtime (build risk §9 Q1: ex77 num_groups).
 }
 
 

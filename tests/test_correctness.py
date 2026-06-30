@@ -15,9 +15,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from conftest import requires_cuda
-from fa_kernels import (attention, fp8_attention, gqa_attention, mla_attention, nvfp4_attention,
-                        paged_attention)
+from conftest import requires_capability, requires_cuda
+from fa_kernels import (attention, fp8_attention, gqa_attention, mla_attention, mla_tc_attention,
+                        nvfp4_attention, paged_attention)
 from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_mla,
                               build_paged_kv_nvfp4)
 from fa_kernels.reference import (sdpa_reference, sdpa_reference_gqa, sdpa_reference_gqa_fp8,
@@ -89,6 +89,11 @@ _TOL = {
     # dequant); the apples-to-apples oracle (sdpa_reference_mla, dequantizing the SAME latent bytes) is
     # compared at 5e-2, same as v10.
     "v11_mla": (5e-2, 5e-2),
+    # v12_mla_tc forks v11 changing only the compute ENGINE (CUDA-core GEMV -> tcgen05 tensor cores;
+    # Arm 1 FP8 MMA, Arm 2 native NVFP4 MMA). Same NVFP4 latent storage + same apples-to-apples oracle
+    # (sdpa_reference_mla); the engine adds tensor-core FP8/FP4 rounding on top of the FP16-in + NVFP4
+    # dequant class, so it keeps v11's 5e-2 band (scores/softmax stay >= FP16).
+    "v12_mla_tc": (5e-2, 5e-2),
 }
 
 # GQA backends exercised by the v8 cases below: Cut 1 (CUDA-core), Cut 2a (Turing WMMA), and v8.5
@@ -650,4 +655,98 @@ def test_v11_mla_absorption_identity(h_q):
     ref = sdpa_reference_mla_materialized(q_nope, q_rope, latent, L, W_UK, W_UV,
                                           causal=False, scale=scale)            # [B,h_q,1,Dv]
     atol, rtol = tol_for(MLA_BACKEND)
+    torch.testing.assert_close(o_full, ref, atol=atol, rtol=rtol)
+
+
+# --- v12 native tensor-core MLA latent-KV decode ----------------------------------------------------
+# v12 forks v11 changing ONE variable — the compute ENGINE: the M=h_q QK/PV matmuls run on Blackwell
+# tcgen05 tensor cores instead of v11's warp-per-head CUDA-core GEMV. Storage, paged layout, split-KV,
+# and the LSE merge are byte-identical to v11, so the SAME build_paged_kv_mla pools + sdpa_reference_mla
+# oracle apply (apples-to-apples at 5e-2). `engine` picks the arm: "fp8" (Arm 1, M>=64) or "nvfp4"
+# (Arm 2, native block-scaled MMA, M=h_q>=128). REQUIRES Blackwell (sm_100 dev rung / sm_103 record) —
+# these skip on T4/A100. The nvfp4 arm only runs at h_q>=128 (the tcgen05 block-scaled gate).
+MLA_TC_BACKEND = "v12_mla_tc"
+
+
+@requires_capability(10, 0)
+@pytest.mark.parametrize("engine", ["fp8", "nvfp4"])
+@pytest.mark.parametrize("N_k", [4096, 8190])              # 8190 -> non-multiple last page/split
+@pytest.mark.parametrize("h_q", [16, 64, 128])            # M-packing range; nvfp4 arm needs h_q>=128
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("seed", [9, 17])
+def test_v12_mla_tc_decode(seed, causal, h_q, N_k, engine):
+    if engine == "nvfp4" and h_q < 128:
+        pytest.skip("native NVFP4 MMA (Arm 2) gates M=h_q>=128 (tcgen05 block-scaled)")
+    torch.manual_seed(seed)
+    B = 1
+    L, R = 64, 32                       # small latent (DQK=96, DV=64) — fast sweep
+    DQK = L + R
+    page_size = 128
+    q = torch.randn(B, h_q, 1, DQK, device="cuda", dtype=torch.float32)        # q_absorbed
+    latent = torch.randn(B, 1, N_k, DQK, device="cuda", dtype=torch.float32)   # ONE shared latent head
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=seed)
+    q_offset = (n_k - 1) if causal else 0
+    out = mla_tc_attention(q, lp, lm, bt, page_size, n_k, L, sl, engine=engine,
+                           causal=causal, q_offset=q_offset, backend=MLA_TC_BACKEND)
+    # Apples-to-apples: kernel vs MQA-over-latent on the SAME dequantized NVFP4 latent (same scale).
+    # v12 changed only the engine, so it must match v11's oracle within the same band.
+    ref = sdpa_reference_mla(q, latent, L, causal=False)
+    atol, rtol = tol_for(MLA_TC_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+    assert torch.isfinite(out).all(), "v12 MLA-TC output has non-finite entries"
+
+
+@requires_capability(10, 0)
+@pytest.mark.parametrize("engine", ["fp8", "nvfp4"])
+@pytest.mark.parametrize("N_k", [4096, 8190])
+def test_v12_mla_tc_real_shape(N_k, engine):
+    # The real DeepSeek-V3 latent (576, 512) at h_q=128 — the production shape the tcgen05 kernel targets
+    # (M=128 meets both the FP8 M>=64 and the NVFP4 M>=128 gates).
+    torch.manual_seed(7)
+    B, h_q, L, R = 1, 128, 512, 64
+    DQK = L + R
+    page_size = 128
+    q = torch.randn(B, h_q, 1, DQK, device="cuda", dtype=torch.float32)
+    latent = torch.randn(B, 1, N_k, DQK, device="cuda", dtype=torch.float32)
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=7)
+    out = mla_tc_attention(q, lp, lm, bt, page_size, n_k, L, sl, engine=engine,
+                           causal=False, q_offset=0, backend=MLA_TC_BACKEND)
+    ref = sdpa_reference_mla(q, latent, L, causal=False)
+    atol, rtol = tol_for(MLA_TC_BACKEND)
+    torch.testing.assert_close(out, ref, atol=atol, rtol=rtol)
+
+
+@requires_capability(10, 0)
+@pytest.mark.parametrize("engine", ["fp8", "nvfp4"])
+def test_v12_mla_tc_absorption_identity(engine):
+    # The MLA absorption identity (kickoff §9 Q4) must still hold once the engine is tensor cores: the
+    # latent-ABSORBED kernel equals EXPLICIT per-head materialization. h_q=128 so both arms are valid.
+    torch.manual_seed(5)
+    B, N_k, h_q = 1, 4096, 128
+    Dn, R, L, Dv = 48, 32, 64, 40       # DQK = L+R = 96 (small template)
+    DQK = L + R
+    page_size = 128
+    scale = 1.0 / (DQK ** 0.5)
+
+    q_nope = torch.randn(B, h_q, 1, Dn, device="cuda", dtype=torch.float32)
+    q_rope = torch.randn(B, h_q, 1, R,  device="cuda", dtype=torch.float32)
+    c_latent = torch.randn(B, 1, N_k, L, device="cuda", dtype=torch.float32)
+    rope_k   = torch.randn(B, 1, N_k, R, device="cuda", dtype=torch.float32)
+    W_UK = torch.randn(h_q, Dn, L, device="cuda", dtype=torch.float32) / (L ** 0.5)
+    W_UV = torch.randn(h_q, Dv, L, device="cuda", dtype=torch.float32) / (L ** 0.5)
+
+    latent = torch.cat([c_latent, rope_k], dim=-1)
+    q_abs_content = torch.einsum("bhnd,hdl->bhnl", q_nope, W_UK)
+    q_absorbed = torch.cat([q_abs_content, q_rope], dim=-1)
+
+    lp, lm, bt, n_k, sl = build_paged_kv_mla(latent, page_size, seed=5)
+    o_latent = mla_tc_attention(q_absorbed, lp, lm, bt, page_size, n_k, L, sl, engine=engine,
+                                scale=scale, causal=False, q_offset=0, backend=MLA_TC_BACKEND)
+    o_full = torch.einsum("bhnl,hdl->bhnd", o_latent, W_UV)
+
+    ref = sdpa_reference_mla_materialized(q_nope, q_rope, latent, L, W_UK, W_UV,
+                                          causal=False, scale=scale)
+    atol, rtol = tol_for(MLA_TC_BACKEND)
     torch.testing.assert_close(o_full, ref, atol=atol, rtol=rtol)

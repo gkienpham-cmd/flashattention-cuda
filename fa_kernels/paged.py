@@ -29,6 +29,7 @@ DEFAULT_GQA_BACKEND = "v8_gqa"
 DEFAULT_FP8_BACKEND = "v9_fp8"
 DEFAULT_NVFP4_BACKEND = "v10_nvfp4"
 DEFAULT_MLA_BACKEND = "v11_mla"
+DEFAULT_MLA_TC_BACKEND = "v12_mla_tc"
 
 # Max magnitude representable by FP8 E4M3 (e4m3fn: no inf, max normal 448). Per-tensor scale maps the
 # tensor's amax onto this so the full dynamic range is used. (int8-symmetric fallback would use 127.)
@@ -337,6 +338,42 @@ def mla_attention(q, l_pack, l_micro, block_table, page_size, n_k, kv_lora_rank,
     module = get_backend(backend)
     return module.forward(q, l_pack, l_micro, block_table, int(page_size), int(n_k),
                           int(kv_lora_rank), float(scale_l), scale, causal, int(q_offset))
+
+
+_MLA_TC_ENGINES = {"fp8": 0, "nvfp4": 1}
+
+
+def mla_tc_attention(q, l_pack, l_micro, block_table, page_size, n_k, kv_lora_rank, scale_l, *,
+                     engine: str = "fp8", scale: float | None = None, causal: bool = False,
+                     q_offset: int = 0, backend: str = DEFAULT_MLA_TC_BACKEND):
+    """Native tensor-core MLA latent-KV decode (v12). Forks `mla_attention` (v11) changing ONE variable
+    — the compute ENGINE: the M=h_q QK/PV matmuls run on Blackwell tcgen05 tensor cores instead of v11's
+    warp-per-head CUDA-core GEMV. Storage, paged layout, split-KV, and the LSE merge are byte-identical to
+    v11 (the SAME `build_paged_kv_mla` pools, same `sdpa_reference_mla` oracle), so this is a clean
+    ENGINE-only A/B vs `mla_attention`. Motivated by v11's measured 4× gap vs cuBLAS-TC dense-MQA
+    (results.md Step 11/12).
+
+    `engine` selects the tcgen05 arm:
+        "fp8"   (Arm 1) — dequant the NVFP4 latent to FP8 at the SMEM stage, FP8-dense MMA (gate M≥64).
+        "nvfp4" (Arm 2) — native NVFP4 block-scaled MMA (gate M=h_q≥128, K=256, TN-only; sm_103a). Gated
+                          on Arm 1 working; may lose to Arm 1 even on TC (TRT-LLM #4412).
+    Scores/softmax stay ≥ FP16 either way (FP4 scores collapse softmax — proven in v10).
+
+    Inputs/shapes are identical to `mla_attention` (build with `build_paged_kv_mla`); returns O_latent
+    [B, H_q, N_q, kv_lora_rank] (FP32). Requires a Blackwell GPU (sm_100 dev rung / sm_103 record) — the
+    dispatch gate refuses it on T4/A100. Default `scale` is 1/sqrt(DQK); pass the model's MLA scale
+    explicitly for a real model (kernel and oracle must agree).
+    """
+    from .dispatch import get_backend
+
+    if engine not in _MLA_TC_ENGINES:
+        raise ValueError(f"engine must be one of {sorted(_MLA_TC_ENGINES)}; got {engine!r}")
+    if scale is None:
+        scale = 1.0 / (q.shape[-1] ** 0.5)
+    module = get_backend(backend)
+    return module.forward(q, l_pack, l_micro, block_table, int(page_size), int(n_k),
+                          int(kv_lora_rank), float(scale_l), scale, causal, int(q_offset),
+                          int(_MLA_TC_ENGINES[engine]))
 
 
 def gqa_attention(q, k_pool, v_pool, block_table, page_size, n_k, *,

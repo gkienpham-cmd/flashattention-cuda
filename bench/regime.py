@@ -144,11 +144,12 @@ def time_ms_l2flush(fn, flush_buf=None, *, warmup: int = 10, iters: int = 50) ->
 _MLA_DV = {96: 64, 160: 128, 576: 512}
 
 
-def _build_ours(backend, q, k, v, page_size, q_off):
+def _build_ours(backend, q, k, v, page_size, q_off, engine="fp8"):
     """Construct the timed decode-kernel lambda for `backend`, plus a human note. FP8 pools are uint8;
-    NVFP4 pools are packed nibbles + per-16 E4M3 micro-scales (both uint8). For v11_mla, `k` carries the
-    single latent [B,1,N,DQK] (`v` unused) and the DV is read from _MLA_DV[DQK=k.shape[-1]]."""
-    from fa_kernels import fp8_attention, gqa_attention, mla_attention, nvfp4_attention
+    NVFP4 pools are packed nibbles + per-16 E4M3 micro-scales (both uint8). For v11_mla/v12_mla_tc, `k`
+    carries the single latent [B,1,N,DQK] (`v` unused) and the DV is read from _MLA_DV[DQK=k.shape[-1]].
+    `engine` selects the v12 tcgen05 arm (fp8 / nvfp4); ignored by every other backend."""
+    from fa_kernels import fp8_attention, gqa_attention, mla_attention, mla_tc_attention, nvfp4_attention
     from fa_kernels.paged import (build_paged_kv, build_paged_kv_fp8, build_paged_kv_mla,
                                   build_paged_kv_nvfp4)
 
@@ -166,6 +167,12 @@ def _build_ours(backend, q, k, v, page_size, q_off):
         lp, lm, bt, nk, sl = build_paged_kv_mla(latent, page_size)
         return lambda: mla_attention(q, lp, lm, bt, page_size, nk, DV, sl,
                                      causal=False, q_offset=q_off, backend=backend)
+    if backend == "v12_mla_tc":
+        latent = k                                       # SAME latent bytes as v11 (engine-only A/B)
+        DV = _MLA_DV[latent.shape[-1]]
+        lp, lm, bt, nk, sl = build_paged_kv_mla(latent, page_size)
+        return lambda: mla_tc_attention(q, lp, lm, bt, page_size, nk, DV, sl, engine=engine,
+                                        causal=False, q_offset=q_off, backend=backend)
     kp, vp, bt, nk = build_paged_kv(k, v, page_size)
     return lambda: gqa_attention(q, kp, vp, bt, page_size, nk,
                                  causal=False, q_offset=q_off, backend=backend)
@@ -173,7 +180,7 @@ def _build_ours(backend, q, k, v, page_size, q_off):
 
 def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 1,
           page_size: int = 256, max_ws_gb: float = 8.0, l2_flush: bool = True,
-          warmup: int = 10, iters: int = 50) -> list[dict]:
+          warmup: int = 10, iters: int = 50, engine: str = "fp8") -> list[dict]:
     """Clock-locked (if the caller locked), L2-flushed KV-length sweep. Returns structured rows so a
     notebook can plot HBM%/eff_bw vs N_k in-process. KV is FP16 (b=2) for v8_gqa_ss, FP8 (b=1) for
     v9_fp8 — the L2 crossing for FP8 sits at ~2x the N_k (a built-in cross-check)."""
@@ -183,7 +190,7 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
 
     is_fp8 = backend == "v9_fp8"
     is_nvfp4 = backend == "v10_nvfp4"
-    is_mla = backend == "v11_mla"   # v11: ONE shared latent (read once), --dim = DQK; NVFP4-stored
+    is_mla = backend in ("v11_mla", "v12_mla_tc")   # MLA: ONE shared latent (read once), --dim = DQK; NVFP4-stored
     # KV bytes/elem: FP16=2, FP8=1, NVFP4=0.5625 (4-bit nibble + per-16 E4M3 micro-scale — count the
     # scale, or the working-set/eff_bw/%HBM numbers and the L2-crossing point are wrong).
     b_bytes = 0.5625 if (is_nvfp4 or is_mla) else (1 if is_fp8 else 2)
@@ -230,7 +237,7 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
                         else:
                             k = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
                             v = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
-                        ours = _build_ours(backend, q, k, v, page_size, q_off=0)
+                        ours = _build_ours(backend, q, k, v, page_size, q_off=0, engine=engine)
                         p50, _ = time_ms_l2flush(ours, flush, warmup=warmup, iters=iters)
                     except RuntimeError as e:                       # OOM or build failure
                         print(f"  # skip B{B} H_kv{H_kv} d{d} N{N}: {type(e).__name__} {str(e)[:60]}")
@@ -259,7 +266,7 @@ def sweep(backend: str, kv_lens, batches, head_dims, h_kvs, *, gqa_group: int = 
 
 
 def profile_one(backend: str, B: int, H_kv: int, N: int, d: int, *, gqa_group: int = 1,
-                page_size: int = 256, iters: int = 100) -> None:
+                page_size: int = 256, iters: int = 100, engine: str = "fp8") -> None:
     """Build ONE shape and loop the kernel `iters` times (no timing) so an external `ncu` can attach to
     exactly this config and read L2 hit-rate / DRAM%. Mirrors how profiling/capture.sh pins one shape."""
     import torch
@@ -267,13 +274,13 @@ def profile_one(backend: str, B: int, H_kv: int, N: int, d: int, *, gqa_group: i
     dev = torch.device("cuda")
     H_q = gqa_group * H_kv
     q = torch.randn(B, H_q,  1, d, device=dev, dtype=torch.float16)
-    if backend == "v11_mla":
+    if backend in ("v11_mla", "v12_mla_tc"):
         k = torch.randn(B, 1, N, d, device=dev, dtype=torch.float16)   # the shared latent (one head)
         v = k                                                          # unused by MLA
     else:
         k = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
         v = torch.randn(B, H_kv, N, d, device=dev, dtype=torch.float16)
-    ours = _build_ours(backend, q, k, v, page_size, q_off=0)
+    ours = _build_ours(backend, q, k, v, page_size, q_off=0, engine=engine)
     for _ in range(iters):
         ours()
     torch.cuda.synchronize()
@@ -284,8 +291,11 @@ def main() -> None:
     p = argparse.ArgumentParser(description="v9 Task 1 — clock-locked, L2-flushed decode regime sweep.")
     p.add_argument("--backend", default="v8_gqa_ss",
                    help="decode kernel to characterize (v8_gqa_ss = FP16, v9_fp8 = FP8 KV, "
-                        "v10_nvfp4 = NVFP4 KV, v11_mla = MLA latent-KV — use --dim 576 for the real "
-                        "DeepSeek-V3 latent; the T1 crossover deliverable).")
+                        "v10_nvfp4 = NVFP4 KV, v11_mla = MLA latent-KV, v12_mla_tc = tensor-core MLA "
+                        "(set --engine) — use --dim 576 for the real DeepSeek-V3 latent; the T1 "
+                        "crossover deliverable).")
+    p.add_argument("--engine", default="fp8", choices=["fp8", "nvfp4"],
+                   help="v12_mla_tc only: the tcgen05 arm — fp8 (Arm 1) or nvfp4 (Arm 2). Ignored otherwise.")
     p.add_argument("--kv-lens", type=int, nargs="+", dest="kv_lens",
                    default=[1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
                    help="KV lengths to sweep (crosses the 4 MB L2 around N_k=8192 for B1/H_kv1/d128).")
@@ -317,7 +327,8 @@ def main() -> None:
 
     if a.profile:
         B, H_kv, N, d = (int(x) for x in a.profile.split(","))
-        profile_one(a.backend, B, H_kv, N, d, gqa_group=a.gqa_group, page_size=a.page_size)
+        profile_one(a.backend, B, H_kv, N, d, gqa_group=a.gqa_group, page_size=a.page_size,
+                    engine=a.engine)
         return
 
     locked = False
@@ -327,7 +338,7 @@ def main() -> None:
         batches = a.batch_sweep if a.batch_sweep else [a.batch]
         sweep(a.backend, a.kv_lens, batches, a.head_dims, a.h_kvs, gqa_group=a.gqa_group,
               page_size=a.page_size, max_ws_gb=a.max_ws_gb, l2_flush=not a.no_l2_flush,
-              warmup=a.warmup, iters=a.iters)
+              warmup=a.warmup, iters=a.iters, engine=a.engine)
     finally:
         if locked:
             reset_clocks()
