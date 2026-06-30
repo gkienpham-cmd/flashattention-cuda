@@ -1857,6 +1857,17 @@ binary produced a **non-empty sm_103 trace**): `mla_partial_kernel<32,576,512>` 
 kernel. So the time is **entirely in the score-stationary partial, not the LSE merge** — the schedule is
 sound, not merge-bound.
 
+**The quantified per-CTA verdict (from the nsys 387 ms partial).** The partial at N_k=1M, h_q=128 does
+`2·h_q·N_k·(DQK+DV) = 2·128·1048576·1088 ≈ 2.92e11 FLOP` in **387 ms → 0.75 TFLOP/s achieved** — that is
+**~0.7% of the B300 FP32-CUDA-core peak (~105 TF) and ~0.03% of the FP16-TC peak (2.5 PF)**. So the kernel
+is neither bandwidth-bound (eff_bw flat **~0.9 GB/s = 0.01% of 8 TB/s** across all N_k) nor
+compute-saturated (<1% of either compute peak) — it sits in the dead zone, **per-CTA/latency-bound**: the
+warp-per-head CUDA-core GEMV can't feed the FMA units. **Important lens correction:** for this *high-AI*
+shape, `%HBM ≈ 0%` only proves "not bandwidth-bound" (expected at AI 235) — it is NOT the per-CTA proof it
+was for low-AI GQA decode. The per-CTA verdict here rests on the **<1%-of-compute achieved TFLOP/s + the
+4× torch-MQA gap + the arch-independent ~0.5–0.9 GB/s ceiling** (T4 ~0.44 → B300 ~0.87 GB/s, ~2× for a 25×
+HBM jump), not on %HBM alone.
+
 ### The v11 verdict (all gates measured, T4 + B300/sm_103)
 
 **Prediction-vs-measured: the two-layer model called it; the headline is the tensor-core gap.**
