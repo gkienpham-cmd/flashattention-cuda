@@ -439,8 +439,8 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (the SHAPE change — packs M=128 by construction, lifts AI `2G/b`→`2·h_q`≈256 toward compute-bound; speculative
   is the fallback, occupancy-v8.8 folds in). Plan to paste: [`docs/v11-kickoff.md`](docs/v11-kickoff.md). See
   `results.md`/`decisions.md` Step 10 close-out, `interview-prep.md` C16.
-- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **DECODE STUDY COMPLETE (roofline ✅,
-  source ✅, Gate 1 ✅ Colab T4, B300/sm_103 core ✅ vast.ai, 2026-06-30); only the Gate-2 quiz remains.**
+- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **DONE (Gate-2 quiz PASSED 2026-06-30):
+  roofline ✅, source ✅, Gate 1 ✅ Colab T4, B300/sm_103 core ✅ vast.ai, quiz ✅.**
   **B300/sm_103 measured core:** (a) per-CTA-bound CONFIRMED to **N_k=2M past L2** (%HBM ~0%, eff_bw ~0.9
   GB/s, WS 679 MB ≫ the 132.6 MB B300 L2 → confound-free by a 5× overflow) on both T4 and B300 — the
   CUDA-core MLA never leaves the per-CTA floor; (b) **the headline: the CUDA-core MLA is ~4× SLOWER than

@@ -1890,7 +1890,7 @@ HBM jump), not on %HBM alone.
   **ncu** L2-hit-rate still owed (unprivileged container blocks counters; the counter-free %HBM proxy is
   ncu-validated once on T4, v9 Task 1, so it carries as a throughput proxy).
 
-### Status — v11 DECODE STUDY COMPLETE (roofline ✅, source ✅, Gate 1 ✅ T4, B300/sm_103 core ✅); native-FP4 tcgen05 arm = data-motivated future work; quiz next
+### Status — v11 DONE (Gate-2 quiz PASSED 2026-06-30): roofline ✅, source ✅, Gate 1 ✅ T4, B300/sm_103 core ✅, quiz ✅. native-FP4 tcgen05 arm = data-motivated future work (v11.5/v12)
 
 Roofline extended (`roofline/model.py` MLA branch + `roofline/predict.py --mla`; non-MLA paths
 byte-identical — GQA-8 nvfp4 still 28.4, v1 naive still 0.2). Prediction recorded above BEFORE any
