@@ -74,12 +74,15 @@ apt-cache search nsight-systems | grep -E 'nsight-systems-20' | sort -V
 apt-get install -y nsight-systems-2025.3.2
 
 # 3) Use the NEWEST installed binary explicitly (do NOT trust `nsys` on PATH — it's still 2025.1.3).
+#    RUN STEPS 1-4 IN ONE SHELL SESSION: $NSYS is set here and used in step 4. (If you paste only step 4,
+#    $NSYS is empty and bash errors ": command not found".)
 NSYS_DIR=$(ls -d /opt/nvidia/nsight-systems/*/ | sort -V | tail -1)
 NSYS="$NSYS_DIR/bin/nsys"; [ -x "$NSYS" ] || NSYS="$NSYS_DIR/target-linux-x64/nsys"
 echo "using: $NSYS"; "$NSYS" --version          # MUST print 2025.3.2+ , NOT 2025.1.3
 
-# 4) Profile ONE big MLA shape (h_q=128, real 576 latent, 1M context) + dump the kernel-time table.
+# 4) Profile ONE MLA shape (h_q=128, real 576 latent, 1M context) + dump the kernel-time table.
 #    --profile loops the kernel 100x (no timing) so nsys attaches; --gqa-group 128 -> h_q=128.
+#    (Drop N_k to 131072 if the 1M loop is slow — the partial/merge split is shape-independent.)
 "$NSYS" profile -o /tmp/v11_nsys3 --force-overwrite true --trace=cuda --cuda-event-trace=false \
   python -m bench.regime --profile 1,1,1048576,576 --backend v11_mla --gqa-group 128
 "$NSYS" stats --report cuda_gpu_kern_sum /tmp/v11_nsys3.nsys-rep 2>/dev/null | tee /tmp/v11_kern_sum.txt | head -45
