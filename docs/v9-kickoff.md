@@ -84,7 +84,9 @@ v9 runs entirely on **T4** (FP8 storage + dequant + the regime sweep). No B-seri
 ## North star (why this arc exists)
 The project's research goal is a **paper**: *the first open, roofline-documented, prediction-vs-measured
 FlashAttention decode study on **B300 / GB300 (sm_103)**, with an asymmetric-precision FP4 KV recipe,
-benchmarked vs FlashInfer/FlashMLA.* FA4 stops at B200/sm_100, so sm_103 is the publishable novelty.
+benchmarked vs FlashInfer/FlashMLA.* FA4 *targets/benchmarks* B200/sm_100 (BF16, prefill/training) and never
+*characterizes* B300 — its kernel is deployed but never characterized on sm_103, so the open sm_103 decode
+*characterization* is the novelty, not "first to run."
 (Honest scope: production libs already run GB300 decode — the contribution is the *open paper-grade
 roofline + FP4 recipe + honest methodology* on sm_103, not "first to run.") **v9's job is to build the
 honest measurement methodology (clock-lock, L2-aware, counter-free BW test) and the FP8 dequant

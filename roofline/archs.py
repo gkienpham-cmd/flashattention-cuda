@@ -150,7 +150,10 @@ B300 = Arch(
     int8_tc_ops=0.15e15,         # LIKELY: GUTTED ~95% vs B200 (~150 TOPS) to fund the NVFP4 uplift
     mufu_ratio=0.25,             # placeholder; exp_per_s below is the firm softmax figure
     fp8_tc_flops=5.0e15,         # FACT: FP8 5 PF dense
-    fp4_tc_flops=15.0e15,        # FACT: NVFP4 15 PF dense (the v10 headline lever; tcgen05 gate M>=64)
+    fp4_tc_flops=15.0e15,        # FACT: NVFP4 15 PF dense (the v10 headline lever). tcgen05 BLOCK-SCALED
+                                 # NVFP4 MMA gate is M>=128 (K=256, TN-only) — NOT M>=64 (that is the
+                                 # FP16/FP8/dense-non-scaled-FP4 floor). v11's MLA M=128 meets it; corrected
+                                 # 2026-06-30 (v11 close-out C04). Cosmetic: MLA roofline uses fp16_tc_flops.
     exp_per_s=10.7e12,           # FACT (vendor peak). MEASURED achievable on a dependent-EX2 microkernel
                                  # = 5.33 TExp/s (0.50x of peak, 2026-06-29) — but mufu share of decode is
                                  # <3% so the 2x-exp lever barely moves M=1 decode regardless.

@@ -1,0 +1,34 @@
+<svg width="100%" viewBox="0 0 520 252" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v11 MLA decode kernel schedule on B300/sm_103 (nsys 2025.3.2): one fused split-KV partial kernel owns 99.9% of GPU time, the LSE merge and torch quant/page setup are negligible — so the bottleneck is INSIDE the partial kernel (per-CTA), not the launch/merge structure</title>
+<desc>An nsys GPU-kernel-time breakdown for the v11 MLA latent-KV decode at N_k=1,048,576 on a B300/sm_103, captured with nsys 2025.3.2 (which produced a non-empty sm_103 trace, paying v10's provenance debt). A single horizontal proportion bar shows mla_partial_kernel, templated &lt;TN=32, DQK=576, DV=512&gt;, taking 99.9% of GPU time: 100 instances, total 38,708,710,496 ns, averaging 387.087 ms per launch. Everything else is a hairline sliver: the LSE mla_merge_kernel is 100 calls at 3,499.5 ns each, total 349,953 ns, which is 0.0009% of GPU time (nsys prints this as 0.0%; the docs' "0.04%" label was a 44x overstatement). Torch one-time setup — NVFP4 quantization, abs/amax, searchsorted page-table build, radix sort — together is under 0.01%. Reconciliation: 387 ms/call at N_k=1M corresponds to the regime bench's 3023 us/tok x 128 heads (a 0.03% match). The schedule itself is HEALTHY (one fused partial kernel, a trivial merge, no launch-bound or merge-bound pathology), so the measured ~4x-slower-than-torch and 0.75 TFLOP/s ceiling (under 1% of either compute peak, %HBM ~0%) live INSIDE the partial kernel — a per-CTA / low-MLP limit (warp-per-head CUDA-core GEMV at N_q=1), not a structural one. This stays fixed from v3's 88.6%-pass2-wall problem. Owed: ncu L2-hit-rate (the unprivileged container blocks counters).</desc>
+<rect x="0" y="0" width="520" height="252" fill="#ffffff"/>
+
+<text x="30" y="34" font-size="15" font-weight="600" fill="#2C2C2A">v11 MLA decode schedule (B300/sm_103)</text>
+<text x="30" y="52" font-size="11" fill="#888780">GPU time by kernel (nsys cuda_gpu_kern_sum) — N_k=1,048,576</text>
+
+<!-- ROW 1: mla_partial_kernel — 99.9% -->
+<text x="30" y="86" font-size="10.5" font-weight="600" fill="#2C2C2A">mla_partial_kernel&lt;32, 576, 512&gt;</text>
+<text x="490" y="86" font-size="10.5" font-weight="600" fill="#185FA5" text-anchor="end">99.9%</text>
+<rect x="30" y="92" width="460" height="34" rx="3" fill="#185FA5"/>
+<text x="38" y="113" font-size="11" font-weight="600" fill="#ffffff">fused split-KV online-softmax partial</text>
+<!-- annotation 1: per-call ↔ regime reconciliation -->
+<text x="30" y="142" font-size="9" fill="#888780">387 ms/call @ N_k=1M  ↔  regime 3023 µs/tok × 128 = 0.03% match</text>
+
+<!-- ROW 2: mla_merge_kernel — hairline -->
+<text x="30" y="166" font-size="10.5" font-weight="600" fill="#2C2C2A">mla_merge_kernel (LSE merge)</text>
+<text x="490" y="166" font-size="10.5" fill="#888780" text-anchor="end">0.0009%</text>
+<rect x="30" y="172" width="2" height="14" rx="1" fill="#5F5E5A"/>
+
+<!-- ROW 3: torch quant / page-table setup -->
+<text x="30" y="204" font-size="10.5" font-weight="600" fill="#2C2C2A">torch quant + page-table setup</text>
+<text x="490" y="204" font-size="10.5" fill="#888780" text-anchor="end">&lt; 0.01%</text>
+<rect x="30" y="210" width="2" height="14" rx="1" fill="#A6A39A"/>
+
+<!-- annotation 2: green provenance tag -->
+<text x="338" y="180" font-size="9" font-weight="600" fill="#3C8C5A">nsys 2025.3.2 — non-empty sm_103 trace</text>
+<text x="338" y="192" font-size="9" fill="#3C8C5A">(provenance paid)</text>
+
+<!-- takeaway strip -->
+<rect x="0" y="226" width="520" height="26" fill="#FAECE7"/>
+<text x="30" y="243" font-size="10.5" font-weight="600" fill="#993C1D">Time is all in the fused partial kernel; the wall is inside it (per-CTA), not the merge.</text>
+</svg>

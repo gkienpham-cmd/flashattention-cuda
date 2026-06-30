@@ -1,0 +1,52 @@
+<svg width="100%" viewBox="0 0 920 250" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v11 → v12: realize the M=128 GEMM on Blackwell tcgen05 tensor cores</title>
+<desc>A left-to-right lever diagram, four boxes. Box 1 (orange, the wall): v11 ran the right SHAPE on the wrong ENGINE — a warp-per-head CUDA-core GEMV that packs M=128 as 16 blocks x 8 warps, NOT one tensor-core GEMM (no wmma/mma/tcgen05 tokens in source). Measured per-CTA-bound: 0.75 TFLOP/s achieved (under 1 percent of either compute peak), %HBM about zero flat to N_k=2M past a 5.1x L2 overflow. On B300 it runs about 4x SLOWER than torch dense-MQA (vs_sdpa 0.23 to 0.29x at 576/512), because tuned cuBLAS batched-GEMV beats a hand-written CUDA-core GEMV. Box 2 (blue, the lever): that about-4x cuBLAS gap is the empirical proof the M=128 packed GEMM is a real, tensor-core-friendly GEMM and the CUDA-core default is the wrong tool. Box 3 (green, the build): v12 forks CUTLASS example 77 (2-SM tcgen05), Arm 1 = FP8 MMA at the M>=64 gate, then Arm 2 = native NVFP4 at the M>=128 gate — native low-precision COMPUTE, not dequant-to-FP16. Pure roofline predicts a compute-flip past the B300 FP16-TC ridge of 312.5: MLA fp16 AI 234.8 (0.75x, HBM knife-edge), fp8 AI 469.7 (1.50x, MMA), nvfp4 AI 835.0 (2.67x, deep MMA). Box 4 (purple, the prize, pre-registered): even with tensor cores, decode at N_q=1 is expected to stay SMEM-bandwidth-bound (the staged latent feeds the MMA), so it will likely NOT reach the FP4 compute peak — the honest counter-prediction. This is the data-motivated next step, not yet measured; it complements, does not beat, FlashMLA/FlashInfer.</desc>
+<rect x="0" y="0" width="920" height="250" fill="#ffffff"/>
+
+<text x="30" y="32" font-size="15" font-weight="600" fill="#2C2C2A">v11 → v12: realize M=128 on tcgen05 tensor cores</text>
+<text x="30" y="52" font-size="11" fill="#888780">v11 ran the right shape on the wrong engine; v12 moves the packed GEMM onto Blackwell 5th-gen tensor cores.</text>
+
+<!-- Box 1: orange wall -->
+<rect x="30" y="74" width="196" height="104" rx="7" fill="#FAECE7" stroke="#D85A30" stroke-width="1.2"/>
+<text x="46" y="98" font-size="11.5" font-weight="600" fill="#993C1D">v11: wrong engine</text>
+<text x="46" y="119" font-size="10" fill="#2C2C2A">CUDA-core GEMV, not a TC GEMM.</text>
+<text x="46" y="136" font-size="10" fill="#2C2C2A">0.75 TFLOP/s, per-CTA-bound.</text>
+<text x="46" y="153" font-size="10" fill="#2C2C2A">~4× slower than cuBLAS on B300.</text>
+
+<!-- arrow 1 -->
+<line x1="230" y1="126" x2="262" y2="126" stroke="#185FA5" stroke-width="2.6"/>
+<polygon points="262,126 248,119 248,133" fill="#185FA5"/>
+
+<!-- Box 2: blue lever -->
+<rect x="266" y="74" width="196" height="104" rx="7" fill="#E8F0F8" stroke="#185FA5" stroke-width="1.2"/>
+<text x="282" y="98" font-size="11.5" font-weight="600" fill="#124A80">M=128 GEMM is real</text>
+<text x="282" y="119" font-size="10" fill="#2C2C2A">The ~4× cuBLAS gap proves it.</text>
+<text x="282" y="136" font-size="10" fill="#2C2C2A">The shape is tensor-core-friendly</text>
+<text x="282" y="153" font-size="10" fill="#2C2C2A">— wrong tool, not wrong shape.</text>
+
+<!-- arrow 2 -->
+<line x1="466" y1="126" x2="498" y2="126" stroke="#185FA5" stroke-width="2.6"/>
+<polygon points="498,126 484,119 484,133" fill="#185FA5"/>
+
+<!-- Box 3: green recommended -->
+<rect x="502" y="74" width="196" height="104" rx="7" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1.2"/>
+<text x="518" y="98" font-size="11.5" font-weight="600" fill="#226B40">v12: tcgen05</text>
+<text x="518" y="119" font-size="10" fill="#2C2C2A">Fork CUTLASS ex77, 2-SM.</text>
+<text x="518" y="136" font-size="10" fill="#2C2C2A">Arm 1 FP8 MMA (M≥64) →</text>
+<text x="518" y="153" font-size="10" fill="#2C2C2A">Arm 2 NVFP4 (M≥128).</text>
+
+<!-- arrow 3 -->
+<line x1="702" y1="126" x2="734" y2="126" stroke="#185FA5" stroke-width="2.6"/>
+<polygon points="734,126 720,119 720,133" fill="#185FA5"/>
+
+<!-- Box 4: purple prize -->
+<rect x="738" y="74" width="152" height="104" rx="7" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1.2"/>
+<text x="754" y="98" font-size="11.5" font-weight="600" fill="#3C3489">The prize</text>
+<text x="754" y="119" font-size="10" fill="#2C2C2A">Pre-registered: even with</text>
+<text x="754" y="136" font-size="10" fill="#2C2C2A">TC, decode stays SMEM-BW-</text>
+<text x="754" y="153" font-size="10" fill="#2C2C2A">bound → won't hit FP4 peak.</text>
+
+<!-- honest banner -->
+<rect x="30" y="196" width="860" height="34" rx="6" fill="#FAECE7" stroke="#D85A30" stroke-width="1"/>
+<text x="44" y="217" font-size="11" fill="#993C1D">Data-motivated next step — not yet measured. Complements, doesn't beat, FlashMLA/FlashInfer.</text>
+</svg>

@@ -4,11 +4,17 @@ A roofline-driven journey rebuilding FlashAttention one measured speedup at a ti
 is the **measured speedup + roofline curve** (prediction vs reality), not just fast code. Long-term
 goal: a stable `from fa_kernels import attention` API that a future from-scratch mini-vLLM consumes.
 
-**Research north star (the paper):** the decode arc (v6→v11) targets **B300 / GB300 (sm_103)** as its
-final goal — *the first open, roofline-documented, prediction-vs-measured FlashAttention decode study on
-sm_103, with an asymmetric-precision FP4 KV recipe, vs FlashInfer/FlashMLA.* FA4 stops at B200/sm_100, so
-sm_103 is the publishable novelty. Honest scope: production libs already run GB300 decode — the
-contribution is the *open paper-grade roofline + FP4 recipe + honest methodology*, not "first to run."
+**Research north star (the paper):** the decode arc (v6→v12) targets **B300 / GB300 (sm_103)** as its
+final goal — *the first open, kernel-level, prediction-vs-measured roofline **characterization** of
+FlashAttention **decode** on sm_103, across MHA→GQA→MLA and FP16→FP8→NVFP4, vs FlashInfer/FlashMLA.*
+FA4 **targets and benchmarks** B200/sm_100 (BF16, prefill/training) and never *characterizes* B300; its
+kernel is **deployed but never characterized** on sm_103 (vLLM/SGLang auto-activate it) — so the open
+sm_103 decode *characterization* is the novelty, **not "first to run."** Honest scope (survives a hostile
+reviewer, verified 2026-06-30): production libs already run GB300 decode and are faster by construction;
+the prediction-vs-measured *methodology* is itself **not** novel (arXiv 2605.04178 et al. own it) — the
+contribution is the *open paper-grade roofline + FP4-KV recipe + the per-CTA limiter diagnosis on sm_103*,
+characterization-grade (PMBS@SC / IISWC), **complementing not beating** the production kernels. Closest
+prior = Tri Dao's GLA (arXiv 2505.21487, open MLA-decode roofline on H100); our delta is **sm_103 + KV-quant**.
 
 ## How this project works (read before changing anything)
 
@@ -489,20 +495,43 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   measured core (latency / the T1 compute-vs-memory crossover / sm_103 2×-exp / FlashMLA comparator) + the quiz
   (deferred to the very end per Kien) are the outstanding GPU work. See `results.md`/`decisions.md` Step 11,
   `interview-prep.md` C16, `docs/v11-kickoff.md`.
+- **Step 11 deep-research close-out (2026-06-30, 13-agent verify+adversarial+research pass)** — DONE: all 16
+  claims HOLD/HOLD-WITH-CAVEAT (none refuted); every number reconciles to the raw files. **Honesty
+  corrections applied** (do not restate the killed framings): (1) the 4× gap's *cause* (cuBLAS TC GEMM) is a
+  strong externally-corroborated **INFERENCE, not a measurement** — the torch baseline is an FP32
+  batched-GEMV M=1, no torch-side profile; (2) "§9-Q1 validated: M=128 IS a real TC GEMM" → the **shape
+  admits** a TC GEMM (indirect); our absorbed-QK-as-one-tcgen05-GEMM is **untested**; (3) %HBM≈0% at this
+  high-AI shape only proves "not bandwidth-bound" — the per-CTA proof is the **0.75 TFLOP/s + 4× gap +
+  arch-independent ceiling**, not %HBM; (4) the "~147 KB → 1 block/SM" prediction was a magnitude miss (the
+  kernel stages **~46 KB**; ~1 block/SM is T4-specific, B300 = ~4 blocks/SM → the GEMV *shape* is the
+  limiter); (5) merge 0.04%→**0.0% (0.0009%)**; (6) accuracy ~3.5× FP8 is **our single-seed substrate
+  number**, not a published constant; (7) `archs.py:153` "tcgen05 gate M≥64" → **M≥128 for block-scaled
+  NVFP4**; (8) "FA4 stops at B200" → "deployed but never characterized on sm_103" (north-star line fixed).
+  6 new figures `diagrams/v11-{per-cta-wall-b300,cublas-gap,roofline-two-layer,capacity-accuracy,nsys-schedule,to-v12-tcgen05}.svg`.
+  **Decision: v12 = native tcgen05 tensor-core MLA decode** (data-motivated by the 4× gap). Plan to paste:
+  [`docs/v12-kickoff.md`](docs/v12-kickoff.md). See `results.md`/`decisions.md` Step 11 close-out,
+  `interview-prep.md` C17.
 
 ## Next steps
 
 **The reordered decode arc is `docs/decode-replan.md` §5 (math + per-step deliverable); summary:**
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV + regime-fix (T4) — DONE** →
 **v10 NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper) — DONE + closed-out 2026-06-30** →
-**v11 MLA latent-KV decode (the SHAPE change, B300/sm_103a)**. **v11 = MLA** (decided in the v10 close-out):
-the only lever left after v10 proved bytes/occupancy/M=1-tensor-cores are exhausted is to raise M above 1 — MLA
-packs all `h_q=128` heads → **M=128 by construction** (meets the tcgen05 NVFP4 `M≥128` gate, no speculative
-draft) and lifts decode AI `2G/b`→`2·h_q`≈256 toward the B300 FP16 ridge (~312), the first decode shape in the
-arc plausibly compute-bound. Native FP4 *compute* is ONLY-IF the dev-rung shows M=128 packs as one GEMM and the
-limiter flips; speculative/multi-token is the fallback shape-lever; occupancy-v8.8 folds in for the serving
-regime; GLA/sparse (DSA/CSA) → v12. **v11 plan to paste into a fresh session:
-[`docs/v11-kickoff.md`](docs/v11-kickoff.md)** (supersedes the now-complete `v10-kickoff.md`).
+**v11 MLA latent-KV decode (the SHAPE change, B300/sm_103a) — DONE + closed-out 2026-06-30** →
+**v12 native tcgen05 tensor-core MLA decode (the data-motivated arm)**. **v11 = MLA** raised M above 1
+(packs all `h_q=128` heads → **M=128 by construction**, meeting the tcgen05 NVFP4 `M≥128` gate) and lifted
+decode AI `2G/b`→`~3.78·h_q/b`≈235 — the first decode shape in the arc that *pure roofline* calls
+compute-bound. **MEASURED: it stays per-CTA-bound on CUDA cores (0.75 TFLOP/s, %HBM ~0% to 2M past a 5.1× L2
+overflow) and is ~4× SLOWER than torch dense-MQA** — because torch routes M=128 into a cuBLAS tensor-core
+GEMM while our kernel runs warp-per-head CUDA-core GEMV. So the SHAPE is correct + tensor-core-friendly
+(validated by the 4× gap), but realizing it needs **tcgen05 → that IS v12**. **v12 = native tensor-core MLA
+decode** (decided in the v11 close-out): fork CUTLASS example 77 (weight-absorbed 512/64 decode kernel,
+2-SM), **Arm 1 = FP8-dense MMA (M≥64) → Arm 2 = native NVFP4 (M≥128, K=256, TN, gated on Arm 1)**, scores ≥
+FP16. **Pre-registered prediction (the paper-grade result): even with TC, single-token decode is
+SMEM-BW/pipeline-depth-bound → the win likely won't reach the FP4 peak and won't beat FlashMLA's ~410
+TFLOP/s — complementing, not beating.** Fallback = speculative q_len>1 (redundant unless the TC arm fails);
+occupancy-v8.8 (~1.4× @ B≥32) folds into v12 residency; GLA/sparse (DSA/CSA) → v13. **v12 plan to paste into
+a fresh session: [`docs/v12-kickoff.md`](docs/v12-kickoff.md)** (supersedes the now-complete `v11-kickoff.md`).
 
 **Cheap pre-v10 experiment — DONE (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test; figure
 `diagrams/v8_5_v8_6_pastL2.svg`; data `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`).** Re-ran v8.5
@@ -544,7 +573,8 @@ savings), FP32 accum. **FP8 is capacity+accuracy on the L2-resident micro-bench,
 past-L2 / large-batch regime** (vLLM: per-token cost → 54% of BF16 past ~4–7k tokens) — Task 1 creates that
 regime and Task 2 measures it. **Hardware: v9 on T4 (no rental — decode GEMV uses no tensor cores; FP8's win
 is storage bytes); v10/v11 NVFP4 + MLA on B300 / GB300 (sm_103) — the FINAL goal and the paper's novelty**
-(no published FA paper has characterized a B300; FA4 stops at B200). B200 (sm_100) is an optional cheaper dev
+(no published FA paper has *characterized* a B300; FA4 benchmarks only B200, BF16 prefill/training — its
+kernel is deployed but never characterized on sm_103). B200 (sm_100) is an optional cheaper dev
 rung; the record runs on B300. B300-only levers the paper uses: 2× exp/SFU throughput (softmax MUFU term),
 288 GB (long-context KV → the regime where bandwidth *could* matter — **to be measured; T4 stayed
 per-CTA-bound even past L2**, so this is the v10 T3 question, not an assumption), NVFP4 15 PF.

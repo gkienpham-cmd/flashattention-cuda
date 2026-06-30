@@ -1139,3 +1139,54 @@ project's signature question survives the transition intact: MLA's absorbed up-p
 on-chip, so raising AI might **flip** the limiter to compute — or just **rename** it to smem-capacity. **Say-this:**
 "Either MLA leaves the per-CTA wall and the byte/exp levers finally convert, or it trades per-CTA for on-chip
 capacity — and *that's* still a publishable per-CTA-class result. I scoped v11 so I can't lose the argument."
+
+## C17 — v11 MLA: the shape was right, the tool was wrong, and the two-layer model called it
+
+**The result in one breath.** I raised decode M from 1 to 128 (MLA shares one latent across all 128 query
+heads), which lifted decode arithmetic intensity ~30× — from GQA's 8 to ~235 (fp16) / 835 (nvfp4), the
+first decode shape in the whole arc that *pure* roofline says is **compute-bound**. Then I measured it on
+B300/sm_103 and the compute-flip **did not happen**: 0.75 TFLOP/s achieved, <1% of either compute peak,
+per-CTA-bound to 2M tokens past a 5.1× L2 overflow. **Say-this:** "The shape change worked exactly as the
+math predicted *and then refused to pay off in practice* — and I'd written down, before the run, that it
+would refuse, and why."
+
+**The two-layer prediction is the deliverable, not the kernel.** Pure roofline: fp8/nvfp4 AI past the 312.5
+ridge → compute-flip. Per-CTA-corrected (the prediction I actually believe): the model is blind to how the
+CUDA-core kernel packs M=128 — it runs 16 blocks × 8 warps of warp-per-head GEMV, **not one tensor-core
+GEMM** — so it stays per-CTA. The measurement confirmed the real layer. **Say-this:** "I keep two
+predictions: the one the roofline math gives, and the one I believe after correcting for what the model
+can't see. v11 is the cleanest case of the second one winning."
+
+**The 4× gap is the find — and I'm honest about what it does and doesn't prove.** Torch dense-MQA beats my
+CUDA-core kernel ~4× on the identical shape. That proves the M=128 shape is **tensor-core-friendly** and the
+CUDA-core default is the wrong tool. It does **not** prove my absorbed-QK packs as one tcgen05 GEMM — the
+torch baseline is an FP32 batched-M=1 cuBLAS matmul that materializes the score, and I never profiled the
+torch side, so the cuBLAS-TC-GEMM *cause* is a strong, externally-corroborated **inference** (FlashMLA-ETAP
+arXiv 2506.01969 measures <25% util when MLA heads drop below the WGMMA min-M). **Say-this:** "The 4× is
+measured; the *reason* is inferred and I label it that way — the literal in-kernel packing is a dev-rung
+question, not a result I've banked."
+
+**Why %HBM~0% is NOT my per-CTA proof here (the lens correction that keeps me honest).** For GQA decode,
+flat-%HBM-past-L2 *was* the proof. At MLA's AI~235 (nvfp4 ~835, far past the ridge), %HBM≈0% is *expected* —
+it only says "not bandwidth-bound." The per-CTA proof is the 0.75 TFLOP/s + the 4× cuBLAS gap + the
+arch-independent ~0.9 GB/s ceiling. **Say-this:** "Same symptom, different shape, different burden of proof
+— I moved the proof to the legs that survive a high-AI shape instead of leaning on a metric that goes to
+zero for free."
+
+**v12 by elimination, and the prediction I'm pre-registering.** v11 crossed the last option off: the only
+lever left to close the 4× self-gap is the tensor-core path, and M=128 finally meets the tcgen05 gate (NVFP4
+block-scaled M≥128 — not the M≥64 I'd mislabeled in `archs.py`). So v12 forks CUTLASS example 77 and runs
+the GEMMs in FP8 then native NVFP4. But I'm pre-registering the honest ceiling: even with tensor cores,
+single-token decode is SMEM-bandwidth / pipeline-depth-bound, so I likely **won't** reach the FP4 FLOP peak
+and **won't** beat FlashMLA's ~410 TFLOP/s — and *that measured shortfall is the paper-grade result.*
+**Say-this:** "I'm not chasing a number I'll lose at; I'm characterizing why even the right tool stays
+capped — which is exactly the open cell no production kernel publishes."
+
+**The honest novelty scope (so I survive a hostile reviewer).** Not "first to run decode on GB300" (vLLM/
+SGLang did, Feb 2026, at the serving level; FA4's own kernel deploys on sm_103). Not "beat FA4/FlashInfer/
+FlashMLA" (they're faster). The defensible claim is *"the first open, kernel-level, prediction-vs-measured
+roofline characterization of attention decode on sm_103, across MHA→GQA→MLA and FP16→FP8→NVFP4."* The
+methodology itself isn't novel — only its application to this empty cell. Closest prior is Tri Dao's GLA
+(arXiv 2505.21487), an open roofline-documented MLA decode study on H100; my whole delta is **sm_103 +
+KV-quant**. **Say-this:** "I can name the single paper that's closest to mine and the two axes that separate
+us — that's the related-work slide that makes a reviewer trust the rest."

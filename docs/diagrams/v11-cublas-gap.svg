@@ -1,0 +1,60 @@
+<svg width="100%" viewBox="0 0 720 372" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>The 4x gap: CUDA-core warp-per-head GEMV vs torch dense-MQA at M=128 on B300/sm_103</title>
+<desc>B300/sm_103 measurement of the real MLA shape DQK=576, DV=512, h_q=128. Left: a bar chart of vs_sdpa (our CUDA-core MLA kernel time relative to torch dense-MQA) at three context lengths — N_k=2048 gives 0.29x, N_k=8192 gives 0.24x, N_k=16384 gives 0.23x, all below the dashed red 1.0x break-even line, so the kernel is 3.4 to 4.3 times SLOWER than torch and it worsens as N_k grows. Achieved 0.75 TFLOP/s is under 1 percent of either compute peak and %HBM is ~0%, so the kernel is neither bandwidth- nor compute-saturated: a per-CTA / low-MLP floor. Right: the two execution paths. torch packs the M=128 query heads into one batched cuBLAS GEMM that runs on tensor cores; our hand-written kernel runs warp-per-head CUDA-core GEMV (16 row-tiles times 8 warps), tensor cores idle. The cause is an inference, not a torch-side profile: no torch profile was captured, but "torch hits one M=128 tensor-core GEMM" is a strong externally-corroborated explanation; the established fact is the ~4x slowdown. The honest takeaway: a ~4x loss to a tensor-core path is exactly what a tensor-core-friendly shape looks like — the MLA M=128 shape is structurally a real GEMM, so the next step (v12) is to put M=128 on tcgen05 (native FP4 / WGMMA).</desc>
+<rect x="0" y="0" width="720" height="372" fill="#ffffff"/>
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">The 4× gap: CUDA-core GEMV vs torch's tensor-core path</text>
+<text x="30" y="49" font-size="11" fill="#888780">B300/sm_103, real MLA shape 576/512, h_q=128 — vs_sdpa 0.23–0.29× (3.4–4.3× slower than torch dense-MQA)</text>
+
+<line x1="372" y1="74" x2="372" y2="300" stroke="#E3E1DA" stroke-width="1"/>
+
+<!-- ============ left: the measured slowdown ============ -->
+<rect x="74" y="86" width="266" height="206" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- y axis 0..1.2x : 0 -> y=272, 1.2 -> y=104. scale = 140 px per 1.0x -->
+<line x1="92" y1="272" x2="92" y2="100" stroke="#B4B2A9" stroke-width="1"/>
+<line x1="88" y1="272" x2="92" y2="272" stroke="#888780" stroke-width="1"/><text x="84" y="275" font-size="9" fill="#888780" text-anchor="end">0</text>
+<line x1="88" y1="202" x2="92" y2="202" stroke="#888780" stroke-width="1"/><text x="84" y="205" font-size="9" fill="#888780" text-anchor="end">0.5×</text>
+<line x1="88" y1="132" x2="92" y2="132" stroke="#888780" stroke-width="1"/><text x="84" y="135" font-size="9" fill="#888780" text-anchor="end">1.0×</text>
+<text x="56" y="188" font-size="9" fill="#888780" text-anchor="middle" transform="rotate(-90 56 188)">vs_sdpa (ours ÷ torch)</text>
+
+<line x1="92" y1="272" x2="332" y2="272" stroke="#B4B2A9" stroke-width="1"/>
+
+<!-- break-even line at 1.0x -> y=132 -->
+<line x1="92" y1="132" x2="332" y2="132" stroke="#C9322B" stroke-width="1.2" stroke-dasharray="3 2"/>
+<text x="328" y="127" font-size="9" font-weight="600" fill="#C9322B" text-anchor="end">break-even — torch dense-MQA (1.0×)</text>
+
+<!-- bars: 0.29 @ 2048, 0.24 @ 8192, 0.23 @ 16384. height = ratio * 140 -->
+<rect x="120" y="231.4" width="48" height="40.6" fill="#185FA5"/>
+<text x="144" y="225" font-size="10" font-weight="600" fill="#185FA5" text-anchor="middle">0.29×</text>
+<text x="144" y="287" font-size="9.5" fill="#2C2C2A" text-anchor="middle">2048</text>
+
+<rect x="196" y="238.4" width="48" height="33.6" fill="#185FA5"/>
+<text x="220" y="232" font-size="10" font-weight="600" fill="#185FA5" text-anchor="middle">0.24×</text>
+<text x="220" y="287" font-size="9.5" fill="#2C2C2A" text-anchor="middle">8192</text>
+
+<rect x="272" y="239.8" width="48" height="32.2" fill="#185FA5"/>
+<text x="296" y="233.6" font-size="10" font-weight="600" fill="#185FA5" text-anchor="middle">0.23×</text>
+<text x="296" y="287" font-size="9.5" fill="#2C2C2A" text-anchor="middle">16384</text>
+
+<text x="232" y="305" font-size="9" fill="#888780" text-anchor="middle">N_k (context length)</text>
+
+<!-- one on-plot annotation -->
+<text x="312" y="256" font-size="8.5" fill="#888780" text-anchor="end">worsens with N_k</text>
+
+<!-- ============ right: the two paths ============ -->
+<rect x="392" y="98" width="298" height="52" rx="6" fill="#EAF0F6" stroke="#A9C4DD" stroke-width="1"/>
+<text x="404" y="120" font-size="10.5" font-weight="600" fill="#185FA5">torch — one batched cuBLAS GEMM</text>
+<text x="404" y="138" font-size="9.5" fill="#2C2C2A">M=128 on tensor cores</text>
+
+<text x="541" y="170" font-size="10" font-weight="600" fill="#993C1D" text-anchor="middle">≈ 4× gap</text>
+
+<rect x="392" y="182" width="298" height="52" rx="6" fill="#FAECE7" stroke="#D85A30" stroke-width="1.1"/>
+<text x="404" y="204" font-size="10.5" font-weight="600" fill="#993C1D">ours — warp-per-head CUDA-core GEMV</text>
+<text x="404" y="222" font-size="9.5" fill="#2C2C2A">tensor cores idle</text>
+
+<text x="392" y="258" font-size="9" fill="#888780">Cause inferred, not torch-profiled.</text>
+
+<!-- ============ takeaway strip ============ -->
+<rect x="30" y="320" width="660" height="34" rx="5" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1.1"/>
+<text x="44" y="341" font-size="10.5" fill="#3C3489">~4× slower — the M=128 shape is tensor-core-friendly; CUDA cores are the wrong tool → v12 = tcgen05.</text>
+</svg>

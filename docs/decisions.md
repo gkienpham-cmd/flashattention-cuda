@@ -1172,3 +1172,68 @@ v1 naive still 0.2).
   (correction: `W^UK`/`W^UV` fold into the offline Q/O proj — the kernel stages `q_absorbed`, not the
   weights); Q3 the compute-vs-memory crossover IS the deliverable. See `results.md` Step 11,
   `v11-kickoff.md` §2/§9, `interview-prep.md` C16.
+
+## Step 11 deep-research close-out + v12 decision (2026-06-30, verify+adversarial+research pass)
+
+**v11 VERIFIED; all 16 adversarial claims HOLD or HOLD-WITH-CAVEAT (none refuted); every load-bearing
+number reconciles to the raw regime/nsys files + both gate notebooks.** Full record in `results.md` Step 11
+close-out. Decision-relevant deltas:
+
+**Verified (no science change).** Per-CTA-bound to 2M past a 5.1× L2 overflow (%HBM 0.0%, eff_bw 0.9 GB/s
+logical, WS 679.48 MB ≫ 132.6 MB L2); 4× cuBLAS gap (0.23–0.29× real, 0.49–0.83× smoke, back-out exact);
+capacity 202×/12.6×/99.5% (56.9× shape × 3.56× bytes); accuracy ~3.5× FP8 (cross-arch 3.54/3.44); nsys
+partial 99.9% @ 387 ms/call cross-checks the N_k=1M regime row to 0.03%; 0.75 TFLOP/s = 0.7%/0.03% of the
+FP32-CUDA/FP16-TC peaks. **Prediction-vs-measured: the two-layer model called it** (pure = compute-flip,
+per-CTA-corrected = stays per-CTA on CUDA cores; the REAL layer landed).
+
+**Honesty/provenance corrections applied this pass (do not restate the killed framings as fact).** (1) The
+4× **cause** → inference, not measurement (the torch baseline is a **FP32 batched-GEMV M=1**, no torch-side
+profile). (2) "§9-Q1 validated" → the **shape** admits a TC GEMM (indirect); our absorbed-QK-as-one-tcgen05
+-GEMM is **untested**. (3) %HBM≈0% scoped to "not bandwidth-bound" (high-AI); the per-CTA proof is the
+TFLOP/s + 4× gap + ceiling. (4) "147 KB staging → ~1 block/SM" → the kernel stages **~46 KB**; ~1 block/SM
+is **T4-specific** (B300 = ~4 blocks/SM, the GEMV shape is the limiter). (5) merge "0.04%" → **0.0%
+(0.0009%)**. (6) `archs.py:153` "tcgen05 gate M≥64" → **M≥128 for block-scaled NVFP4** (M≥64 is the
+FP16/FP8/dense-FP4 floor; the v10-era M=G<64 statements stay correct in their FP8/GQA context). (7) "FA4
+stops at B200" → "FA4 **targets/benchmarks** B200; its kernel is **deployed but never characterized** on
+sm_103." (8) Logged cleanup: `choose_splits` hardcodes `num_sm=40` on the 148-SM B300 (under-splits to 80
+blocks; doesn't change the B=1 verdict). (9) accuracy ~3.5× is **our substrate-specific** number, single-seed.
+
+**Decision: v12 = native tcgen05 tensor-core MLA decode (FP8-arm → NVFP4-arm).** Full plan:
+`docs/v12-kickoff.md`. Against the three required criteria:
+
+- **Justified by the measured 4× gap (the data warrants the roadmap change).** v11 proved the M=128 shape is
+  a real TC GEMM (cuBLAS beats our CUDA-core GEMV ~4× on it) and that the CUDA-core default is the wrong
+  tool — the **only lever left to close v11's own self-gap** is the tensor-core path. This is NOT v8's "TC
+  null at M=1" (that was M=1; v11 raised M to 128). So the previously-deferred native-FP4 arm graduates from
+  "ONLY-IF" to **the data-motivated primary v12**.
+- **Why native-FP4-TC over the alternatives (weighed impartially).** It realizes the GEMM v11 localized; M=128
+  meets the tcgen05 gate (FP8 M≥64, **NVFP4 M≥128/K=256/TN-only**) by construction. **Speculative q_len>1** is
+  the **fallback** (only if the dev-rung shows M=128 fragments — but MLA already raised M, so this is
+  redundant unless the TC arm fails). **Occupancy-v8.8** (~1.4× @ B≥32 past L2, measured) is **not a shape
+  change** → fold into v12's residency tuning, not its own step. **GLA/sparse (DSA/CSA)** → v13 (dense MLA is
+  the roofline-clean rung first). **Harden-v11-measurement (ncu/locked-clock/torch-profile)** → do
+  *alongside* v12, it's a measurement task not a competing kernel.
+- **Most defensible build + the honest ceiling.** Fork **CUTLASS example 77** (`77_blackwell_fmha`, the
+  weight-absorbed latent-512/rope-64 MLA *decode* kernel, **2-SM `cta_group::2`** for the 512-wide
+  accumulator) — **NOT** the FA4 prefill kernel (no decode path). **Arm 1 = FP8-dense MMA** (M≥64; dequant
+  NVFP4-KV→FP8 at SMEM, the FlashMLA-proven path), **Arm 2 = native NVFP4** (`kind::mxf4nvf4`, gated on Arm
+  1), scores ≥ FP16. **Pre-registered prediction (the paper-grade result): even with tensor cores,
+  single-token decode is SMEM-BW / MMA-pipeline-depth-bound → the realized speedup likely will NOT approach
+  the FP4 FLOP peak, and v12 will NOT beat FlashMLA's ~410 TFLOP/s decode (~3 orders above v11) on
+  wall-clock.** Frame as **complementing, not beating** FlashInfer/FlashMLA — the contribution is the open
+  methodology + the measured SMEM-BW shortfall, not SOTA latency.
+- **Build risk to flag:** CUTLASS ex77's realized M-blocking num-groups is reportedly capped at 32 (not
+  128) — verify the head-count→M=128 mapping on the target CUTLASS version **before** banking §9-Q1 (echoes
+  v11-kickoff's "verify M=128 is one GEMM before banking T2"). **What changes on another arch:** the M≥128
+  NVFP4-*compute* gate is `sm_103a`-specific (no `mma.sync` FP4 on datacenter Blackwell); the SMEM-BW wall is
+  arch-general. `[RENT root B300/sm_103a; CUDA 12.9+, CUTLASS 4.x]`.
+
+**Paper positioning (honest, characterization-grade).** Defensible novelty = *the first open, kernel-level,
+prediction-vs-measured roofline characterization of attention decode on sm_103 (MHA→GQA→MLA,
+FP16→FP8→NVFP4)* — **not** "first to run" (serving stacks did, Feb 2026), **not** "beat
+FlashInfer/FlashMLA" (faster by construction). The methodology itself is **not** novel (Microbenchmark
+-Driven Modeling arXiv 2605.04178 et al. own prediction-vs-measured); novelty lives in the
+{open + sm_103 + decode + the specific measured findings} intersection. Closest prior = Tri Dao's GLA
+(arXiv 2505.21487, open roofline-documented MLA decode on H100) → our delta is exactly **sm_103 + KV-quant**.
+Venue path: **PMBS@SC26 / ES-FoMo / IISWC 2027** (characterization venues; top-tier systems would
+desk-reject as a SKU-bump). See `docs/v12-kickoff.md`, `results.md` Step 11 close-out, `interview-prep.md` C17.

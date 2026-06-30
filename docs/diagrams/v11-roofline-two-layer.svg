@@ -1,0 +1,85 @@
+<svg width="100%" viewBox="0 0 615 415" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>MLA decode roofline on B300 — the per-CTA-corrected (real) prediction landed at the floor (~0% HBM, 0.75 TFLOP/s); the pure-roofline compute-flip did NOT realize on CUDA cores</title>
+<desc>A log-log roofline plot for B300 / sm_103. The diagonal is the 8 TB/s HBM bandwidth bound; the flat ceiling is the FP16 tensor-core compute peak (2500 TFLOP/s); they meet at the ridge at arithmetic intensity 312.5 (dashed vertical). Three points mark the AI ladder along the roofline: GQA-8 fp16 decode at AI=8 sits far left, deep in the memory-bound region; MLA fp16 decode rises to AI=234.8, a knife-edge just below the ridge (0.75 times it); MLA nvfp4 decode reaches AI=835, well to the right of the ridge in the compute-bound region.
+
+The two-layer prediction is drawn as two markers. The pure-roofline prediction (a purple star) sits high on the compute ceiling — naively predicting MLA flips compute-bound, the first decode shape in the v1-to-v11 arc to do so on paper. The MEASURED point (a solid blue square) lands at the per-CTA floor far below: achieved throughput 0.75 TFLOP/s, which is about 0.03 percent of the FP16-TC peak and percent-HBM about 0 percent. A dashed vertical gap arrow connects the star down to the square, marking the correction.
+
+Verdict (detail in the figure caption): the per-CTA-corrected layer LANDED — %HBM stayed flat at about 0 percent out to N_k=2M, a working set of 679 MB or 5.1 times the measured 132.6 MB B300 L2, so the per-CTA-bound read is confound-free; 0.75 TFLOP/s achieved on clocks that were idle-pinned, measured counter-free because ncu was blocked (the percent-HBM proxy was validated against ncu once on T4). The pure-roofline compute-flip did NOT realize, because the CUDA-core kernel packs M=128 as 16 blocks times 8 warps of warp-per-head GEMV, not one tensor-core GEMM — so it stays per-CTA / low-MLP latency-bound and runs about 4 times slower than torch dense-MQA at the real 576/512 shape (vs_sdpa about 0.23 to 0.29 times). The shape is correct and tensor-core-friendly (validated structurally); realizing the flip needs tcgen05 (M greater-equal 128) — data-motivated future work, not gating.</desc>
+<rect x="0" y="0" width="615" height="415" fill="#ffffff"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<!-- title block -->
+<text x="30" y="29" font-size="15" font-weight="600" fill="#2C2C2A">MLA decode roofline (B300): two-layer prediction vs measured</text>
+<text x="30" y="47" font-size="11" fill="#888780">Pure roofline predicted a compute-flip; the per-CTA-corrected layer landed at the floor.</text>
+
+<!-- ===================== PLOT FRAME ===================== -->
+<!-- plot area: x 95..600 (AI log10 1..3.3), y 80..370 (throughput log) -->
+<rect x="95" y="80" width="505" height="290" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- y axis + title -->
+<line x1="95" y1="80" x2="95" y2="370" stroke="#888780" stroke-width="0.5"/>
+<text x="91" y="72" font-size="11" fill="#5F5E5A">achieved throughput  (FLOP/s, log)</text>
+<!-- x axis + title -->
+<line x1="95" y1="370" x2="600" y2="370" stroke="#888780" stroke-width="0.5"/>
+<text x="600" y="395" font-size="11" fill="#5F5E5A" text-anchor="end">arithmetic intensity  AI  (FLOP/byte, log)</text>
+
+<!-- HBM diagonal bound (8 TB/s): throughput = AI * 8000 GFLOP/s, clipped at the ridge -->
+<!-- ridge at AI=312.5 (log10=2.495 -> x=493), peak y at top. Diagonal from bottom-left up to ridge. -->
+<line x1="110" y1="361" x2="493" y2="100" stroke="#185FA5" stroke-width="1.6"/>
+<text x="150" y="330" font-size="9.5" fill="#185FA5" transform="rotate(-34.3 150 330)">HBM bound — 8 TB/s</text>
+
+<!-- FP16-TC compute ceiling (flat) -->
+<line x1="493" y1="100" x2="600" y2="100" stroke="#C9322B" stroke-width="1.6"/>
+<text x="596" y="93" font-size="9.5" fill="#C9322B" text-anchor="end">FP16-TC peak · 2500 TFLOP/s</text>
+
+<!-- ridge marker -->
+<line x1="493" y1="100" x2="493" y2="370" stroke="#C9322B" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="493" y="62" font-size="10" font-weight="600" fill="#C9322B" text-anchor="middle">ridge AI* = 312.5</text>
+
+<!-- x tick guides for the three AI values: 8, 234.8, 835 -->
+<!-- AI=8: log10=0.903 -->
+<line x1="146" y1="80" x2="146" y2="370" stroke="#EFEEE9" stroke-width="1"/>
+<text x="146" y="385" font-size="9" fill="#888780" text-anchor="middle">8</text>
+<!-- AI=234.8: log10=2.371 -->
+<line x1="466" y1="80" x2="466" y2="370" stroke="#EFEEE9" stroke-width="1"/>
+<text x="466" y="385" font-size="9" fill="#888780" text-anchor="middle">235</text>
+<!-- AI=835: log10=2.922 -->
+<line x1="586" y1="80" x2="586" y2="370" stroke="#EFEEE9" stroke-width="1"/>
+<text x="586" y="385" font-size="9" fill="#888780" text-anchor="middle">835</text>
+
+<!-- region labels -->
+<text x="250" y="358" font-size="10" fill="#5F5E5A" text-anchor="middle" font-style="italic">memory-bound</text>
+<text x="545" y="358" font-size="10" fill="#5F5E5A" text-anchor="middle" font-style="italic">compute-bound</text>
+
+<!-- ============ THE AI LADDER (pure-roofline points, ON the roofline) ============ -->
+<!-- GQA-8 fp16: AI=8, on HBM diagonal. -->
+<circle cx="146" cy="345" r="4.5" fill="#185FA5"/>
+<text x="156" y="349" font-size="10" font-weight="600" fill="#185FA5">GQA-8 fp16 · AI=8</text>
+
+<!-- MLA fp16 pure-roofline: AI=234.8, on HBM diagonal just under ridge -->
+<circle cx="466" cy="118" r="4.5" fill="#185FA5"/>
+<text x="460" y="135" font-size="10" font-weight="600" fill="#185FA5" text-anchor="end">MLA fp16 · AI=235</text>
+
+<!-- MLA nvfp4 pure-roofline: AI=835, RIGHT of ridge -> on compute ceiling -->
+<polygon points="586,100 590.6,108 595.9,108.6 592,112.3 593.2,117.6 586,114.9 578.8,117.6 580,112.3 576.1,108.6 581.4,108" fill="#3C3489" stroke="#9B92D8" stroke-width="0.8"/>
+<text x="586" y="132" font-size="10" font-weight="600" fill="#3C3489" text-anchor="middle">MLA nvfp4 · AI=835</text>
+
+<!-- pure-roofline star for MLA prediction: ON the ceiling -->
+<polygon points="476,100 480.6,108 485.9,108.6 482,112.3 483.2,117.6 476,114.9 468.8,117.6 470,112.3 466.1,108.6 471.4,108" fill="#3C3489" stroke="#9B92D8" stroke-width="0.8"/>
+<text x="300" y="106" font-size="10" font-weight="600" fill="#3C3489">★ pure roofline (naive)</text>
+
+<!-- ============ MEASURED point: AT the per-CTA floor ============ -->
+<!-- gap arrow: from the pure star down to the measured square -->
+<line x1="450" y1="122" x2="450" y2="338" stroke="#9B92D8" stroke-width="1.3" stroke-dasharray="4 3" opacity="0.9" marker-end="url(#arrow)"/>
+<!-- solid blue square at the floor -->
+<rect x="445.5" y="340" width="9" height="9" fill="#185FA5"/>
+<text x="461" y="348" font-size="10" font-weight="600" fill="#185FA5">■ MEASURED · 0.75 TFLOP/s</text>
+<text x="461" y="360" font-size="9" fill="#888780">per-CTA floor · %HBM ≈ 0%</text>
+
+<!-- ============ TWO TINY VERDICT TAGS ============ -->
+<rect x="103" y="92" width="172" height="17" rx="4" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1"/>
+<text x="111" y="104" font-size="9.5" font-weight="600" fill="#226B40">✓ per-CTA-corrected: landed</text>
+<rect x="103" y="114" width="172" height="17" rx="4" fill="#F4F3F0" stroke="#B9B7AF" stroke-width="1"/>
+<text x="111" y="126" font-size="9.5" fill="#888780">✗ pure-roofline flip: didn't realize</text>
+
+</svg>

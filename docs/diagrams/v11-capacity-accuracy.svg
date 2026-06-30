@@ -1,0 +1,102 @@
+<svg width="100%" viewBox="0 0 940 452" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>MLA latent-KV decode — 202x KV-cache capacity over MHA, at the FP8 accuracy floor (NVFP4 = 3.5x FP8 RMSE, latent-width-independent)</title>
+<desc>Two panels for v11 MLA latent-KV decode, measured on B300/sm_103 and T4. LEFT panel (Capacity): KV-cache footprint per the measured pool at N_k=65536 (page 256), shown as descending bars on a log y-axis in MB. MHA stores the full 32768 dims/token = 4295 MB. GQA-8 stores 2048 dims/token = 268 MB, a 16x cut versus MHA. MLA-NVFP4 stores ONE shared latent of 576 dims/token at 0.5625 bytes/element = 21 MB. That is 202.3x smaller than MHA and 12.6x smaller than GQA-8 — a 99.5% reduction. The capacity win is structural (by construction): MLA reads one latent for all 128 query heads, NVFP4 packs it at 0.5625 B/elem. RIGHT panel (Accuracy): end-to-end RMSE versus a reference, three bars on a linear y-axis. The kernel-vs-oracle error is about 2e-5 (FP16 latent, kernel math is exact — no quantization). FP8-latent quant error is about 7e-4. NVFP4-latent quant error is about 2.5e-3 = 3.5x the FP8 error — E2M1's 1-bit mantissa sets a hard FP4 accuracy floor that is independent of latent width (same 3.5x as v10's dense NVFP4). Takeaway: MLA + NVFP4 is a 202x capacity win by construction; the cost is 3.5x FP8 RMSE (the floor). FP4 buys bytes, not accuracy, and on a per-CTA-bound CUDA-core decode kernel it buys no latency either (that needs tensor cores, the v11 future arm).</desc>
+<rect x="0" y="0" width="940" height="452" fill="#ffffff"/>
+
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">MLA latent-KV decode — 202× capacity, at the FP8 floor</text>
+<text x="30" y="49" font-size="11" fill="#888780">One shared latent for all 128 heads + NVFP4 storage, at N_k=65536.</text>
+
+<!-- ===================== LEFT PANEL: capacity ===================== -->
+<text x="60" y="84" font-size="12" font-weight="600" fill="#5F5E5A">Capacity</text>
+
+<!-- plot frame -->
+<rect x="60" y="98" width="370" height="300" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- log-y gridlines + tick labels: 10000, 1000, 100, 10 MB. Plot area y 110..386 -->
+<line x1="60" y1="123" x2="430" y2="123" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="55" y="126" font-size="9" fill="#888780" text-anchor="end">10,000</text>
+<line x1="60" y1="197" x2="430" y2="197" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="55" y="200" font-size="9" fill="#888780" text-anchor="end">1,000</text>
+<line x1="60" y1="271" x2="430" y2="271" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="55" y="274" font-size="9" fill="#888780" text-anchor="end">100</text>
+<line x1="60" y1="345" x2="430" y2="345" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="55" y="348" font-size="9" fill="#888780" text-anchor="end">10</text>
+
+<!-- y-axis title -->
+<text x="22" y="248" font-size="10" fill="#5F5E5A" text-anchor="middle" transform="rotate(-90 22 248)">KV-cache size  (MB, log scale)</text>
+
+<!-- baseline axis -->
+<line x1="60" y1="386" x2="430" y2="386" stroke="#888780" stroke-width="0.5"/>
+
+<!-- Bar geometry: log10 scale, y(v) = 197 - (log10(v) - 3)*74  → 10000->123, 1000->197, 100->271, 10->345
+     MHA 4295 -> 150.2 ; GQA 268 -> 239.3 ; MLA 21 -> 321.2 -->
+
+<!-- MHA bar (pale-blue reference, the baseline being beaten) -->
+<rect x="92" y="150" width="78" height="236" fill="#EAF0F6" stroke="#A9C4DD" stroke-width="1"/>
+<text x="131" y="144" font-size="11" font-weight="600" fill="#185FA5" text-anchor="middle">4,295 MB</text>
+<text x="131" y="402" font-size="10" fill="#5F5E5A" text-anchor="middle">MHA</text>
+
+<!-- GQA-8 bar (neutral primary blue) -->
+<rect x="207" y="239" width="78" height="147" fill="#EAF0F6" stroke="#185FA5" stroke-width="1.2"/>
+<text x="246" y="233" font-size="11" font-weight="600" fill="#185FA5" text-anchor="middle">268 MB</text>
+<text x="246" y="402" font-size="10" fill="#5F5E5A" text-anchor="middle">GQA-8</text>
+
+<!-- MLA-NVFP4 bar (green = the win) -->
+<rect x="322" y="321" width="78" height="65" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1.4"/>
+<text x="361" y="315" font-size="11" font-weight="600" fill="#226B40" text-anchor="middle">21 MB</text>
+<text x="361" y="402" font-size="10" fill="#226B40" text-anchor="middle">MLA·NVFP4</text>
+
+<!-- capacity-ratio callout (green leader spanning the descent) -->
+<line x1="170" y1="138" x2="322" y2="138" stroke="#3C8C5A" stroke-width="0.8" stroke-dasharray="4 3"/>
+<rect x="178" y="166" width="166" height="20" rx="4" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="0.8"/>
+<text x="261" y="180" font-size="10" font-weight="600" fill="#226B40" text-anchor="middle">202× vs MHA / 12.6× vs GQA-8</text>
+
+<!-- ===================== RIGHT PANEL: accuracy ===================== -->
+<line x1="478" y1="70" x2="478" y2="408" stroke="#E3E1DA" stroke-width="1"/>
+
+<text x="540" y="84" font-size="12" font-weight="600" fill="#5F5E5A">Accuracy</text>
+
+<!-- plot frame -->
+<rect x="540" y="98" width="370" height="300" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- linear y-axis: 0 .. 3e-3. Plot area y 118 (=3e-3) .. 386 (=0). span 268 px over 3e-3
+     gridlines at 3e-3, 2e-3, 1e-3, 0 -->
+<line x1="540" y1="118" x2="910" y2="118" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="535" y="121" font-size="9" fill="#888780" text-anchor="end">3e-3</text>
+<line x1="540" y1="207" x2="910" y2="207" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="535" y="210" font-size="9" fill="#888780" text-anchor="end">2e-3</text>
+<line x1="540" y1="297" x2="910" y2="297" stroke="#EFEEE9" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="535" y="300" font-size="9" fill="#888780" text-anchor="end">1e-3</text>
+<line x1="540" y1="386" x2="910" y2="386" stroke="#888780" stroke-width="0.5"/>
+<text x="535" y="389" font-size="9" fill="#888780" text-anchor="end">0</text>
+
+<!-- y-axis title -->
+<text x="502" y="248" font-size="10" fill="#5F5E5A" text-anchor="middle" transform="rotate(-90 502 248)">RMSE vs reference  (linear)</text>
+
+<!-- bar geometry: y(v) = 386 - (v/3e-3)*268
+     kernel 2e-5 -> 384.2 (sliver) ; FP8 7e-4 -> 323.5 ; NVFP4 2.5e-3 -> 162.7 -->
+
+<!-- kernel-vs-oracle bar (green = exact) -->
+<rect x="572" y="383" width="78" height="3" fill="#EAF4EE" stroke="#3C8C5A" stroke-width="1.2"/>
+<text x="611" y="377" font-size="10.5" font-weight="600" fill="#226B40" text-anchor="middle">~2e-5</text>
+<text x="611" y="402" font-size="10" fill="#5F5E5A" text-anchor="middle">kernel vs oracle</text>
+
+<!-- FP8-latent bar (blue = the reference precision / the floor) -->
+<rect x="687" y="323" width="78" height="63" fill="#EAF0F6" stroke="#185FA5" stroke-width="1.2"/>
+<text x="726" y="317" font-size="10.5" font-weight="600" fill="#185FA5" text-anchor="middle">~7e-4</text>
+<text x="726" y="402" font-size="10" fill="#5F5E5A" text-anchor="middle">FP8 latent</text>
+
+<!-- NVFP4-latent bar (orange = the cost) -->
+<rect x="802" y="162" width="78" height="224" fill="#FAECE7" stroke="#D85A30" stroke-width="1.4"/>
+<text x="841" y="156" font-size="10.5" font-weight="600" fill="#993C1D" text-anchor="middle">~2.5e-3</text>
+<text x="841" y="402" font-size="10" fill="#993C1D" text-anchor="middle">NVFP4 latent</text>
+
+<!-- 3.5x annotation between FP8 and NVFP4 -->
+<line x1="765" y1="270" x2="802" y2="270" stroke="#D85A30" stroke-width="0.8" stroke-dasharray="4 3"/>
+<rect x="703" y="250" width="124" height="20" rx="4" fill="#FAECE7" stroke="#D85A30" stroke-width="0.8"/>
+<text x="765" y="264" font-size="10" font-weight="600" fill="#993C1D" text-anchor="middle">3.5× = FP8 floor</text>
+
+<!-- ===================== bottom takeaway ===================== -->
+<rect x="30" y="416" width="880" height="26" rx="6" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
+<text x="470" y="433" font-size="10.5" font-weight="600" fill="#3C3489" text-anchor="middle">MLA+NVFP4: 202× capacity by construction; the cost is 3.5× FP8 RMSE (the floor).</text>
+</svg>

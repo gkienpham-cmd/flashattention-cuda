@@ -1935,3 +1935,51 @@ quiz** (deferred to the very end per Kien). See `docs/v11-kickoff.md`, `decision
 `interview-prep.md` C16, `docs/v11-b300-runbook.md`.
 
 ---
+
+## Step 11 deep-research close-out (2026-06-30, verify + adversarial + research pass) — v11 VERIFIED, surgical corrections
+
+A multi-agent pass (13 grounding/web agents → 16-claim extraction → 3-vote diverse-lens adversarial
+verification → synthesis). **All 16 claims landed HOLDS or HOLDS-WITH-CAVEAT — none refuted.** Every
+load-bearing number reconciles to the raw `v11_regime.txt` / `v11_kern_sum.txt` / both gate notebooks
+(per-CTA verdict, 4× gap, capacity, accuracy, nsys cross-check — all exact). The two "puzzles" the digest
+flagged (eff_bw 0.9-vs-112 GB/s, nsys 387 ms-vs-6 µs) are **per-token-vs-per-launch unit confusions**
+(off by exactly H_q=128), not data problems. Corrections folded in below (the recorded-before-coding
+prediction prose above is preserved intact — these amend its *interpretation*, not the predictions):
+
+| # | Prior phrasing (above / docs) | Verdict | Correction to read it with |
+|---|---|---|---|
+| 1 | "the ~4× gap **because** torch packs M=128 into cuBLAS **tensor-core GEMMs**" / "validating §9-Q1: M=128 **IS** a real TC GEMM" | **HOLDS_WITH_CAVEAT** | The measured 4× is exact (back-out reconciles 3.4–4.3×). But the **cause is an INFERENCE, not a measurement** — the torch baseline `_mla_base` is a cuBLAS *batched* matmul (per-GEMM M=1, 128-head batch, **FP32**, ~4.6 TFLOP/s, materializes the score), so "torch hit an M=128 TC GEMM" is not established from this reference; no torch-side profile was captured. Honest form: *our warp-per-head CUDA-core GEMV is ~4× slower than a tuned batched-matmul+softmax; the M=128-as-one-TC-GEMM benefit is shown structurally/externally (FlashMLA-ETAP arXiv 2506.01969 measures <25% util below the WGMMA min-M; TRT-LLM #4412), not by this bench.* §9-Q1 is **indirectly** validated: the 4× proves *the shape admits a TC GEMM (cuBLAS exploits it)* — whether **our** absorbed-QK packs as **one** tcgen05 GEMM is structurally argued, **untested** (no tcgen05 path ran). |
+| 2 | "%HBM = 0.0% … per-CTA-bound … confound-free" used as the limiter proof | **HOLDS_WITH_CAVEAT** | At this high-AI shape (fp16 AI 235; nvfp4 AI 835 ≫ the 312.5 ridge), **%HBM≈0% only proves "not bandwidth-bound" (expected)** — it is NOT itself the per-CTA proof. The proof rests on the **0.75 TFLOP/s (<1% of either compute peak) + the 4× cuBLAS gap + the arch-independent ceiling**. (For low-AI GQA decode, flat-%HBM-past-L2 *was* the proof; here it is not — the single most important interpretive guardrail in the step.) |
+| 3 | "eff_bw ~0.9 GB/s = 0.01% of 8 TB/s" | **HOLDS (+ nuance)** | 0.9 GB/s is the **logical** (latent-read-once) effective BW over the full per-launch latency; the physical 16×-block-reread upper bound is **~14 GB/s = 0.18% of peak** — still nowhere near memory-bound. The naive "112 GB/s" recompute divided per-launch bytes by *per-token* time (× H_q=128 unit error). |
+| 4 | "merge = 0.04%" (digest) | **REFUTED (the 0.04%)** | True share = **0.0% (3.5 µs/call, 0.0009%)** = 349,953 ns / 38,708,710,496 ns. The earlier "0.04%" was a 44× overstatement (non-material — merge is negligible either way). |
+| 5 | "387 ms/call @ N_k=1M cross-checks 3023 µs/tok × 128" | **HOLDS** | nsys avg 387.087 ms vs regime 386.96 ms = 0.03%. The nsys run IS the N_k=1M shape via `_profile(iters=100)`, not a mystery shape. |
+| 6 | "`q_absorbed` staging ≈ 147 KB → ~1 block/SM" (pre-record) | **HOLDS_WITH_CAVEAT (magnitude miss)** | The kernel stages **~46 KB** (sK_T 38 KB + sQ 9 KB — a single transposed tile, not full `q_absorbed`). The ~1-block/SM *direction* held **on T4** (46 KB vs the 48 KB static limit); on **B300** (228 KB/SM) 46 KB permits **~4 blocks/SM**, so smem is **not** the B300 1-block limiter — the per-CTA GEMV *shape* is. Record as a magnitude miss inside the two-layer win. |
+| 7 | "accuracy NVFP4-latent ~3.5× FP8" | **HOLDS_WITH_CAVEAT** | ~3.5× is the cross-arch mean (B300 **3.54** / T4 **3.44**), **measured on our synthetic + GPT-2 substrate, single-seed-pair per shape — not a published constant** (literature FP4-vs-FP8 gaps span <1% task-accuracy to several× RMSE). The asymmetric per-channel-K/per-token-V recovery recipe stays a **negative/conditional** result, untested on the latent — do not lead with it. |
+| 8 | "tcgen05 gate M≥64" (archs.py:153, several docs) | **REFUTED for block-scaled NVFP4** | The **block-scaled NVFP4** MMA gate is **M≥128** (K=256, TN-only); **M≥64 is the FP16/FP8/dense-non-scaled-FP4 floor.** v11's M=128 meets the NVFP4 gate by construction (the v10-era "M=G<64 keeps the cores dark" statements remain correct in their FP8/GQA context). Fixed at `roofline/archs.py:153`. |
+| 9 | "FA4 stops at B200/sm_100" (CLAUDE.md, v9-kickoff) | **REFUTED as stated** | FA4 **targets and benchmarks** B200/sm_100 (BF16, prefill/training) and never *characterizes* B300; its kernel is **deployed but never characterized** on sm_103 (vLLM/SGLang auto-activate it). The novelty is the **open, roofline-documented, prediction-vs-measured kernel-level characterization** of decode on sm_103 — not "first to run." |
+| 10 | B300 constants (148 SM, 132.6 MB L2, 2032 MHz) | **HOLDS** | Keep all (provenance: 160 on-die / **148 enabled**, measured; L2 not officially published → **132.6 MB measured**, the "192 MB" is an unsourced aggregator likely confusing B200's 192 GB *capacity*; clock measured). The **2.5 PFLOPS** FP16-TC (not 2.25 = B200) is what makes ridge **312.5** exact. |
+
+**The methodological win stands, clean: the two-layer prediction LANDED.** Pure roofline predicted the arc's
+first compute-flip (fp8/nvfp4 AI 470/835 past the 312.5 ridge); the per-CTA-corrected (REAL) prediction said
+it stays per-CTA on CUDA cores (M=128 packs as 16 blocks × 8 warps, not one TC GEMM; 0.75 TFLOP/s) — the
+measurement confirmed the REAL layer. **The shape is correct + tensor-core-friendly (validated by the 4×
+cuBLAS gap); realizing it needs tcgen05.**
+
+**Strengths to lead with (publication-grade):** (1) per-CTA-bound decode on sm_103, confound-free past a
+5.1× L2 overflow — a counterintuitive, falsifiable result that contradicts the conventional "decode is
+HBM-bound" wisdom; (2) the two-layer prediction as a recorded-before-coding deliverable; (3) the 4× gap as
+the *lever-localizer* (M=128 is TC-amenable, CUDA-core is the wrong tool); (4) capacity 202× durable by
+construction; (5) nsys provenance paid; (6) the §9-Q4 absorption-identity test. **Honest weaknesses (the
+hardening list):** ncu still owed on a privileged B300 (proxy ncu-validated only once, on T4); clocks
+idle-pinned not hard-locked; the 4× cause inferred not profiled; §9-Q1's literal "one tcgen05 GEMM"
+untested; single-seed accuracy on gpt2-small; no SOTA comparators run (FlashMLA ~410 TFLOP/s decode is ~3
+orders above v11 — the contribution is the open methodology, not wall-clock).
+
+New figures: `diagrams/v11-{per-cta-wall-b300,cublas-gap,roofline-two-layer,capacity-accuracy,nsys-schedule,to-v12-tcgen05}.svg`.
+**Decision: v12 = native tcgen05 tensor-core MLA decode** (the data-motivated arm — see `decisions.md` Step
+11 close-out + `docs/v12-kickoff.md`). Paper positioning (honest, characterization-grade): the defensible
+claim is *"the first open, kernel-level, prediction-vs-measured roofline characterization of attention decode
+on sm_103 (MHA→GQA→MLA, FP16→FP8→NVFP4)"* — **complementing, not beating** FlashInfer/FlashMLA/cuDNN.
+Closest prior work = Tri Dao's GLA (arXiv 2505.21487, open roofline-documented MLA decode on H100) — our
+delta is exactly **sm_103 + KV-quant**. Venue path: PMBS@SC26 / ES-FoMo / IISWC 2027 (not top-tier systems;
+the methodology itself is not novel — only its application to this empty cell). See `interview-prep.md` C17.

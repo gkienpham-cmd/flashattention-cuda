@@ -1,0 +1,59 @@
+<svg width="100%" viewBox="0 0 620 330" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v11 MLA decode on B300/sm_103 is per-CTA-bound to 2M tokens: %HBM stays flat near 0% even past a 5x L2 overflow, so the wall is per-CTA, not memory</title>
+<desc>A single line plot of percent of peak HBM bandwidth (eff_bw = logical KV bytes / time, divided by the 8 TB/s B300 peak) versus context length N_k for the v11 MLA latent-KV decode kernel on B300/sm_103. The x axis is logarithmic over the six measured contexts 8192, 32768, 131072, 524288, 1048576 and 2097152 tokens. The measured blue line is dead flat at about 0.01 percent of peak across the entire range — eff_bw is roughly 0.9 GB/s logical (about 14 GB/s even on a generous 16x physical-reread upper bound), a tiny fraction of the 8000 GB/s peak. A vertical dashed orange line marks the L2-overflow point: the working set crosses the measured 132.6 MB B300 L2 between N_k=131072 (42 MB) and N_k=524288 (170 MB). At N_k=2,097,152 the working set is 679.48 MB, about 5.1 times the L2, and it is annotated on the plot, yet %HBM does not climb — there is no bandwidth knee at the L2 crossing. A faint dashed purple line shows the pre-registered counter-prediction that %HBM would climb if the kernel were bandwidth-bound; the measured flat line ignores it. The fuller verdict (lives in the caption, not the figure): the kernel achieves only 0.75 TFLOP/s (under 1 percent of either compute peak) and is about 4x slower than torch dense-MQA on the same 576/512 shape, so the limiter is per-CTA / low-MLP latency, confirmed confound-free by the 5x L2 overflow without ncu. Honest scope: at this high-AI MLA shape (AI ~235 fp16 / ~835 nvfp4, above the ridge), flat %HBM near 0 only proves NOT-bandwidth-bound; the per-CTA verdict rests on the under-1-percent compute and the 4x cuBLAS gap, not on %HBM alone. eff_bw counts the latent once (logical); a 16x physical-reread upper bound is still ~14 GB/s = 0.18%. Counter-free (no ncu; proxy ncu-validated once on T4); clocks idle-pinned at 2032 MHz, not hard-locked. Two-layer prediction: pure roofline said nvfp4 AI 835 above the 312.5 FP16-TC ridge would flip MMA-bound (the arc's first decode flip) — it did NOT realize; the per-CTA-corrected layer (CUDA-core warp-per-head GEMV packs M=128 as 16 blocks x 8 warps, not one GEMM) is what landed. B300/sm_103, vast.ai container, NVFP4 latent. Data: notebooks/v11_mla_gate_b300output.ipynb, v11_regime.txt.</desc>
+<rect x="0" y="0" width="620" height="330" fill="#ffffff"/>
+
+<text x="30" y="30" font-size="15" font-weight="600" fill="#2C2C2A">v11 MLA on B300/sm_103: per-CTA-bound to 2M tokens</text>
+<text x="30" y="49" font-size="11" fill="#888780">%HBM flat near 0% across a 256x context sweep — a 5x L2 overflow never lifts it</text>
+
+<!-- plot frame -->
+<rect x="78" y="74" width="500" height="190" fill="#FCFCFB" stroke="#D7D5CC" stroke-width="1"/>
+
+<!-- y axis 0..1% : y=250 (0%) -> y=82 (1%) -->
+<line x1="78" y1="250" x2="78" y2="82" stroke="#B4B2A9" stroke-width="1"/>
+<line x1="78" y1="250" x2="578" y2="250" stroke="#B4B2A9" stroke-width="1"/>
+
+<!-- y ticks 0 / 0.25 / 0.5 / 0.75 / 1.0 % -->
+<line x1="74" y1="250" x2="78" y2="250" stroke="#888780" stroke-width="1"/><text x="70" y="253" font-size="9" fill="#888780" text-anchor="end">0%</text>
+<line x1="74" y1="208" x2="78" y2="208" stroke="#888780" stroke-width="1"/><text x="70" y="211" font-size="9" fill="#888780" text-anchor="end">0.25%</text>
+<line x1="74" y1="166" x2="78" y2="166" stroke="#888780" stroke-width="1"/><text x="70" y="169" font-size="9" fill="#888780" text-anchor="end">0.5%</text>
+<line x1="74" y1="124" x2="78" y2="124" stroke="#888780" stroke-width="1"/><text x="70" y="127" font-size="9" fill="#888780" text-anchor="end">0.75%</text>
+<line x1="74" y1="82" x2="78" y2="82" stroke="#888780" stroke-width="1"/><text x="70" y="85" font-size="9" fill="#888780" text-anchor="end">1.0%</text>
+<text x="30" y="166" font-size="9" fill="#888780" text-anchor="middle" transform="rotate(-90 30 166)">% of peak HBM (eff_bw / 8 TB/s)</text>
+
+<!-- faint internal gridlines -->
+<line x1="78" y1="208" x2="578" y2="208" stroke="#EFEEE9" stroke-width="0.8" stroke-dasharray="3 3"/>
+<line x1="78" y1="166" x2="578" y2="166" stroke="#EFEEE9" stroke-width="0.8" stroke-dasharray="3 3"/>
+<line x1="78" y1="124" x2="578" y2="124" stroke="#EFEEE9" stroke-width="0.8" stroke-dasharray="3 3"/>
+
+<!-- x axis: log over 6 points. 8K@130, 32K@215, 131K@300, 524K@390, 1M@460, 2M@545 -->
+<line x1="130" y1="250" x2="130" y2="254" stroke="#888780" stroke-width="1"/><text x="130" y="266" font-size="9" fill="#888780" text-anchor="middle">8K</text>
+<line x1="215" y1="250" x2="215" y2="254" stroke="#888780" stroke-width="1"/><text x="215" y="266" font-size="9" fill="#888780" text-anchor="middle">32K</text>
+<line x1="300" y1="250" x2="300" y2="254" stroke="#888780" stroke-width="1"/><text x="300" y="266" font-size="9" fill="#888780" text-anchor="middle">131K</text>
+<line x1="390" y1="250" x2="390" y2="254" stroke="#888780" stroke-width="1"/><text x="390" y="266" font-size="9" fill="#888780" text-anchor="middle">524K</text>
+<line x1="460" y1="250" x2="460" y2="254" stroke="#888780" stroke-width="1"/><text x="460" y="266" font-size="9" fill="#888780" text-anchor="middle">1M</text>
+<line x1="545" y1="250" x2="545" y2="254" stroke="#888780" stroke-width="1"/><text x="545" y="266" font-size="9" fill="#888780" text-anchor="middle">2M</text>
+<text x="328" y="283" font-size="10" fill="#5F5E5A" text-anchor="middle">context length N_k (tokens, log scale)</text>
+
+<!-- L2 spill vertical dashed line between 131K (42MB) and 524K (170MB) -> x ~= 345 -->
+<line x1="345" y1="82" x2="345" y2="250" stroke="#D85A30" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="349" y="96" font-size="9" font-weight="600" fill="#993C1D">L2 overflow (132.6 MB)</text>
+
+<!-- counter-prediction: faint rising dashed purple line from the L2 crossing -->
+<polyline points="345,244 390,205 460,150 545,95" fill="none" stroke="#9B92D8" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.85"/>
+<text x="468" y="138" font-size="8.5" fill="#3C3489" transform="rotate(-32 468 138)">if bandwidth-bound</text>
+
+<!-- measured flat line at ~0.01% (eff_bw ~0.9 GB/s logical). Drawn ~3px above baseline so points read. -->
+<polyline points="130,247 215,247 300,247 390,247 460,247 545,247" fill="none" stroke="#185FA5" stroke-width="2.4"/>
+<g fill="#185FA5">
+<circle cx="130" cy="247" r="3"/><circle cx="215" cy="247" r="3"/><circle cx="300" cy="247" r="3"/><circle cx="390" cy="247" r="3"/><circle cx="460" cy="247" r="3"/><circle cx="545" cy="247" r="3"/>
+</g>
+<text x="130" y="238" font-size="9" fill="#185FA5">MLA (NVFP4 latent) — measured</text>
+
+<!-- annotation: WS at 2M -->
+<line x1="545" y1="247" x2="545" y2="224" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="545" y="218" font-size="8.5" font-weight="600" fill="#993C1D" text-anchor="end">WS 679 MB = 5.1x L2</text>
+
+<!-- takeaway strip -->
+<text x="78" y="312" font-size="11" font-weight="600" fill="#2C2C2A">Per-CTA-bound: even a 5x L2 overflow never lifts %HBM off the floor — the wall is the warp-per-head GEMV, not bytes.</text>
+</svg>
