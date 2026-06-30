@@ -1814,7 +1814,37 @@ on sm_103** is the open §9-Q1/Q2 question; (b) `us/tok` is emulated-FP4 (+ the 
 16 GB T4** (the 288 GB B300 reaches the past-L2 regime); (d) "vs sdpa ~2×" is vs a hand-MQA torch reference
 (materializes the score matrix), not an optimized kernel — modest, don't over-claim.
 
-### Status — roofline recorded (✅), full source BUILT (✅), Gate 1 MEASURED GREEN (✅ Colab T4), B300 core PENDING
+### B300/sm_103 — Part 1 (notebook), MEASURED (vast.ai B300 SXM6, unprivileged, 2026-06-30)
+
+Data of record: `notebooks/v11_mla_gate_b300output.ipynb`. Build clean for **sm_103** (`-gencode
+compute_103,sm_103`; the 46 KB-smem 576/512 template compiles on Blackwell), **148 correctness passed**,
+capacity/accuracy identical to T4 (arch-independent). B300 idles at **2032/2032 MHz** (current=max even
+though `--lock-clocks` failed unprivileged), so `us/tok` is *less* clock-confounded than feared. Two
+headline findings:
+
+**1. Per-CTA-bound CONFIRMED past L2 on sm_103 (the counter-prediction lands on the real arch).** The
+clock-effectively-pinned, L2-flushed regime sweep: %HBM = **0.0%** (eff_bw ~0.9 GB/s) at every N_k from
+8192 (WS 2.65 MB) to **524288 — WS 169.87 MB > the measured 132.6 MB B300 L2 (`L2served=no`)**. So the
+CUDA-core MLA **did not leave the per-CTA floor even past L2 on Blackwell**, confound-free (the WS spills
+the L2 by construction). Same verdict as T4, now on the destination arch.
+
+**2. The smoking gun for the native-FP4 arm: the CUDA-core MLA is ~4× SLOWER than torch dense-MQA on B300.**
+Cell 16 `vs sdpa` (here = vs a torch MQA-over-latent reference) is **0.23–0.29× at the real 576/512 shape**
+(0.49–0.83× at the 96/64 smoke shape) — i.e. our kernel takes ~4× longer than naive torch. Why: torch's
+matmul packs **M=128 into cuBLAS tensor-core GEMMs**, while our kernel runs a warp-per-head CUDA-core GEMV.
+**This empirically validates §9-Q1 (M=128 IS a real tensor-core GEMM — torch exploits it) and proves the
+CUDA-core default is the wrong tool on Blackwell for this shape.** The honest verdict forming: *the MLA
+shape thesis is correct (M=128 is tensor-core-friendly, AI ~235–835 is real), but realizing it requires
+the tcgen05 path — the CUDA-core kernel stays per-CTA-bound (%HBM ~0% past L2) AND leaves a measured ~4×
+on the table vs even naive torch.* So the **native-FP4 tcgen05 arm (§9 Q1/Q2) is now motivated by data,
+not speculation** — it is the validated next lever, not a maybe.
+
+**Outstanding B300 (Part 2/3, terminal — runbook `docs/v11-b300-runbook.md`):** extend the %HBM sweep to
+1M/2M (confirm flat past L2; 288 GB has no OOM); the nsys 2025.3.2 schedule (partial vs merge split); the
+matched v10-GQA comparator. Owed (unprivileged): ncu L2-hit-rate; and the native-FP4 tcgen05 arm itself
+(now data-motivated) is the real build-forward.
+
+### Status — roofline recorded (✅), full source BUILT (✅), Gate 1 MEASURED GREEN (✅ Colab T4), B300 Part 1 MEASURED (✅ sm_103 notebook), B300 Part 2/3 (terminal nsys + extended sweep) PENDING
 
 Roofline extended (`roofline/model.py` MLA branch + `roofline/predict.py --mla`; non-MLA paths
 byte-identical — GQA-8 nvfp4 still 28.4, v1 naive still 0.2). Prediction recorded above BEFORE any
