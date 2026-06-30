@@ -1237,3 +1237,37 @@ prediction-vs-measured roofline characterization across MHA→GQA→MLA and FP16
 specific contribution is the measured tensor-core *shortfall* + the engine-correct two-ridge story. **Say-this:**
 "v12 complements the production kernels — it explains why the FP4 peak is unreachable for decode, which is a
 result, not a loss."
+
+---
+
+## C18-MEASURED — what the B300 run actually showed (addendum to C18)
+
+**The result in one breath.** I put the M=128 MLA decode matmuls on Blackwell tcgen05 tensor cores (by
+measuring CUTLASS's own production kernel, which already implements exactly the shape v11 designed), and the
+throughput went from v11's flat **0.75 TFLOP/s** to **2.4 → 1785 TFLOP/s** — *scaling with work*. The
+single most important thing I learned: the "per-CTA wall" I'd been hitting since v6 is **not a fixed
+ceiling — it's work-starvation.** At single-stream decode (B=1, short context) even NVIDIA's kernel sits at
+**1–2% of the FP8 peak**; give it enough work (batch 64 and/or 512K context) and the *same kernel* reaches
+**36% of peak / 46% of HBM.** **Say-this:** "Decode isn't intrinsically per-CTA-bound — it's
+pipeline-fill-bound. The wall was the small-batch micro-bench, not the hardware."
+
+**The two-layer prediction held, with one honest correction.** Per-CTA-corrected layer (below peak at
+single-stream decode): confirmed. The deeper 'per-CTA forever' reading: corrected — it was a small-B×K
+artifact of the CUDA-core kernel. And a storage deviation I have to own: I pre-registered NVFP4 storage
+(AI 835), but CUTLASS has no NVFP4, so what ran was FP8 storage (AI 470 < FP8 ridge 625 → HBM-bound) — and
+at scale it does trend to the HBM roof, not the compute roof, exactly as AI 470 predicts. **Say-this:** "I
+measured a different precision than I'd written down, said so, and the roofline still called it — HBM-leaning
+at scale because FP8-stored MLA sits just under the FP8 ridge."
+
+**The engine is the lever, and I can prove it now.** v11's warp-per-head CUDA-core GEMV was flat at 0.75
+TFLOP/s no matter the work; the warp-specialized tcgen05 kernel converts work into throughput (70× at
+K=8K, 1000× at K=512K, B=1). That's the v11→v12 thesis — "the shape was right, the tool was wrong" —
+measured against the canonical kernel. **Say-this:** "Same shape, swap CUDA cores for tensor cores, and the
+flat line becomes a scaling line. The tool was the whole story."
+
+**The scope pivot, owned.** v12 was going to be a hand-written kernel; I found CUTLASS ships the production
+one (M=128 by static_assert, FP8-native, paged+split-KV), so reinventing its warp-specialized scheduler
+would've been ego, not science. I characterized the real kernel instead. **Say-this:** "The honest move was
+to measure the kernel everyone actually runs, not to ship a worse copy of it — the contribution is the open
+regime characterization on sm_103, and Arm 2 (native FP4 KV *compute*) stays the genuine open lane because
+nobody, including CUTLASS, has it yet."

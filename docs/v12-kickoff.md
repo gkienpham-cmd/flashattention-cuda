@@ -1,5 +1,15 @@
 # v12 kickoff — native tcgen05 tensor-core MLA decode on B300/sm_103a (close the 4× gap v11 measured)
 
+> **⚠️ SUPERSEDED by the measured close-out (2026-06-30) — read `results.md`/`decisions.md` Step 12 first.**
+> Two things changed on contact with the box: (1) CUTLASS ex77 already ships the production MLA decode kernel
+> (`Sm100FmhaMlaKernelTmaWarpspecialized`, M=128 by static_assert, FP8-native, paged+split-KV), so v12
+> *characterized that kernel* rather than hand-rolling one (the "fork ex77 + keep v11's host" framing below is
+> historical). (2) ex77 has **no NVFP4**, so Arm 1 (FP8) was measured and **Arm 2 (native FP4 compute) stays
+> unbuilt/open**. Measured verdict: the per-CTA floor holds at small B×K (1–2% peak) but throughput **scales
+> with work B×K to 36% peak / 46% HBM** — "per-CTA forever" was a small-batch artifact. The §1 NVFP4-storage
+> roofline table (AI 835) was not what ran; the FP8-storage kernel is AI 470 < ridge 625 → HBM-bound, which
+> the at-scale data corroborates.
+
 > Paste-in starter for a fresh session. Follows the per-step loop in `ROADMAP.md`
 > (roofline → explain → write → correctness → bench → results → decisions → quiz).
 > Supersedes the now-complete `v11-kickoff.md`. Read `CLAUDE.md` Step 11 + its close-out,

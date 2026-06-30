@@ -511,6 +511,30 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   **Decision: v12 = native tcgen05 tensor-core MLA decode** (data-motivated by the 4× gap). Plan to paste:
   [`docs/v12-kickoff.md`](docs/v12-kickoff.md). See `results.md`/`decisions.md` Step 11 close-out,
   `interview-prep.md` C17.
+- **Step 12 (v12 tcgen05 tensor-core MLA decode) — MEASURED, DONE pending the final quiz (2026-06-30, vast.ai
+  B300/sm_103a, CUTLASS 4.6, CUDA 12.9).** Roofline ✅ (`roofline/model.py` gained an `mma_engine` selector:
+  storage `precision` decoupled from compute engine; `--mma-engine`; v11/earlier numbers byte-identical).
+  Author scaffold + wiring (`kernels/v12_mla_tc/`, `dispatch (10,0)`, `mla_tc_attention()`, harness/regime/
+  tests, gate notebook) ✅. **SCOPE PIVOT (honest):** on the box, CUTLASS ex77 was found to already ship the
+  production weight-absorbed MLA decode kernel — `Sm100FmhaMlaKernelTmaWarpspecialized`
+  (`77_blackwell_mla_2sm_{fp8,fp16}`): **M=128 by `static_assert(TileShapeH==128)` (§9-Q1 RESOLVED from
+  source** — the num_groups=32 cap was the *generic* kernel, not MLA), **FP8 E4M3 native** (= Arm 1), already
+  **paged + split-KV + LSE** with its own warp-specialized scheduler. Reinventing it adds no science → v12's
+  deliverable became **characterizing the production kernel directly** (the scaffold stays as the optional
+  harness integration point). **No NVFP4 in ex77 → Arm 2 (native FP4 *compute*) is genuinely unbuilt anywhere
+  → stays the open/future novelty.** **MEASURED headline:** FP8 decode throughput scales with **total work
+  B×K (pipeline fill), no knee** — B=1/K≤32K → **1–2% of the 5 PF FP8 peak** (the realistic single-stream
+  regime), B=64/K=524288 → **1785 TFLOP/s = 35.7% peak / 46.3% HBM**. smem=174 KB → ~1 CTA/SM (§9-Q2,
+  measured); FP8≈FP16 throughput → not compute-bound; FP8 `--verify` fail = quantization gap (v9/v10 story),
+  not a bug. **This CORRECTS the v6→v11 "per-CTA-bound forever" reading: that was a small-B×K artifact of the
+  CUDA-core kernel — the per-CTA "wall" is WORK-STARVATION, and the right ENGINE converts work to throughput**
+  (v11 CUDA-core was FLAT at 0.75 TFLOP/s; tcgen05 spans 2.4→1785, ~70–1000× v11 at matched B=1). **Honest
+  deviation:** pre-registered NVFP4 storage (AI 835); ex77 is FP8-storage (AI 470 < FP8 ridge 625 → HBM-bound)
+  → the at-scale 46% HBM corroborates the pure roofline *for the precision that ran*; NVFP4-storage + Arm 2
+  remain unmeasured. **Complement, not beat** (characterized NVIDIA's canonical kernel, not a SOTA claim).
+  Owed (non-gating, unprivileged box): ncu L2-hit/SMEM-BW validation; fp16 `--verify` PASS confirm. Prediction
+  -vs-measured: floor ✅, counter ✅ landed at scale, "per-CTA forever" corrected. See `results.md`/
+  `decisions.md` Step 12, `interview-prep.md` C18.
 
 ## Next steps
 
@@ -518,20 +542,27 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
 v7 paged KV → **v8 GQA M-packing (the reorder — occupancy)** → **v9 FP8 KV + regime-fix (T4) — DONE** →
 **v10 NVFP4 + asymmetric precision (headline, B300/sm_103 — the paper) — DONE + closed-out 2026-06-30** →
 **v11 MLA latent-KV decode (the SHAPE change, B300/sm_103a) — DONE + closed-out 2026-06-30** →
-**v12 native tcgen05 tensor-core MLA decode (the data-motivated arm)**. **v11 = MLA** raised M above 1
+**v12 native tcgen05 tensor-core MLA decode (the data-motivated arm) — DONE (measured 2026-06-30)**.
+**v11 = MLA** raised M above 1
 (packs all `h_q=128` heads → **M=128 by construction**, meeting the tcgen05 NVFP4 `M≥128` gate) and lifted
 decode AI `2G/b`→`~3.78·h_q/b`≈235 — the first decode shape in the arc that *pure roofline* calls
 compute-bound. **MEASURED: it stays per-CTA-bound on CUDA cores (0.75 TFLOP/s, %HBM ~0% to 2M past a 5.1× L2
 overflow) and is ~4× SLOWER than torch dense-MQA** — because torch routes M=128 into a cuBLAS tensor-core
 GEMM while our kernel runs warp-per-head CUDA-core GEMV. So the SHAPE is correct + tensor-core-friendly
-(validated by the 4× gap), but realizing it needs **tcgen05 → that IS v12**. **v12 = native tensor-core MLA
-decode** (decided in the v11 close-out): fork CUTLASS example 77 (weight-absorbed 512/64 decode kernel,
-2-SM), **Arm 1 = FP8-dense MMA (M≥64) → Arm 2 = native NVFP4 (M≥128, K=256, TN, gated on Arm 1)**, scores ≥
-FP16. **Pre-registered prediction (the paper-grade result): even with TC, single-token decode is
-SMEM-BW/pipeline-depth-bound → the win likely won't reach the FP4 peak and won't beat FlashMLA's ~410
-TFLOP/s — complementing, not beating.** Fallback = speculative q_len>1 (redundant unless the TC arm fails);
-occupancy-v8.8 (~1.4× @ B≥32) folds into v12 residency; GLA/sparse (DSA/CSA) → v13. **v12 plan to paste into
-a fresh session: [`docs/v12-kickoff.md`](docs/v12-kickoff.md)** (supersedes the now-complete `v11-kickoff.md`).
+(validated by the 4× gap), but realizing it needs **tcgen05 → that WAS v12**. **v12 MEASURED (2026-06-30):**
+the kernel already exists — CUTLASS ex77's `Sm100FmhaMlaKernelTmaWarpspecialized` (M=128 by static_assert,
+FP8-native, paged+split-KV) — so v12 characterized the production kernel directly (Arm 2 native-FP4 *compute*
+is unbuilt anywhere → open/future). **The pre-registered prediction landed AND corrected the long-standing
+framing:** even the production tcgen05 kernel is **1–2% of the FP8 peak at single-stream decode** (the
+SMEM-BW/pipeline-depth floor held), BUT throughput **scales with total work B×K to 36% peak / 46% HBM at
+serving scale** — so the v6→v11 "per-CTA-bound *forever*" reading was a small-B×K artifact; the per-CTA wall
+is **work-starvation**, and the ENGINE converts work to throughput (v11 CUDA-core flat 0.75 TFLOP/s →
+tcgen05 2.4→1785). **Complement, not beat** (we measured NVIDIA's canonical kernel). **Next = v13:** the
+remaining levers are **GLA / sparse (DSA / CSA)** (a different shape, the field's direction — Tri Dao GLA,
+DeepSeek V3.2 DSA / V4 CSA) and the optional hardenings (ncu on a privileged box; the H100→B200→B300
+three-generation roofline spine; Arm 2 native-FP4-KV-compute if a kernel ever exists). occupancy-v8.8 folds
+into any serving-regime kernel. See `results.md`/`decisions.md` Step 12 + `interview-prep.md` C18; the now-complete
+`docs/v12-kickoff.md` is superseded by the measured close-out.
 
 **Cheap pre-v10 experiment — DONE (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test; figure
 `diagrams/v8_5_v8_6_pastL2.svg`; data `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`).** Re-ran v8.5

@@ -1,5 +1,13 @@
 # v12 tensor-core MLA — B300/sm_103a runbook (PRIVILEGED box: implement → build → measure)
 
+> **⚠️ OUTCOME (2026-06-30): the "implement the kernel" half (Parts 1–4) was NOT needed.** CUTLASS ex77
+> already ships the production MLA decode kernel, so the measured path was: clone CUTLASS 4.6 → build the
+> stock `77_blackwell_mla_2sm_fp8` / `_fp16` example for `sm_103a` (needs the pip `nvidia-*/include` dirs via
+> `NVCC_PREPEND_FLAGS` for `curand_kernel.h` on the slim image) → run its built-in `--b/--k` benchmark sweep.
+> That sweep IS the v12 measured core (see `results.md` Step 12). ncu was skipped (unprivileged vast.ai →
+> `ERR_NVGPUCTRPERM`, owed). The kernel-writing Parts below are retained only as the fallback if a hand-rolled
+> or Arm-2 (native NVFP4) kernel is ever pursued.
+
 The B300 measured core for v12. Unlike v10/v11 (which shipped a finished CUDA-core kernel and only
 *measured* on the box), **v12's kernel body is written here** — fork CUTLASS example 77 onto tcgen05.
 So this runbook has an extra front half (Parts 1–4: resolve Q1 → implement Arm 1 → build → correctness)

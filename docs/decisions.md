@@ -1281,3 +1281,42 @@ regime `--engine`), tests (vs the v11 oracle + absorption identity, tol 5e-2, Bl
 notebook `notebooks/v12_mla_tc_gate.ipynb`. GPU work (rented root B300/sm_103a): implement the tcgen05
 body, Gate 1 correctness, the engine A/B + regime sweep, the four honesty debts (ncu/clock-lock/torch-fp16
 profile/2×-exp@M=128), then the quiz. See `docs/v12-kickoff.md`, `results.md` Step 12, `interview-prep.md` C18.
+
+## Step 12 MEASURED + close-out (2026-06-30) — pivot to the production CUTLASS kernel; the per-CTA "wall" is B×K-fill
+
+**Decision (recorded honestly): v12's measured core = characterize the production CUTLASS tcgen05 MLA decode
+kernel, not a hand-roll.** On the B300 box (CUTLASS 4.6, sm_103a, CUDA 12.9) ex77 was found to ship a
+COMPLETE weight-absorbed MLA *decode* kernel — `Sm100FmhaMlaKernelTmaWarpspecialized`
+(`77_blackwell_mla_2sm_{fp8,fp16}`): **M=128 by construction** (`static_assert(TileShapeH==128)` →
+**§9 Q1 RESOLVED from source**, the feared num_groups=32 cap was the *generic* kernel, not MLA),
+**FP8 E4M3 native** (= Arm 1), and already **paged + split-KV + LSE-reduction** with its own
+warp-specialized scheduler. Reinventing that scheduler adds no science → the "graft a CUTLASS collective
+into v11's host" route is **superseded**; we measured the canonical kernel directly. Our `kernels/v12_mla_tc/`
+scaffold + wiring + tests remain in-tree as the optional integration point (apples-to-apples vs the v11
+oracle through the harness) — not gating.
+
+**Measured verdict (full table in `results.md` Step 12).** FP8 throughput scales with **total work B×K
+(pipeline fill)**, smoothly, no knee: B=1/K=256 → 2.4 TFLOP/s (0.05% FP8 peak); B=1/K≤32K → **1–2% peak**
+(the realistic single-stream decode regime); B=64/K=524288 → **1785 TFLOP/s = 35.7% peak / 46.3% HBM**.
+smem=174 KB → ~1 CTA/SM (§9-Q2, measured). FP8≈FP16 throughput → not compute-bound.
+
+- **Bottleneck:** at single-stream / moderate-context decode, **work-starvation (too few CTAs × too little
+  pipeline depth to fill 148 SMs)** — i.e. the per-CTA/SMEM-BW floor, as pre-registered. At serving scale
+  (large batch and/or very long context) it lifts to ~46% HBM → HBM-leaning, consistent with the
+  FP8-storage AI 470 < FP8 ridge 625 pure-roofline call.
+- **Corrects the v6→v11 "per-CTA-bound forever" reading:** that was a small-B×K artifact of the CUDA-core
+  kernel. The ENGINE is the lever — v11 CUDA-core was flat at 0.75 TFLOP/s; tcgen05 spans 2.4→1785 and
+  scales. (C12's CUDA-core ~28%-HBM-cap finding stays valid *for the CUDA-core kernel*; C18 adds the
+  tensor-core engine result.)
+- **Honest deviation from the kickoff:** v12 was to keep NVFP4 storage (AI 835); ex77 has no NVFP4, so the
+  measured kernel is FP8-storage (AI 470). The NVFP4-storage arms and **Arm 2 (native FP4 compute)** are
+  **unmeasured** — Arm 2 stays the open/future novelty (no NVFP4 KV-compute kernel exists in CUTLASS today).
+- **What changes on another arch:** the B×K-fill / work-starvation behavior is **arch-general** (a property
+  of single-token decode), which is what makes the three-generation spine (H100→B200→B300) the strong
+  experiment; the FP8-native-decode kernel needs Blackwell tcgen05 (sm_100/sm_103a).
+- **Complement, not beat:** we characterized NVIDIA's canonical kernel — the contribution is the open,
+  prediction-vs-measured *regime curve* on sm_103 (the per-CTA floor at small B×K AND the B×K-fill lift to
+  ~46% HBM), not a SOTA latency claim.
+
+**Owed (non-gating, unprivileged box):** ncu L2-hit/SMEM-BW validation; fp16 `--verify` PASS confirmation.
+**v12 DONE** pending the Gate-2 quiz (deferred to the very end). See `results.md` Step 12, `interview-prep.md` C18.
