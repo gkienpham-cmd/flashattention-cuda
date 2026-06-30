@@ -439,8 +439,22 @@ deliverables — record them honestly (see Step 2 in `docs/results.md`), never p
   (the SHAPE change — packs M=128 by construction, lifts AI `2G/b`→`2·h_q`≈256 toward compute-bound; speculative
   is the fallback, occupancy-v8.8 folds in). Plan to paste: [`docs/v11-kickoff.md`](docs/v11-kickoff.md). See
   `results.md`/`decisions.md` Step 10 close-out, `interview-prep.md` C16.
-- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **Roofline RECORDED + full source BUILT +
-  Gate 1 MEASURED GREEN (Colab T4, 2026-06-30); B300/sm_103 measured core + quiz PENDING.** Gate 1: build
+- **Step 11 (v11 MLA latent-KV decode, `kernels/v11_mla/`)** — **DECODE STUDY COMPLETE (roofline ✅,
+  source ✅, Gate 1 ✅ Colab T4, B300/sm_103 core ✅ vast.ai, 2026-06-30); only the Gate-2 quiz remains.**
+  **B300/sm_103 measured core:** (a) per-CTA-bound CONFIRMED to **N_k=2M past L2** (%HBM ~0%, eff_bw ~0.9
+  GB/s, WS 679 MB ≫ the 132.6 MB B300 L2 → confound-free by a 5× overflow) on both T4 and B300 — the
+  CUDA-core MLA never leaves the per-CTA floor; (b) **the headline: the CUDA-core MLA is ~4× SLOWER than
+  torch dense-MQA on B300** (`vs sdpa` 0.23–0.29× @ 576/512) because torch packs M=128 into cuBLAS
+  tensor-core GEMMs while our kernel runs warp-per-head CUDA-core GEMV → **empirically VALIDATES §9-Q1
+  (M=128 IS a real TC GEMM)** and proves the CUDA-core default is the wrong tool on Blackwell; (c) nsys
+  schedule **99.9% partial / 0.0% merge** (nsys **2025.3.2**, non-empty sm_103 trace — **v10's provenance
+  debt PAID**). **Verdict: pure roofline predicted a compute-flip; the per-CTA-corrected (real) prediction
+  said it stays per-CTA on CUDA cores — measurement confirmed the real layer. The shape is correct +
+  tensor-core-friendly (validated), but realizing it needs tcgen05 → the native-FP4 arm is data-motivated
+  future work, not gating.** This IS the open, prediction-vs-measured, kernel-level
+  compute-vs-memory-vs-per-CTA characterization of MLA decode on sm_103 (the paper's empty cell). Owed:
+  ncu (unprivileged blocks it; counter-free %HBM proxy carries, ncu-validated once on T4). Data:
+  `notebooks/v11_mla_gate_{t4,b300}output.ipynb`, `v11_regime.txt`, `v11_kern_sum.txt`. Gate 1: build
   clean (the real 576/512 ~46 KB-smem template compiled on sm_75, no opt-in), **148 correctness passed**
   incl. the §9-Q4 **absorption identity** (latent-absorbed kernel == explicit per-head materialization);
   **capacity 202× vs MHA / 12.6× vs GQA-8 / 99.5%** measured; accuracy NVFP4-latent ~2.5e-3 = **~3.5× FP8**

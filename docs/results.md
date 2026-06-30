@@ -1839,12 +1839,47 @@ the tcgen05 path — the CUDA-core kernel stays per-CTA-bound (%HBM ~0% past L2)
 on the table vs even naive torch.* So the **native-FP4 tcgen05 arm (§9 Q1/Q2) is now motivated by data,
 not speculation** — it is the validated next lever, not a maybe.
 
-**Outstanding B300 (Part 2/3, terminal — runbook `docs/v11-b300-runbook.md`):** extend the %HBM sweep to
-1M/2M (confirm flat past L2; 288 GB has no OOM); the nsys 2025.3.2 schedule (partial vs merge split); the
-matched v10-GQA comparator. Owed (unprivileged): ncu L2-hit-rate; and the native-FP4 tcgen05 arm itself
-(now data-motivated) is the real build-forward.
+### B300/sm_103 — Part 2/3 (terminal), MEASURED — the core is COMPLETE
 
-### Status — roofline recorded (✅), full source BUILT (✅), Gate 1 MEASURED GREEN (✅ Colab T4), B300 Part 1 MEASURED (✅ sm_103 notebook), B300 Part 2/3 (terminal nsys + extended sweep) PENDING
+Data of record: `notebooks/v11_regime.txt` + `notebooks/v11_kern_sum.txt` (vast.ai B300, unprivileged).
+
+**3. The %HBM sweep extends FLAT to 2M, sealing per-CTA-bound past L2.** N_k 8192→**2097152**:
+`%HBM = 0.0%`, `eff_bw ~0.9 GB/s`, us/tok 23.8→**6063** (256× N_k → 256× time, perfectly linear = the
+decode signature). At N_k=2097152 the **WS = 679 MB ≫ the 132.6 MB B300 L2** (`L2served=no`) — so the
+per-CTA verdict is confound-free by a 5× L2 overflow. The CUDA-core MLA does **not** leave the per-CTA
+floor anywhere on sm_103.
+
+**4. nsys schedule — 99.9% partial / 0.0% merge (and the v10 provenance debt is PAID).** With **nsys
+2025.3.2** (the stock 2025.1.3 records an empty Blackwell trace — v10's exact debt; here the 2025.3.2
+binary produced a **non-empty sm_103 trace**): `mla_partial_kernel<32,576,512>` = **99.9%** (387 ms/call
+@ N_k=1M, h_q=128 — cross-checks the sweep's 3023 µs/tok × 128 = 387 ms), `mla_merge_kernel` = **0.0%**
+(3.5 µs). All other rows are one-time `build_paged_kv_mla` setup (quantize/copy/searchsort), not the timed
+kernel. So the time is **entirely in the score-stationary partial, not the LSE merge** — the schedule is
+sound, not merge-bound.
+
+### The v11 verdict (all gates measured, T4 + B300/sm_103)
+
+**Prediction-vs-measured: the two-layer model called it; the headline is the tensor-core gap.**
+- **Correctness** ✅ (148 passed both arches; the §9-Q4 **absorption identity** confirmed — latent-absorbed
+  kernel == explicit per-head materialization). **Capacity** ✅ **202× vs MHA / 12.6× vs GQA-8 / 99.5%**.
+  **Accuracy**: NVFP4-latent ~2.5e-3 = **~3.5× FP8** ("FP8 floor", latent-width-independent).
+- **Limiter**: the **pure roofline predicted a compute-flip** (AI 235–835 past the ridge); the
+  **per-CTA-corrected (real) prediction said it stays per-CTA / can't realize on CUDA cores** — and the
+  **measurement confirmed the real layer**: per-CTA-bound to 2M past L2 on **both** T4 and B300 (%HBM ~0%).
+- **The headline, and why it's a clean result either way:** the **§9-Q1 thesis is EMPIRICALLY VALIDATED —
+  M=128 is a genuine tensor-core GEMM** (torch dense-MQA, which packs it into cuBLAS TC GEMMs, beats our
+  CUDA-core warp-per-head kernel **~4× on B300**). So the MLA *shape* is correct and tensor-core-friendly;
+  the **CUDA-core default is the wrong tool on Blackwell** for it. **The limiter did NOT flip to compute on
+  CUDA cores — it stayed per-CTA — but the kernel-level roofline now pinpoints exactly where the
+  tensor-core opportunity lives, making the native-FP4 tcgen05 arm (§9 Q1/Q2) the data-motivated next
+  lever, not a speculation.** This is the open, prediction-vs-measured, kernel-level
+  compute-vs-memory-vs-per-CTA characterization of MLA decode on sm_103 — the empty cell the paper targets.
+- **Honesty debts:** nsys-2025.3.2-on-sm_103 provenance **PAID** (non-empty trace, in-runbook). B300 idled
+  at a fixed 2032 MHz (us/tok less confounded than feared) but `--lock-clocks` still failed unprivileged.
+  **ncu** L2-hit-rate still owed (unprivileged container blocks counters; the counter-free %HBM proxy is
+  ncu-validated once on T4, v9 Task 1, so it carries as a throughput proxy).
+
+### Status — v11 DECODE STUDY COMPLETE (roofline ✅, source ✅, Gate 1 ✅ T4, B300/sm_103 core ✅); native-FP4 tcgen05 arm = data-motivated future work; quiz next
 
 Roofline extended (`roofline/model.py` MLA branch + `roofline/predict.py --mla`; non-MLA paths
 byte-identical — GQA-8 nvfp4 still 28.4, v1 naive still 0.2). Prediction recorded above BEFORE any
@@ -1879,11 +1914,13 @@ accuracy ~3.5× FP8 ("FP8 floor"), and the limiter MEASURED per-CTA-bound (~0.1%
 L2 at N_k=32768) — the per-CTA-corrected prediction landed; the pure-roofline compute-flip did NOT
 realize on CUDA cores.
 
-**Outstanding:** the B300/sm_103 measured core (clock-locked + ncu past-L2 crossover via
-`bench.regime --backend v11_mla --dim 576`; same-session clock-matched `vs naive` vs v10-GQA; the
-native-FP4 tcgen05 arm IFF the dev rung proves §9 Q1 M=128-one-GEMM + Q2 limiter-flip; the sm_103 2×-exp
-re-ablation now M=128 puts many exps in flight; FlashMLA/FlashInfer comparators) — then the quiz
-(deferred to the very end per Kien). See `docs/v11-kickoff.md`, `decisions.md` Step 11,
-`interview-prep.md` C16.
+**B300/sm_103 core — DONE (2026-06-30; see the B300 Part 1 + Part 2/3 + verdict sections above):**
+per-CTA-bound confirmed to 2M past L2 (%HBM ~0%), the ~4× tensor-core gap vs torch dense-MQA (validating
+§9-Q1: M=128 IS a real TC GEMM), and the 99.9%/0.0% partial/merge schedule (nsys 2025.3.2, non-empty
+sm_103 trace — provenance debt paid). **Outstanding (data-motivated future work, NOT gating v11):** the
+**native-FP4 tcgen05 arm** (now justified by the measured 4× gap — §9 Q1/Q2 confirmed for Q1); the sm_103
+2×-exp re-ablation; FlashMLA/FlashInfer comparators; ncu L2-hit-rate on a privileged box. **Next: the
+quiz** (deferred to the very end per Kien). See `docs/v11-kickoff.md`, `decisions.md` Step 11,
+`interview-prep.md` C16, `docs/v11-b300-runbook.md`.
 
 ---
