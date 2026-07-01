@@ -51,6 +51,11 @@ era bands colored teal / amber / clay.)
 gap all failed — tensor cores, double-buffering, occupancy, ILP. Four straight negatives proved the
 floor was a *serial dependency chain* you can only remove, not hide. Then v8.7 removed it.
 
+**The coda (after v12) — Arm 2 Stage A:** the last untested decode lever was *native FP4 compute* (MLA's
+M=128 meets the Blackwell tensor-core NVFP4 gate). I pre-registered "it won't help," then measured it on a
+B300: FP4 reaches only **5.8% of its 15 PF peak**, FP8 **21.7% of 5 PF** — both HBM-bound. Killed my own
+last hypothesis; the packing gate is a red herring for decode. Use `assets/diagrams/stage-a-fp4-vs-fp8.svg`.
+
 ---
 
 ## 4 — Benchmark terminal
@@ -135,8 +140,8 @@ v12 work-starvation correction. Each scrubs into frame as you move horizontally.
 from-scratch mini-vLLM.
 
 - **GitHub:** github.com/gkienpham-cmd/flashattention-cuda
-- **Email:** pgkien11@gmail.com
-- **LinkedIn:** {{LINKEDIN_URL}}  ← placeholder, fill in
+- **LinkedIn:** linkedin.com/in/gkienpham
+- **Email:** gkienpham@gmail.com
 
 **Primary bullet (resume.md, Version C):** Applied bottleneck-hunting from mechanical systems to GPU
 kernels — 17 CUDA kernels, 4 architectures, 8–16× over PyTorch, characterized NVIDIA's B300.

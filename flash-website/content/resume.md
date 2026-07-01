@@ -22,5 +22,7 @@ available for tailored applications.
 
 > Designed and measured a 12-step roofline-driven optimization arc for FlashAttention decode on NVIDIA
 > Blackwell (B300/sm_103), spanning MHA→GQA→MLA and FP16→FP8→NVFP4 with prediction-vs-measured
-> analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth),
-> validated by Nsight Compute across 3 architectures — targeting a PMBS@SC characterization paper.
+> analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth) via
+> Nsight Compute across 3 architectures, and confirmed it at the GEMM level with a B300 FP4-vs-FP8
+> characterization showing native FP4 compute stays HBM-bound (≤5.8% of its 15 PF peak) — so low
+> precision cuts KV-cache size, not decode latency; targeting a PMBS@SC characterization paper.

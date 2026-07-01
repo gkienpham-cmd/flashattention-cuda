@@ -1,0 +1,88 @@
+<svg width="100%" viewBox="0 0 920 500" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Arm 2 Stage A — native FP4 compute does not help MLA decode (B300)</title>
+<desc>Two panels. LEFT: a roofline for the M=128 MLA-decode QK GEMM on B300 (sm_103a). The decode arithmetic-intensity band (100-176 FLOP/byte) sits far to the left of both ridge points (FP8 ridge 625, FP4 ridge 1875), so the measured FP4 (739 TFLOP/s) and FP8 (1086 TFLOP/s) peaks both land on the shared HBM diagonal, memory-bound, nowhere near their flat compute ceilings (FP8 5 PF, FP4 15 PF). RIGHT: peak-fraction bars — FP4 reaches only 5.8% of its 15 PF peak, FP8 21.7% of 5 PF. Verdict: both HBM-bound at every context length, so native FP4 compute never becomes the limiter and cannot accelerate decode; the M=128 tensor-core packing gate is a red herring for decode. FP4/NVFP4 stays a capacity and accuracy lever, not a decode-compute one.</desc>
+<rect x="0" y="0" width="920" height="500" fill="#ffffff"/>
+
+<text x="30" y="30" font-size="15" font-weight="700" fill="#2C2C2A">Arm 2 Stage A — does native FP4 <tspan font-style="italic">compute</tspan> help MLA decode?  KILL.</text>
+<text x="30" y="49" font-size="10.5" fill="#888780">B300 / sm_103a · M=128 QK-GEMM · 30 shapes · both precisions HBM-bound → FP4's 15 PF peak is unreachable</text>
+
+<!-- ===================== LEFT: roofline ===================== -->
+<text x="60" y="80" font-size="11" font-weight="600" fill="#57534E">Roofline — the decode shape is far left of both ridges</text>
+
+<!-- axes -->
+<line x1="90" y1="300" x2="430" y2="300" stroke="#2C2C2A" stroke-width="1.2"/>
+<line x1="90" y1="300" x2="90" y2="70" stroke="#2C2C2A" stroke-width="1.2"/>
+<text x="260" y="330" font-size="9.5" fill="#57534E" text-anchor="middle">arithmetic intensity  (FLOP/byte, log)</text>
+<text x="52" y="185" font-size="9.5" fill="#57534E" text-anchor="middle" transform="rotate(-90 52 185)">TFLOP/s (log)</text>
+
+<!-- decode AI band (100-176) -->
+<rect x="203" y="70" width="28" height="230" fill="#5EAAA8" opacity="0.14"/>
+<text x="217" y="64" font-size="8.5" fill="#3F7D7B" text-anchor="middle" font-weight="600">decode AI</text>
+<text x="217" y="315" font-size="8" fill="#3F7D7B" text-anchor="middle">100–176</text>
+
+<!-- shared HBM diagonal roof (8 TB/s): (101,300) -> (347,82) -->
+<line x1="101" y1="300" x2="347" y2="82" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="150" y="252" font-size="8" fill="#94A3B8" transform="rotate(-41 150 252)">HBM roof · 8 TB/s</text>
+
+<!-- FP8 compute ceiling 5 PF (flat from ridge 625 @ y=130) -->
+<line x1="293" y1="130" x2="430" y2="130" stroke="#E0A458" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="434" y="127" font-size="8.5" fill="#B77F32">FP8 peak 5 PF</text>
+<circle cx="293" cy="130" r="3.2" fill="#E0A458"/>
+<text x="293" y="145" font-size="8" fill="#B77F32" text-anchor="middle">ridge 625</text>
+
+<!-- FP4 compute ceiling 15 PF (flat from ridge 1875 @ y=82) -->
+<line x1="347" y1="82" x2="430" y2="82" stroke="#6D74C0" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="360" y="78" font-size="8.5" fill="#565CAB">FP4 peak 15 PF</text>
+<circle cx="347" cy="82" r="3.2" fill="#6D74C0"/>
+<text x="360" y="96" font-size="8" fill="#565CAB">ridge 1875</text>
+
+<!-- measured points at AI≈135 -->
+<circle cx="218" cy="196" r="4.5" fill="#E0A458"/>
+<text x="150" y="188" font-size="9" fill="#B77F32" font-weight="600">FP8 1086</text>
+<circle cx="218" cy="213" r="4.5" fill="#6D74C0"/>
+<text x="150" y="228" font-size="9" fill="#565CAB" font-weight="600">FP4 739</text>
+<text x="238" y="205" font-size="8" fill="#78716C">← both on the HBM roof, not the ceiling</text>
+
+<!-- y ticks -->
+<text x="84" y="303" font-size="8" fill="#A8A29E" text-anchor="end">100</text>
+<text x="84" y="203" font-size="8" fill="#A8A29E" text-anchor="end">1k</text>
+<text x="84" y="133" font-size="8" fill="#A8A29E" text-anchor="end">5k</text>
+<text x="84" y="85" font-size="8" fill="#A8A29E" text-anchor="end">15k</text>
+
+<!-- ===================== RIGHT: peak-fraction ===================== -->
+<text x="520" y="80" font-size="11" font-weight="600" fill="#57534E">% of tensor-core peak actually reached</text>
+
+<!-- scale baseline -->
+<line x1="560" y1="270" x2="880" y2="270" stroke="#2C2C2A" stroke-width="1.2"/>
+<line x1="560" y1="270" x2="560" y2="110" stroke="#E5E4DF" stroke-width="1"/>
+<line x1="720" y1="270" x2="720" y2="110" stroke="#F1EFEA" stroke-width="1"/>
+<line x1="880" y1="270" x2="880" y2="110" stroke="#F1EFEA" stroke-width="1"/>
+<text x="560" y="286" font-size="8" fill="#A8A29E" text-anchor="middle">0%</text>
+<text x="720" y="286" font-size="8" fill="#A8A29E" text-anchor="middle">50%</text>
+<text x="880" y="286" font-size="8" fill="#A8A29E" text-anchor="middle">100%</text>
+
+<!-- FP8 bar: 21.7% of 320px = 69.4px -->
+<rect x="560" y="128" width="69" height="34" rx="3" fill="#E0A458"/>
+<text x="566" y="122" font-size="9.5" fill="#57534E" font-weight="600">FP8 (E4M3)</text>
+<text x="636" y="150" font-size="11" fill="#B77F32" font-weight="700">21.7%</text>
+<text x="700" y="150" font-size="9" fill="#A8A29E">of 5 PF</text>
+
+<!-- FP4 bar: 5.8% of 320px = 18.6px -->
+<rect x="560" y="196" width="19" height="34" rx="3" fill="#6D74C0"/>
+<text x="566" y="190" font-size="9.5" fill="#57534E" font-weight="600">FP4 (NVFP4)</text>
+<text x="586" y="218" font-size="11" fill="#565CAB" font-weight="700">5.8%</text>
+<text x="640" y="218" font-size="9" fill="#A8A29E">of 15 PF</text>
+
+<text x="560" y="256" font-size="9" fill="#78716C" font-style="italic">Both are single-digit-to-low-double-digit fractions —</text>
+<text x="560" y="268" font-size="9" fill="#78716C" font-style="italic">the compute peak is never the operative limit.</text>
+
+<!-- ===================== verdict strip ===================== -->
+<rect x="30" y="360" width="860" height="66" rx="6" fill="#FBF3EA" stroke="#E0A458" stroke-width="1.1"/>
+<text x="46" y="382" font-size="10.5" font-weight="700" fill="#8A5E22">Verdict — the M=128 packing gate is a red herring for decode</text>
+<text x="46" y="400" font-size="9.5" fill="#57534E">Decode AI (100–176) sits far below both ridges (625 / 1875), so FP4 and FP8 GEMMs are HBM-bound at every N. Native FP4 <tspan font-style="italic">compute</tspan> never reaches its 15 PF peak →</text>
+<text x="46" y="415" font-size="9.5" fill="#57534E">it can't accelerate decode. Any FP4 edge is a bandwidth / operand-size effect — the KV-capacity lever of v9/v10, not a compute win. FP4/NVFP4 = capacity + accuracy, not latency.</text>
+
+<!-- footnote -->
+<text x="30" y="446" font-size="8" fill="#A8A29E">Cross-harness: FP4 = CUTLASS example 72a (block-scaled NVFP4→bf16); FP8 = cuBLAS E4M3 via torch._scaled_mm. KILL rests on peak-fraction + roofline (AI ≪ ridge caps FP4 regardless of tuning), not the raw ratio.</text>
+<text x="30" y="459" font-size="8" fill="#A8A29E">Peaks shown @ K=576, N=131072. Single seed, clocks not locked (far from any threshold that would move a peak-fraction verdict). Data: notebooks/stage_a_results.csv · docs/stage-a-results.md.</text>
+</svg>

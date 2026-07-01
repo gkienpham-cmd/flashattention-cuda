@@ -73,15 +73,25 @@ Use these verbatim as large pull-quotes in the Methodology / Journey sections.
 > "'Per-CTA-bound' was real — but it was a statement about the engine, not the problem. The right
 > engine converts work to throughput." — the v12 correction
 
+> "The M=128 packing advantage is a red herring for decode — it satisfies the tensor-core *shape*
+> gate but the *shape* stays memory-bound, so the extra compute peak is unreachable." — Arm 2 Stage A
+> (native FP4 compute, measured KILL)
+
 ---
 
 ## Facts for copy (do not embellish beyond these)
 
 - Solo project. 17 CUDA kernels. 4 GPU architectures (T4 Turing sm_75, A100 Ampere sm_80,
   B200 Blackwell sm_100, B300 Blackwell Ultra sm_103).
+- **Arm 2 Stage A (latest, measured on B300):** native FP4 *compute* does not help MLA decode — the
+  QK GEMM is HBM-bound (FP4 reaches only 5.8% of its 15 PF peak, FP8 21.7% of 5 PF; AI 100–176 ≪ ridges
+  1875/625). So low precision (FP8/NVFP4) is a KV-cache **capacity + accuracy** lever, not a decode-speed
+  one. This is the newest honest negative — it *closes* the last open decode-lever question. (Distinct
+  from the v10 "Stage A" precision-accuracy ablation — different experiment, same name.)
 - Research target: a PMBS@SC-tier characterization paper — the first open, kernel-level,
   prediction-vs-measured roofline characterization of FlashAttention decode on sm_103. Complements
   (does **not** beat) production kernels like FlashInfer / FlashMLA.
 - Honesty guardrails to preserve on the site: v5 prefill bench is unmeasured; the 4× cuBLAS gap is a
   structural inference (not a torch-side profile); Blackwell verdicts are proxy-grade (ncu was
-  blocked; the proxy is validated once, on T4); accuracy RMSE numbers are single-seed.
+  blocked; the proxy is validated once, on T4); accuracy RMSE numbers are single-seed; the Arm 2 Stage A
+  FP4-vs-FP8 comparison is cross-harness (verdict rests on peak-fraction + roofline, not the raw ratio).

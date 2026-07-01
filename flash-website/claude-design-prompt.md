@@ -84,7 +84,7 @@ silicon.*
 8. **Diagram reel** — `DiagramReel`: a **horizontal scroll/scrub montage** of the SVGs in
    `assets/diagrams/`.
 9. **Contact** — "Let's build fast things." GitHub (github.com/gkienpham-cmd/flashattention-cuda),
-   Email (pgkien11@gmail.com), LinkedIn (`{{LINKEDIN_URL}}` placeholder). Primary resume bullet =
+   LinkedIn (linkedin.com/in/gkienpham), Email (gkienpham@gmail.com). Primary resume bullet =
    `content/resume.md` Version C.
 
 ## Components to generate (name them exactly)
@@ -105,7 +105,12 @@ silicon.*
 - Numbers: `content/metrics.json`. Journey: `content/kernels.json`. Copy: `content/site-content.md`.
   Voice + quotes: `content/narrative.md`. Bullets: `content/resume.md`. Tokens: `design/design-tokens.md`.
 - **Do not invent or round differently** — every figure is measured and traceable. Preserve the honesty
-  notes (v5 bench unmeasured; 4× cuBLAS gap is inferred; Blackwell verdicts proxy-grade; RMSE single-seed).
+  notes (v5 bench unmeasured; 4× cuBLAS gap is inferred; Blackwell verdicts proxy-grade; RMSE single-seed;
+  Arm 2 Stage A is a cross-harness comparison, verdict on peak-fraction + roofline).
+- **Latest finding to include (Arm 2 Stage A):** the newest honest negative — native FP4 *compute* does
+  not help decode (FP4 reaches only 5.8% of its 15 PF peak on B300; both FP4 and FP8 GEMMs are HBM-bound).
+  Surface it as the coda after v12 in the Journey and in the Methodology/Honest-Misses section, with the
+  "red herring for decode" pull-quote from `content/narrative.md` and the `stage-a-fp4-vs-fp8.svg` figure.
 
 Deliver the components and the composed page. Prioritize the `ScrollSequenceHero` + `JourneyTimeline`
 first — those are the ones that have to feel award-level.

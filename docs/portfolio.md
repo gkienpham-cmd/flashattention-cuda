@@ -253,8 +253,33 @@ Scope pivot: CUTLASS ex77 already ships the canonical production weight-absorbed
 - **Throughput scales with total work B x K:** single-stream (B=1, K <= 32K) hits 1--2% of the 5 PF FP8 peak; serving scale (B=64, K=524288) hits **1785 TFLOP/s = 35.7% FP8 peak / 46.3% HBM**
 - CORRECTED the long-standing "per-CTA-bound forever" reading from v6--v11: that was a work-starvation artifact of the CUDA-core kernel. The per-CTA wall is work-starvation, and the right engine converts work to throughput (v11 flat 0.75 TFLOP/s to v12 spanning 2.4 to 1785, 70--1000x at matched B=1)
 - 2x-exp claim measured: 0.50x the claimed 10.7 TExp/s (EX2 5.33 TExp/s, <3% of decode time at M=1 -- irrelevant)
-- NVFP4 compute (Arm 2) is unbuilt anywhere -- genuine open novelty for a future kernel
+- Native NVFP4 *compute* (Arm 2) was the one open question v11/v12 left -- now **measured (Arm 2 Stage A, below): it does not help decode.**
 - **Finding:** Complement, not beat. The production tcgen05 kernel hits 36% of FP8 peak at serving scale. The methodology is the contribution: open, prediction-vs-measured, on the production kernel itself.
+
+#### Arm 2 Stage A -- does native FP4 *compute* help decode? (KILL, B300)
+
+*The last open decode-lever question, answered by measurement*
+
+v11/v12 raised one question they couldn't close on CUDA cores: MLA packs M=128 by construction, which
+*meets* the Blackwell tcgen05 block-scaled-NVFP4 gate (M>=128) -- so could **native FP4 tensor-core
+compute** finally be the decode lever? Stage A is the kill-or-proceed micro-test: FP4 vs FP8 GEMM at the
+MLA-decode QK shape (M=128, K in {256,512,576}, N = context length), 30 shapes on a B300 (sm_103a).
+
+- **Verdict: KILL -- prediction confirmed.** Both precisions stay **HBM-bound at every context length**
+  (arithmetic intensity 100--176 FLOP/byte, far below the sm_103 ridges of 1875 / 625). **FP4 tops out at
+  5.8% of its 15 PF peak; FP8 at 21.7% of 5 PF.** Native FP4 *compute* is never the operative limit, so it
+  cannot accelerate decode -- the M=128 packing gate is a **red herring for decode.**
+- The raw FP4/FP8 ratio flips with N and neither direction is a compute win: FP4 leads 1.4--2.7x at small N
+  (both tiny, launch-bound), **FP8 wins up to ~1.5x in the realistic long-context regime** (K=576/N=131K:
+  FP8 1086 vs FP4 739 TFLOP/s). Any FP4 edge is a bandwidth / operand-size effect -- the KV-capacity lever
+  of v9/v10 -- not the tensor-core peak.
+- **Honest caveat (kept on the record):** cross-harness -- FP4 is a CUTLASS *example* kernel (72a), FP8 is
+  tuned cuBLAS (`torch._scaled_mm`), so the head-to-head ratio isn't a clean kernel-vs-kernel fight. The KILL
+  rests on the **peak-fraction + roofline** argument (AI << ridge caps FP4 far below compute peak *regardless*
+  of tuning), not on the ratio; single-seed, clocks not locked (far from any threshold that would move it).
+- **Consequence:** FP4/NVFP4 stays a **capacity + accuracy** lever (v9/v10), *not* a decode-compute one;
+  Arm 2 native-FP4-compute is de-motivated, and the accuracy follow-ups (Stage B/C) are not triggered.
+  Consistent with the whole-kernel v6->v12 work-starvation story. See `diagrams/stage-a-fp4-vs-fp8.svg`.
 
 ---
 
@@ -349,6 +374,16 @@ The counter-prediction landed: the floor was the per-row serial online-softmax r
 
 From v6 through v11, every decode measurement showed ~10% HBM utilization. The diagnosis was consistently "per-CTA-bound." v12 corrected this long-standing reading: the ceiling was WORK-STARVATION, and the right engine (tcgen05 tensor cores) converts work to throughput. v11's CUDA-core kernel was flat at 0.75 TFLOP/s; the same workload on v12's tcgen05 kernel spans 2.4 to 1785 TFLOP/s (70--1000x at matched B=1). "Per-CTA-bound" was real -- but it was a statement about the engine, not the problem.
 
+### The Last Open Lever, Killed by Measurement (Arm 2 Stage A)
+
+The one decode lever left untested after v12 was **native FP4 compute** — MLA's M=128 meets the Blackwell
+tcgen05 NVFP4 gate, so maybe FP4's 3x compute peak was finally reachable. I pre-registered the prediction
+(NO — decode is work-starved), then measured it: across 30 GEMM shapes on a B300, FP4 tops out at **5.8% of
+its 15 PF peak** and FP8 at **21.7% of 5 PF** — both HBM-bound (AI 100–176 ≪ ridges 1875/625). The packing
+gate is a **red herring for decode**. Killing my own last hypothesis, with the honest cross-harness caveat
+attached, is the point: it closes the question and keeps FP4/NVFP4 correctly scoped as a capacity+accuracy
+lever, not a compute one.
+
 ---
 
 ## Independent Validation
@@ -374,7 +409,7 @@ The review's verdict: the methodology (pre-registered predictions, confound remo
 2. **Blackwell verdicts are proxy-grade.** The T4 era has ncu ground truth; the B200/B300 runs were on unprivileged containers where ncu counters were blocked, so the sm_103 limiter reads rest on the counter-free proxy (validated once, on T4). A privileged-box ncu run is the top open item.
 3. **Accuracy numbers are single-seed.** The FP8 ~6-7e-4 and NVFP4 ~2.4e-3 RMSE figures, and the ~3.5x ratio, are one seed per shape on a small substrate -- real for this setup, not general constants.
 
-Two performance cells remain genuinely unmeasured and are logged as such: the **v5 prefill benchmark** and the **native NVFP4-compute arm (Arm 2)**. Nothing is misrepresented -- all 17 kernels are built and correctness-tested; two performance cells are open.
+One performance cell remains genuinely unmeasured and is logged as such: the **v5 prefill benchmark**. (The other former gap — the **native FP4-compute arm, Arm 2** — has since been measured: Arm 2 Stage A, a KILL. See above.) Nothing is misrepresented — all 17 kernels are built and correctness-tested.
 
 *(The review was an independent AI-assisted re-run of the tool plus a literature cross-check, not a human peer review. Its value is the reproduction and the external fact-checking, both of which are independently repeatable from the repo.)*
 
@@ -427,7 +462,8 @@ All diagrams are hand-authored SVGs in `docs/diagrams/`.
 - `v11-to-v12-tcgen05.svg` -- MLA to tensor core transition
 - `v12-paper-positioning.svg` -- paper positioning vs related work
 - `v12-related-work-landscape.svg` -- related work landscape
-- `v12-arm2-research-plan.svg` -- future Arm 2 research plan
+- `v12-arm2-research-plan.svg` -- the Arm 2 research plan
+- `stage-a-fp4-vs-fp8.svg` -- Arm 2 Stage A: FP4 vs FP8 GEMM, both HBM-bound (the native-FP4-compute KILL)
 
 ---
 
@@ -461,7 +497,12 @@ All diagrams are hand-authored SVGs in `docs/diagrams/`.
 
 **v13 -- GLA / Sparse Attention.** Grouped Latent Attention (Tri Dao, arXiv 2505.21487 -- also the closest-prior decode-roofline anchor, on H100), then the sparse direction: DSA (DeepSeek V3.2), CSA (DeepSeek V4). The field is moving toward latent and sparse attention variants, and the roofline-first methodology transfers directly. (Note: arXiv 2505.21487 is *Grouped* Latent Attention -- not to be confused with *Gated Linear* Attention, arXiv 2312.06635, a separate line of work.)
 
-**Arm 2 -- Native NVFP4 Compute.** No kernel anywhere does native FP4 tensor-core decode (CUTLASS ex77 is FP8-native; the M >= 128 tcgen05 gate for block-scaled NVFP4 is met by MLA's M=128). This is genuine open novelty for a future kernel.
+**Arm 2 -- Native FP4 Compute: ANSWERED (Stage A, a KILL).** This was flagged as the open question: MLA's
+M=128 meets the tcgen05 block-scaled-NVFP4 gate, so could native FP4 *compute* accelerate decode? Measured on
+a B300: no — the QK GEMM stays HBM-bound (FP4 reaches only 5.8% of its 15 PF peak), so the packing gate is a
+red herring for decode. FP4/NVFP4 stays a capacity+accuracy lever. The remaining future work is the **pure
+characterization paper** (Path A, no accuracy Stage B/C needed), **v13 (GLA / sparse attention)**, and the
+**three-generation roofline spine (H100 → B200 → B300)**.
 
 **Three-Generation Roofline Spine.** H100 to B200 to B300 with locked-clock, ncu-validated measurements on the same kernel. The counter-free proxy (validated on T4) would be confirmed on each architecture.
 
@@ -488,11 +529,19 @@ Built 17 CUDA attention kernels from scratch across 4 GPU architectures (T4 thro
 
 ### Version B -- ML Research / Applied ML
 
-Designed and measured a 12-step roofline-driven optimization arc for FlashAttention decode on NVIDIA Blackwell (B300/sm_103), spanning MHA to GQA to MLA and FP16 to FP8 to NVFP4 with prediction-vs-measured analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth), validated by Nsight Compute across 3 architectures -- targeting a PMBS@SC characterization paper.
+Designed and measured a 12-step roofline-driven optimization arc for FlashAttention decode on NVIDIA Blackwell (B300/sm_103), spanning MHA to GQA to MLA and FP16 to FP8 to NVFP4 with prediction-vs-measured analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth) via Nsight Compute across 3 architectures, and confirmed it at the GEMM level with a B300 FP4-vs-FP8 characterization showing native FP4 compute stays HBM-bound (≤5.8% of its 15 PF peak) -- so low precision cuts KV-cache size, not decode latency; targeting a PMBS@SC characterization paper.
 
 ### Version C -- Robotics / Mechanical Engineering Crossover
 
 Applied bottleneck-hunting methodology from mechanical systems to GPU kernel optimization: rebuilt FlashAttention from scratch (17 CUDA kernels, 4 architectures), using roofline models to predict performance limiters before coding -- achieving 8--16x speedup over PyTorch and characterizing NVIDIA's latest B300 GPU; demonstrated systematic predict-measure-iterate engineering on hardware where the "limiting factor" shifts with every design change.
+
+---
+
+## Contact
+
+- **GitHub:** [github.com/gkienpham-cmd/flashattention-cuda](https://github.com/gkienpham-cmd/flashattention-cuda)
+- **LinkedIn:** [linkedin.com/in/gkienpham](https://www.linkedin.com/in/gkienpham)
+- **Email:** gkienpham@gmail.com
 
 ---
 

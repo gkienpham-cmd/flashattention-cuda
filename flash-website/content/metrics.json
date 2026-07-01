@@ -19,5 +19,19 @@
       { "case": "GQA-8 NVFP4", "ai": 3.6, "limiter": "HBM" }
     ],
     "counter_free_proxy": { "proxy_pct": 13.8, "ncu_pct": 12.85, "note": "counter-free %HBM proxy validated within 1 point of Nsight Compute (T4)" }
+  },
+  "stage_a": {
+    "title": "Arm 2 Stage A — native FP4 compute does not help decode",
+    "hardware": "B300 / sm_103a",
+    "verdict": "KILL — both FP4 and FP8 GEMMs stay HBM-bound at the M=128 MLA-decode shape",
+    "fp4_peak_frac_pct": 5.8,
+    "fp4_peak_pf": 15,
+    "fp8_peak_frac_pct": 21.7,
+    "fp8_peak_pf": 5,
+    "ai_range": "100–176",
+    "ridges": { "fp8": 625, "fp4": 1875 },
+    "takeaway": "M=128 packing gate is a red herring for decode; FP4/NVFP4 is a capacity + accuracy lever, not a decode-speed one",
+    "caveat": "cross-harness (CUTLASS ex72a FP4 vs cuBLAS FP8); verdict on peak-fraction + roofline, not the raw ratio",
+    "diagram": "assets/diagrams/stage-a-fp4-vs-fp8.svg"
   }
 }
