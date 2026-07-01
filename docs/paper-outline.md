@@ -26,8 +26,8 @@ From Per-CTA-Bound to Work-Starvation Across MHA, GQA, and MLA**
 - **Contribution:** The first open, roofline-grade characterization of attention decode on sm_103
   across MHA→GQA→MLA and FP16→FP8→NVFP4. The two-layer prediction model called every decode
   result correctly (7/7) while pure roofline was wrong 5/7 times.
-- *(If Stage A completes:)* We also test whether native NVFP4 compute helps MLA decode — a
-  pre-registered boundary result.
+- **Stage A (§5.3), DONE:** a pre-registered boundary test on B300 confirms native NVFP4 *compute*
+  does not help MLA decode (both FP4 and FP8 GEMMs HBM-bound, ≤5.8%/21.7% of peak). Negative result.
 
 ---
 
@@ -172,10 +172,19 @@ no open paper characterizes their performance with prediction-vs-measured roofli
 - FP8/NVFP4 KV value: capacity + accuracy (halving/quartering cache size), NOT decode latency.
   The latency win is regime-specific (L2-resident only for FP8; negative for NVFP4 past L2).
 
-### 5.3 Does native FP4 compute help MLA decode? (Stage A result)
-- *(If completed:)* M=128 FP4-vs-FP8 GEMM crossover from CUTLASS profiler.
-- Expected negative: decode is HBM/work-starved, not compute-bound → FP4 compute doesn't help.
-- The M=128-by-construction observation and the padding penalty (TRT-LLM #4412) analysis.
+### 5.3 Does native FP4 compute help MLA decode? (Stage A result) — DONE, NEGATIVE (2026-07-02)
+- **Measured on B300/sm_103a** (CUDA 12.9, CUTLASS v4.5.2). M=128 FP4-vs-FP8 GEMM sweep,
+  K∈{256,512,576} × N∈{1K…524K}. FP4 = CUTLASS example 72a (block-scaled NVFP4); FP8 = cuBLAS
+  E4M3 (`torch._scaled_mm`), matched bf16 output. **Data:** `notebooks/stage_a_results.csv`;
+  **full write-up + caveats:** [`docs/stage-a-results.md`](stage-a-results.md).
+- **KILL / negative confirmed:** both precisions HBM-bound at every N (AI 100–176 ≪ ridges 1875/625),
+  reaching at most **5.8%** (FP4 of 15 PF) / **21.7%** (FP8 of 5 PF) of peak → native FP4 *compute*
+  is never the bottleneck. Raw FP4/FP8 ratio flips with N (FP4 leads ≤32K where both are tiny;
+  **FP8 wins ≥131K**, the realistic regime) — but neither is a compute win; the gap is
+  bandwidth/operand-size + kernel-tuning. The M=128-by-construction packing advantage is a red
+  herring for decode; FP4/NVFP4 stays a capacity+accuracy lever (§5.1–5.2), not a compute lever.
+- **Caveat (recorded):** cross-harness (CUTLASS example FP4 vs tuned cuBLAS FP8) — the verdict rests
+  on the kernel-quality-independent peak-fraction + roofline, not the head-to-head ratio.
 
 ### 5.4 Threats to validity
 - Counter-free proxy (validated on T4, not yet B300 ncu).

@@ -1271,3 +1271,28 @@ would've been ego, not science. I characterized the real kernel instead. **Say-t
 to measure the kernel everyone actually runs, not to ship a worse copy of it — the contribution is the open
 regime characterization on sm_103, and Arm 2 (native FP4 KV *compute*) stays the genuine open lane because
 nobody, including CUTLASS, has it yet."
+
+## C19 — Arm 2 Stage A: I tried to kill the "FP4 compute helps decode" idea, and it died on the roofline
+
+**The chain.** MLA packs M=128 (all h_q heads) by construction, which *is* the M≥128 gate for Blackwell's
+block-scaled NVFP4 tensor cores (tcgen05). So the tempting Arm-2 hypothesis: native FP4 *compute* (15 PF, 3×
+FP8's 5 PF) finally becomes usable in decode. **Pre-registered prediction: NO** — decode is HBM/work-starved,
+so a 3× compute peak buys nothing. **Test (B300/sm_103a, 2026-07-02):** sweep the M=128 QK-GEMM,
+K∈{256,512,576} × N∈{1K…524K}, FP4 (CUTLASS example 72a, block-scaled NVFP4) vs FP8 (cuBLAS E4M3 via
+`torch._scaled_mm`), matched bf16 output.
+
+**Result: KILL.** Both precisions HBM-bound at every N (AI 100–176 ≪ ridges 1875/625); FP4 tops out at **5.8%
+of 15 PF**, FP8 at **21.7% of 5 PF**. Neither is remotely compute-bound → native FP4 compute is never the
+limiter. **Say-this:** "The M=128 packing advantage is a red herring for decode — it satisfies the tensor-core
+*shape* gate but the *shape* stays memory-bound, so the extra compute peak is unreachable."
+
+**The subtle part that keeps it honest.** The raw FP4/FP8 TFLOP/s ratio *flips with N*: FP4 leads ≤2.7× at
+small N (both tiny, latency-bound), but **FP8 wins at large N** (the realistic long-context regime — 1086 vs
+739 TFLOP/s at K=576,N=131072). And even FP4's *potential* edge is a red herring squared: FP4 has a *higher*
+HBM ceiling than FP8 (higher AI from 0.5625 vs 1.0 B/elem), so a tuned FP4 kernel could beat FP8 at large N —
+but that's a **bandwidth/storage** win (the v9/v10 lever), **not compute**. So whichever way the ratio points,
+the compute answer is NO. **The verdict rests on peak-fraction + roofline, not the ratio** — which also
+side-steps my one measurement weakness: it's cross-harness (a CUTLASS *example* FP4 kernel vs *tuned* cuBLAS
+FP8), so the head-to-head isn't a fair kernel-vs-kernel fight, but AI≪ridge caps FP4 far below compute peak
+regardless of tuning. **Consequence:** FP4/NVFP4 stays a capacity+accuracy lever; Stage B/C accuracy work is
+not triggered; the negative is the paper's §5.3 boundary result. See `docs/stage-a-results.md`.

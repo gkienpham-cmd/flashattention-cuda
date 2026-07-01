@@ -1320,3 +1320,28 @@ smem=174 KB → ~1 CTA/SM (§9-Q2, measured). FP8≈FP16 throughput → not comp
 
 **Owed (non-gating, unprivileged box):** ncu L2-hit/SMEM-BW validation; fp16 `--verify` PASS confirmation.
 **v12 DONE** pending the Gate-2 quiz (deferred to the very end). See `results.md` Step 12, `interview-prep.md` C18.
+
+---
+
+## Arm 2 Stage A — native FP4 compute for MLA decode: TESTED, NEGATIVE (2026-07-02)
+
+> ⚠️ Distinct from the v10 **"Stage A/A′"** asymmetric-precision *accuracy* ablation above. This is the
+> **Arm 2 GEMM *compute* test** (paper §5.3). Full data/write-up: `docs/stage-a-results.md`,
+> `notebooks/stage_a_results.csv`; results narrative in `results.md` "Arm 2 Stage A".
+
+- **Bottleneck (measured, B300/sm_103a):** the M=128 MLA-decode QK-GEMM is **HBM-bound at every context
+  length** (AI 100–176 ≪ ridges 1875/625); FP4 reaches ≤5.8% of 15 PF, FP8 ≤21.7% of 5 PF. Native FP4
+  *compute* is never the limiter.
+- **Options weighed:** (a) build a native-FP4 KV-compute kernel (Arm 2) on the bet that M=128 packing makes
+  decode compute-bound; (b) treat FP4 as storage-only. **Chosen: (b).** The GEMM never approaches compute
+  peak, so FP4's 15-PF advantage is unreachable in decode — Arm 2 native-FP4 *compute* would not pay off.
+- **The M=128 packing advantage is a red herring for decode** (it lifts M above 1 but the shape stays
+  HBM-bound). The FP4/FP8 throughput gap we see is **bandwidth/operand-size + kernel tuning**, not compute
+  (FP8 even wins at the realistic large-N regime). FP4/NVFP4 → **capacity + accuracy** lever only (v9/v10).
+- **What changes on another arch / regime:** the HBM-bound verdict is a property of single-token decode's
+  low AI; it would only flip toward compute-bound in a much higher-AI regime (multi-token / large batch),
+  which is the v12 work-starvation story, not a precision lever.
+- **Caveat:** cross-harness (CUTLASS example FP4 vs cuBLAS FP8); verdict rests on peak-fraction+roofline,
+  not the ratio. Optional hardening: matched-harness FP8 (fix profiler build / MXFP8 example) — verdict-neutral.
+- **Consequence:** Stage B/C accuracy work is **not** triggered (no compute win to justify it). See
+  `results.md` "Arm 2 Stage A", `paper-outline.md` §5.3, `interview-prep.md` C19.

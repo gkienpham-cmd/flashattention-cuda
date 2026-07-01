@@ -136,11 +136,13 @@ These are genuinely unexplored but require more new work:
 | 8–10 | Write Section 6 (discussion) + polish | If negative: write up the finding |
 | 11–14 | Internal review, figures, submission prep | Fold into Path A or standalone |
 
-**Week 3–4: Depending on Stage A result**
+**Week 3–4: Stage A result is IN — NEGATIVE (2026-07-02), as predicted.**
 
-- If Stage A **negative** (LIKELY): Path A paper is the primary deliverable. Polish, submit to
-  arXiv + PMBS@SC. The Arm 2 negative becomes Section 5.3 ("Does native FP4 compute help?").
-- If Stage A **positive**: Run Stage B (accuracy, 3 days). If accuracy holds, commit to Stage C.
+- **Stage A measured NEGATIVE** on B300/sm_103a: the M=128 MLA-decode QK-GEMM is HBM-bound at every
+  context length (FP4 ≤5.8% of 15 PF, FP8 ≤21.7% of 5 PF) → native FP4 compute does not help decode.
+  Data: `notebooks/stage_a_results.csv`; write-up: `docs/stage-a-results.md`; → paper §5.3.
+- **So (per the plan): Path A (pure characterization) is the primary deliverable.** Stage B/C accuracy
+  work is **NOT** triggered (no compute win). The Arm 2 negative is §5.3. Polish, submit arXiv + PMBS@SC.
 
 **Week 5–6: Submission + hardening** (target: **arXiv by ~Jul 28, PMBS by Aug 5**)
 

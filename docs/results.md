@@ -2156,3 +2156,39 @@ vs our v11 oracle through the harness (optional, not gating).
 (the counter-free TFLOP/s is the proxy); fp16 `--verify` PASS confirmation (correctness not in doubt — it's
 NVIDIA's reference kernel; the FP8 `--verify` "fail" is the quantization gap, our v9/v10 story). Gate-2 quiz
 deferred to the very end (per Kien). See `decisions.md` Step 12 close-out, `interview-prep.md` C18.
+
+---
+
+## Arm 2 Stage A — does native FP4 *compute* help MLA decode? (B300 measured, 2026-07-02)
+
+> ⚠️ **Naming:** this "Stage A" is the **Arm 2 GEMM compute test** (paper §5.3), distinct from the
+> v10 **"Stage A / Stage A′" asymmetric-precision *accuracy* ablation** (Step 10 above). Different test.
+
+**Kill-or-proceed micro-test for paper §5.3.** Full write-up + honest caveats:
+[`docs/stage-a-results.md`](stage-a-results.md); data of record: `notebooks/stage_a_results.csv`
+(30/30 shapes). Measured on **vast.ai B300 SXM6 / sm_103a, CUDA 12.9, CUTLASS v4.5.2**.
+
+**Question (pre-registered NO):** does native FP4 tensor-core compute beat FP8 at the M=128
+MLA-decode QK-GEMM shape (K∈{256,512,576} × N∈{1K…524K})? FP4 = CUTLASS example 72a (block-scaled
+NVFP4→bf16); FP8 = cuBLAS E4M3 via `torch._scaled_mm` (bf16 out, matched dtype).
+
+**VERDICT = KILL, prediction confirmed.** Both precisions are **HBM-bound at every N** (AI 100–176 ≪
+ridges FP4 1875 / FP8 625), reaching at most **FP4 5.8% of 15 PF** and **FP8 21.7% of 5 PF** → native
+FP4 *compute* is never the operative limit, so it cannot accelerate decode. Consistent with the
+whole-kernel v6→v12 work-starvation finding.
+
+**The raw FP4/FP8 ratio flips with N — neither direction is a compute win:** FP4 leads 1.4–2.7× at
+small N (≤32K, both tiny <200 TFLOP/s, latency-bound); **FP8 wins at large N (≥131K, the realistic
+long-context regime):** e.g. K=576,N=131072 → FP8 1086 vs FP4 739 TFLOP/s. cuBLAS FP8 sits at its HBM
+roofline; the FP4 *example* kernel runs below its own (higher, from smaller operands) ceiling. FP4's
+higher-AI advantage is **bandwidth/operand-size (the v9/v10 storage lever), not compute**.
+
+**Caveat (recorded):** cross-harness (CUTLASS *example* FP4 vs *tuned* cuBLAS FP8) + dense-E4M3-vs-
+block-scaled-NVFP4 + single-seed/unlocked-clock. The KILL rests on the **kernel-quality-independent
+peak-fraction + roofline** (AI ≪ ridge caps FP4 far below compute peak regardless of tuning), NOT the
+head-to-head ratio. Optional hardening (does not change the verdict): a matched-harness FP8 (fix the
+profiler build — it OOM/compile-failed on the whole multi-arch library — or build an MXFP8 example).
+
+**Consequence:** Stage B/C (accuracy) is **not** unlocked by a compute win (there is none). FP4/NVFP4
+stays a **capacity + accuracy** lever (v9/v10), not a decode-compute lever. See `decisions.md` Arm 2
+Stage A, `paper-outline.md` §5.3, `interview-prep.md` C19.

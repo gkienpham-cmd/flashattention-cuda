@@ -564,6 +564,26 @@ three-generation roofline spine; Arm 2 native-FP4-KV-compute if a kernel ever ex
 into any serving-regime kernel. See `results.md`/`decisions.md` Step 12 + `interview-prep.md` C18; the now-complete
 `docs/v12-kickoff.md` is superseded by the measured close-out.
 
+- **Arm 2 Stage A (native-FP4 *compute* for MLA decode) — TESTED, NEGATIVE (2026-07-02, vast.ai
+  B300/sm_103a, CUDA 12.9, CUTLASS v4.5.2).** The pre-registered kill-or-proceed micro-test for paper
+  **§5.3**. Swept the M=128 MLA-decode QK-GEMM (K∈{256,512,576} × N∈{1K…524K}) comparing **FP4 (CUTLASS
+  example 72a, block-scaled NVFP4→bf16) vs FP8 (cuBLAS E4M3 via `torch._scaled_mm`, matched bf16 out)**.
+  **KILL, prediction confirmed:** both HBM-bound at every N (AI 100–176 ≪ ridges 1875/625), FP4 reaches
+  **≤5.8% of 15 PF** and FP8 **≤21.7% of 5 PF** → native FP4 *compute* is never the limiter, so the
+  M=128 packing advantage (which *does* meet the tcgen05 block-scaled M≥128 gate) is a **red herring for
+  decode**. Raw FP4/FP8 ratio flips with N (FP4 leads ≤32K where both are tiny; **FP8 wins ≥131K**, the
+  realistic regime) but neither is a compute win — the gap is bandwidth/operand-size + kernel tuning. So
+  **FP4/NVFP4 stays a capacity+accuracy lever (v9/v10), NOT a decode-compute lever; Arm 2 native-FP4-KV
+  -compute is de-motivated** (a kernel could still be built but wouldn't pay off in decode), and **Stage
+  B/C accuracy work is NOT triggered.** ⚠️ *Naming:* this is the **Arm 2 GEMM *compute* test**, distinct
+  from the v10 **"Stage A/A′" asymmetric-precision *accuracy* ablation** (Step 10). Caveat (recorded):
+  cross-harness (example FP4 vs tuned cuBLAS FP8) — verdict rests on peak-fraction+roofline, not the
+  ratio; optional verdict-neutral hardening = a matched-harness FP8 (fix the profiler build — it
+  OOM/compile-failed building the whole multi-arch library — or build an MXFP8 example). Data of record
+  `notebooks/stage_a_results.csv`; write-up `docs/stage-a-results.md` + `docs/stage-a-runbook.md`;
+  notebook `notebooks/stage_a_gemm_profiler.ipynb`. See `results.md`/`decisions.md` "Arm 2 Stage A",
+  `paper-outline.md` §5.3, `interview-prep.md` C19.
+
 **Cheap pre-v10 experiment — DONE (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test; figure
 `diagrams/v8_5_v8_6_pastL2.svg`; data `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`).** Re-ran v8.5
 (double-buffer) + v8.6 (occ/ILP) past L2 (clock-robust speedup-vs-Cut-1, L2-flushed; this Colab even locked
