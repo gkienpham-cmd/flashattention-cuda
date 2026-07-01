@@ -1,0 +1,25 @@
+{
+  "eras": [
+    { "id": "prefill", "title": "Prefill fundamentals", "range": "v1–v5", "hardware": "T4 (sm_75)", "precision": "FP32 → FP16", "theme": "the bandwidth wall", "accent": "teal" },
+    { "id": "decode", "title": "Decode optimization", "range": "v6–v8.7", "hardware": "T4 → A100", "precision": "FP16", "theme": "the per-CTA wall (+ 4 honest dead ends)", "accent": "amber" },
+    { "id": "frontier", "title": "Precision + architecture frontier", "range": "v9–v12", "hardware": "T4 → B200 → B300", "precision": "FP8 → NVFP4", "theme": "MHA → GQA → MLA, and the right engine", "accent": "clay" }
+  ],
+  "kernels": [
+    { "id": "v1", "name": "Naive", "era": "prefill", "technique": "FP32 three-pass baseline", "finding": "L2 absorbs redundant reads; converges to the floor at N=8192", "headline": "20–30× slower than SDPA", "verdict": "baseline" },
+    { "id": "v2", "name": "Tiled", "era": "prefill", "technique": "Shared-memory tiling", "finding": "ncu: tiling cut ~0% DRAM — the L2 already owned the operands; S is 99% of traffic", "headline": "1.3–3.2× over v1", "verdict": "miss" },
+    { "id": "v3", "name": "Online softmax", "era": "prefill", "technique": "Running max/sum, S never materialized", "finding": "125× less memory but 3–7× SLOWER — nothing was bandwidth-bound", "headline": "S proven gone (counter-free)", "verdict": "miss" },
+    { "id": "v4", "name": "Fused FA-1", "era": "prefill", "technique": "Single-pass, O-rescale, warp-per-row", "finding": "First S-off-HBM wall-clock win; new wall is GEMV-shaped FMA under-utilization", "headline": "1.7–2.6× over v2, 7.5–15× over v3", "verdict": "win" },
+    { "id": "v5", "name": "WMMA tensor cores", "era": "prefill", "technique": "FP16-in/FP32-accum, Turing WMMA", "finding": "Floor drops 8×; prefill bench outstanding (logged honestly)", "headline": "correctness green (17/17)", "verdict": "partial" },
+    { "id": "v6", "name": "Split-KV decode", "era": "decode", "technique": "Flash-Decoding: partial + LSE merge (N_q=1)", "finding": "The decode pivot — only 9–15% HBM (occupancy-bound, not bandwidth)", "headline": "5.7–8.2× vs naive, 1.5–3.3× vs SDPA", "verdict": "partial" },
+    { "id": "v7", "name": "Paged KV", "era": "decode", "technique": "vLLM block-table gather + batch sweep", "finding": "Crossover REFUTED: %HBM flat 9.4–12.4% at every batch size → per-CTA-bound everywhere", "headline": "51/51 correct", "verdict": "miss" },
+    { "id": "v8", "name": "GQA M-packing", "era": "decode", "technique": "Pack G query heads into the M dimension", "finding": "AI=2G/b model got the magnitude right — first roofline win in 6 steps", "headline": "8.6× over v7, beats SDPA 6–10×", "verdict": "win" },
+    { "id": "v8_tc", "name": "Tensor cores on decode", "era": "decode", "technique": "WMMA decode ablation", "finding": "DEAD END: 1.8–4.6× slower on T4 + A100 — M≤16 too small; wrong tool for decode", "headline": "dead end", "verdict": "deadend" },
+    { "id": "v8_5", "name": "Double-buffer KV", "era": "decode", "technique": "Overlap loads with compute", "finding": "DEAD END: NULL — memory was never the wall", "headline": "dead end", "verdict": "deadend" },
+    { "id": "v8_6", "name": "Occupancy + ILP", "era": "decode", "technique": "4 blocks/SM + KU=4 unroll", "finding": "DEAD END: both NULL — the floor is the serial recurrence (unhideable)", "headline": "4th consecutive negative", "verdict": "deadend" },
+    { "id": "v8_7", "name": "Score-stationary", "era": "decode", "technique": "Lane=key inner-loop relayout", "finding": "Remove, don't hide — recurrence 32× shorter; closes the decode-schedule arc", "headline": "1.1–1.6× over v8, 8–16× vs SDPA", "verdict": "win" },
+    { "id": "v9", "name": "FP8 E4M3 KV", "era": "frontier", "technique": "1-byte KV cache, fused per-tile dequant", "finding": "First ncu-validated measurement; %HBM caps ~28%; per-CTA confirmed confound-free", "headline": "~1.3× latency win", "verdict": "win" },
+    { "id": "v10", "name": "NVFP4 KV (B300)", "era": "frontier", "technique": "4-bit KV with micro-scales", "finding": "Per-CTA-bound to 2M tokens on 3 architectures; ~40 GB/s ceiling; latency-negative", "headline": "capacity 3.56×", "verdict": "partial" },
+    { "id": "v11", "name": "MLA latent-KV (B300)", "era": "frontier", "technique": "MQA over one shared latent, M=128 by construction", "finding": "Shape correct but engine wrong — 4× cuBLAS gap (structural inference) → need tensor cores", "headline": "202× capacity, 148/148 correct", "verdict": "partial" },
+    { "id": "v12", "name": "tcgen05 tensor cores (B300)", "era": "frontier", "technique": "CUTLASS ex77 production kernel, characterized", "finding": "Work-starvation, not per-CTA forever — the right engine converts work to throughput", "headline": "1785 TFLOP/s = 36% FP8 peak", "verdict": "win" }
+  ]
+}

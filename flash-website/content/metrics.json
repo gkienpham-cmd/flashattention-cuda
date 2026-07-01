@@ -1,0 +1,23 @@
+{
+  "headline": [
+    { "id": "kernels", "value": 17, "suffix": "", "label": "CUDA kernels from scratch", "sub": "v1 naive → v12 tcgen05" },
+    { "id": "architectures", "value": 4, "suffix": "", "label": "GPU architectures", "sub": "T4 · A100 · B200 · B300" },
+    { "id": "decode_speedup", "value": 16, "prefix": "8–", "suffix": "×", "label": "decode speedup vs PyTorch SDPA", "sub": "at all batch sizes" },
+    { "id": "tflops", "value": 1785, "suffix": "", "unit": "TFLOP/s", "label": "on B300 tensor cores", "sub": "36% of FP8 peak (tcgen05)" }
+  ],
+  "secondary": [
+    { "id": "s_elim", "value": 125, "suffix": "×", "label": "S-matrix elimination", "sub": "2164 MB → 17 MB (v3)" },
+    { "id": "nvfp4_capacity", "value": 3.56, "suffix": "×", "label": "NVFP4 KV capacity vs FP16", "sub": "measured (v10)" },
+    { "id": "mla_capacity", "value": 202, "suffix": "×", "label": "MLA KV capacity vs MHA", "sub": "measured (v11)" },
+    { "id": "hbm_ceiling", "value": 28, "suffix": "%", "label": "measured HBM ceiling", "sub": "per-CTA-bound, ncu-validated on T4" }
+  ],
+  "proof": {
+    "reproduced_ais": [
+      { "case": "MLA FP16", "ai": 234.8, "limiter": "HBM" },
+      { "case": "MLA FP8", "ai": 469.7, "limiter": "MMA" },
+      { "case": "MLA NVFP4", "ai": 835.0, "limiter": "MMA" },
+      { "case": "GQA-8 NVFP4", "ai": 3.6, "limiter": "HBM" }
+    ],
+    "counter_free_proxy": { "proxy_pct": 13.8, "ncu_pct": 12.85, "note": "counter-free %HBM proxy validated within 1 point of Nsight Compute (T4)" }
+  }
+}
