@@ -1,0 +1,82 @@
+<svg width="100%" viewBox="0 0 920 360" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Paper positioning: what we claim, what we don't, and the empty cell we fill</title>
+<desc>Positions the paper's contribution honestly against FlashInfer, FlashMLA, FA4, and Tri Dao's GLA. The claim is the first open, prediction-vs-measured roofline characterization of attention decode on sm_103 across MHA→GQA→MLA and FP16→FP8→NVFP4 — complementing, not beating production kernels. Delta vs closest prior (GLA on H100): sm_103 + KV-quant.</desc>
+<rect x="0" y="0" width="920" height="360" fill="#ffffff"/>
+
+<text x="30" y="28" font-size="14" font-weight="600" fill="#2C2C2A">Paper positioning: what we claim, what we don't, and the empty cell we fill</text>
+<text x="30" y="46" font-size="10.5" fill="#888780">Honest scope that survives a hostile reviewer · characterization-grade (PMBS@SC / IISWC), not top-tier systems</text>
+
+<!-- What we claim -->
+<rect x="30" y="62" width="420" height="140" rx="7" fill="#F0FDF4" stroke="#22C55E" stroke-width="1.5"/>
+<text x="46" y="86" font-size="12" font-weight="700" fill="#166534">What we claim (defensible)</text>
+<text x="46" y="106" font-size="9.5" fill="#334155">1. First open, kernel-level, prediction-vs-measured roofline</text>
+<text x="54" y="120" font-size="9.5" fill="#334155">characterization of attention decode on B300/sm_103</text>
+<text x="46" y="138" font-size="9.5" fill="#334155">2. Coverage: MHA → GQA → MLA × FP16 → FP8 → NVFP4</text>
+<text x="46" y="154" font-size="9.5" fill="#334155">3. Central finding: decode's "per-CTA wall" = work-starvation</text>
+<text x="54" y="168" font-size="9.5" fill="#334155">(not a fixed ceiling; right engine converts work → throughput)</text>
+<text x="46" y="186" font-size="9.5" fill="#334155">4. Two-layer prediction model with pre-registered predictions</text>
+
+<!-- What we DON'T claim -->
+<rect x="470" y="62" width="420" height="140" rx="7" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.2"/>
+<text x="486" y="86" font-size="12" font-weight="700" fill="#991B1B">What we DON'T claim (honest limits)</text>
+<text x="486" y="106" font-size="9.5" fill="#7F1D1D">✗ NOT faster than FlashInfer / FlashMLA / cuDNN</text>
+<text x="486" y="120" font-size="9.5" fill="#7F1D1D">✗ NOT a novel roofline methodology (arXiv 2605.04178 et al.)</text>
+<text x="486" y="138" font-size="9.5" fill="#7F1D1D">✗ NOT first-to-run on sm_103 (FA4 deployed via vLLM/SGLang)</text>
+<text x="486" y="154" font-size="9.5" fill="#7F1D1D">✗ NOT a new SOTA kernel — v12 measured NVIDIA's canonical kernel</text>
+<text x="486" y="172" font-size="9.5" fill="#7F1D1D">✗ Accuracy on single-seed gpt2-small (not a published constant)</text>
+<text x="486" y="188" font-size="9.5" fill="#7F1D1D">✗ ncu on B300 still owed (counter-free proxy validated on T4)</text>
+
+<!-- Landscape table -->
+<rect x="30" y="214" width="860" height="136" rx="7" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="46" y="236" font-size="11" font-weight="600" fill="#334155">Landscape: where the empty cell is</text>
+
+<!-- Headers -->
+<text x="46" y="256" font-size="9" font-weight="700" fill="#64748B">Work</text>
+<text x="240" y="256" font-size="9" font-weight="700" fill="#64748B">Arch</text>
+<text x="340" y="256" font-size="9" font-weight="700" fill="#64748B">Attention</text>
+<text x="460" y="256" font-size="9" font-weight="700" fill="#64748B">Precision</text>
+<text x="570" y="256" font-size="9" font-weight="700" fill="#64748B">Type</text>
+<text x="700" y="256" font-size="9" font-weight="700" fill="#64748B">Roofline?</text>
+
+<!-- Row 1: FA4 -->
+<text x="46" y="272" font-size="9" fill="#334155">FA4 (Tri Dao)</text>
+<text x="240" y="272" font-size="9" fill="#334155">B200/sm_100</text>
+<text x="340" y="272" font-size="9" fill="#334155">Standard</text>
+<text x="460" y="272" font-size="9" fill="#334155">BF16</text>
+<text x="570" y="272" font-size="9" fill="#334155">Prefill/training</text>
+<text x="700" y="272" font-size="9" fill="#334155">Benchmarks only</text>
+
+<!-- Row 2: FlashInfer -->
+<text x="46" y="288" font-size="9" fill="#334155">FlashInfer</text>
+<text x="240" y="288" font-size="9" fill="#334155">B300/sm_103</text>
+<text x="340" y="288" font-size="9" fill="#334155">GQA/MLA</text>
+<text x="460" y="288" font-size="9" fill="#334155">FP8/NVFP4 KV</text>
+<text x="570" y="288" font-size="9" fill="#334155">Decode (prod)</text>
+<text x="700" y="288" font-size="9" fill="#334155">No (bench only)</text>
+
+<!-- Row 3: FlashMLA -->
+<text x="46" y="304" font-size="9" fill="#334155">FlashMLA (DeepSeek)</text>
+<text x="240" y="304" font-size="9" fill="#334155">H800</text>
+<text x="340" y="304" font-size="9" fill="#334155">MLA</text>
+<text x="460" y="304" font-size="9" fill="#334155">FP8/BF16</text>
+<text x="570" y="304" font-size="9" fill="#334155">Decode</text>
+<text x="700" y="304" font-size="9" fill="#334155">No</text>
+
+<!-- Row 4: GLA (closest prior) -->
+<text x="46" y="320" font-size="9" fill="#3B82F6" font-weight="600">GLA (Tri Dao, 2505.21487)</text>
+<text x="240" y="320" font-size="9" fill="#3B82F6" font-weight="600">H100</text>
+<text x="340" y="320" font-size="9" fill="#3B82F6" font-weight="600">MLA decode</text>
+<text x="460" y="320" font-size="9" fill="#3B82F6" font-weight="600">BF16</text>
+<text x="570" y="320" font-size="9" fill="#3B82F6" font-weight="600">Decode</text>
+<text x="700" y="320" font-size="9" fill="#3B82F6" font-weight="600">YES (closest prior)</text>
+
+<!-- Row 5: Ours -->
+<rect x="40" y="328" width="842" height="16" rx="2" fill="#DCFCE7"/>
+<text x="46" y="340" font-size="9" fill="#166534" font-weight="700">Ours</text>
+<text x="240" y="340" font-size="9" fill="#166534" font-weight="700">T4→B300/sm_103</text>
+<text x="340" y="340" font-size="9" fill="#166534" font-weight="700">MHA→GQA→MLA</text>
+<text x="460" y="340" font-size="9" fill="#166534" font-weight="700">FP16→FP8→NVFP4</text>
+<text x="570" y="340" font-size="9" fill="#166534" font-weight="700">Decode</text>
+<text x="700" y="340" font-size="9" fill="#166534" font-weight="700">YES (the empty cell)</text>
+<text x="810" y="340" font-size="8" fill="#166534">Δ = sm_103 + KV-quant</text>
+</svg>

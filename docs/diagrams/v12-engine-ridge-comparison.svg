@@ -1,0 +1,51 @@
+<svg width="100%" viewBox="0 0 920 280" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>v12: each engine sets its own ridge — the NVFP4 peak overshoots into HBM-bound</title>
+<desc>Three roofline overlays showing that when the engine changes from FP16-TC to FP8-TC to NVFP4-TC, the ridge (peak/BW) rises from 312.5 to 625 to 1875. MLA decode AI=835 sits above the FP8 ridge (compute-bound) but BELOW the NVFP4 ridge (HBM-bound). The 15 PF FP4 peak is too high for decode to saturate.</desc>
+<rect x="0" y="0" width="920" height="280" fill="#ffffff"/>
+
+<text x="30" y="28" font-size="14" font-weight="600" fill="#2C2C2A">v12: each engine sets its own ridge — NVFP4 overshoots into HBM-bound</text>
+<text x="30" y="46" font-size="10.5" fill="#888780">B300/sm_103a · MLA decode AI = 835 FLOP/B (NVFP4 latent storage, h_q=128) · HBM 8 TB/s shared</text>
+
+<!-- Three roofline comparison boxes -->
+<!-- Box 1: FP16-TC -->
+<rect x="30" y="64" width="270" height="132" rx="7" fill="#F0FDF4" stroke="#22C55E" stroke-width="1.2"/>
+<text x="46" y="88" font-size="12" font-weight="700" fill="#166534">FP16-TC engine</text>
+<text x="46" y="106" font-size="10" fill="#334155">Peak: 2.5 PFLOPS</text>
+<text x="46" y="120" font-size="10" fill="#334155">Ridge: 2500/8000 = <tspan font-weight="600">312.5</tspan></text>
+<text x="46" y="138" font-size="10" fill="#334155">AI 835 vs ridge: <tspan font-weight="600" fill="#166534">2.67× above</tspan></text>
+<text x="46" y="156" font-size="10" fill="#334155">Limiter: <tspan font-weight="600" fill="#166534">Compute-bound</tspan></text>
+<text x="46" y="176" font-size="9" fill="#64748B">(v11 ran this — but CUDA cores couldn't reach it)</text>
+<rect x="46" y="182" width="60" height="6" rx="2" fill="#22C55E" opacity="0.3"/>
+
+<!-- Box 2: FP8-TC -->
+<rect x="320" y="64" width="270" height="132" rx="7" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+<text x="336" y="88" font-size="12" font-weight="700" fill="#1E40AF">FP8-TC engine</text>
+<text x="336" y="106" font-size="10" fill="#334155">Peak: 5 PFLOPS</text>
+<text x="336" y="120" font-size="10" fill="#334155">Ridge: 5000/8000 = <tspan font-weight="600">625</tspan></text>
+<text x="336" y="138" font-size="10" fill="#334155">AI 835 vs ridge: <tspan font-weight="600" fill="#1E40AF">1.34× above</tspan></text>
+<text x="336" y="156" font-size="10" fill="#334155">Limiter: <tspan font-weight="600" fill="#1E40AF">Compute-bound</tspan> (knife-edge)</text>
+<text x="336" y="176" font-size="9" fill="#64748B">(v12 measured this — at-scale 46% HBM corroborates)</text>
+<rect x="336" y="182" width="120" height="6" rx="2" fill="#3B82F6" opacity="0.3"/>
+
+<!-- Box 3: NVFP4-TC -->
+<rect x="610" y="64" width="280" height="132" rx="7" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text x="626" y="88" font-size="12" font-weight="700" fill="#991B1B">NVFP4-TC engine</text>
+<text x="626" y="106" font-size="10" fill="#334155">Peak: 15 PFLOPS</text>
+<text x="626" y="120" font-size="10" fill="#334155">Ridge: 15000/8000 = <tspan font-weight="600">1875</tspan></text>
+<text x="626" y="138" font-size="10" fill="#334155">AI 835 vs ridge: <tspan font-weight="600" fill="#991B1B">0.45× below</tspan></text>
+<text x="626" y="156" font-size="10" fill="#334155">Limiter: <tspan font-weight="600" fill="#991B1B">HBM-bound</tspan> (overshoots)</text>
+<text x="626" y="176" font-size="9" fill="#64748B">(Arm 2 — unmeasured; the FP4 peak is too big)</text>
+<rect x="626" y="182" width="240" height="6" rx="2" fill="#EF4444" opacity="0.3"/>
+
+<!-- Arrows -->
+<line x1="304" y1="130" x2="316" y2="130" stroke="#94A3B8" stroke-width="2"/>
+<polygon points="316,130 308,124 308,136" fill="#94A3B8"/>
+<line x1="594" y1="130" x2="606" y2="130" stroke="#94A3B8" stroke-width="2"/>
+<polygon points="606,130 598,124 598,136" fill="#94A3B8"/>
+
+<!-- Bottom insight -->
+<rect x="30" y="210" width="860" height="56" rx="6" fill="#FEFCE8" stroke="#EAB308" stroke-width="1"/>
+<text x="46" y="232" font-size="11" font-weight="600" fill="#854D0E">The roofline subtlety (a correction to the v12 kickoff):</text>
+<text x="46" y="248" font-size="10" fill="#78350F">The kickoff compared every AI against the FP16 ridge (312.5) → "both fp8 &amp; nvfp4 past the ridge → MMA." But for v12 the engine IS the variable,</text>
+<text x="46" y="260" font-size="10" fill="#78350F">so each arm must be judged against its OWN ridge. Under that correct comparison, the FP8 arm is compute-bound but the native-FP4 arm flips BACK to HBM-bound.</text>
+</svg>

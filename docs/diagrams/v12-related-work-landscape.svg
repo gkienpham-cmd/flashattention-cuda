@@ -1,0 +1,145 @@
+<svg width="100%" viewBox="0 0 920 530" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Related work landscape: what exists, what's missing, and where we fit</title>
+<desc>Maps the closest prior art across three axes — attention type (MHA/GQA/MLA), precision (FP16/FP8/FP4), and analysis type (benchmarks/roofline/kernel-level) — showing that kernel-level prediction-vs-measured roofline of MLA decode on sm_103 across FP16-FP8-NVFP4 is the empty cell. Updated 2026-07-01 with SageAttention3 and Mattana blog.</desc>
+<rect x="0" y="0" width="920" height="530" fill="#ffffff"/>
+
+<text x="30" y="28" font-size="14" font-weight="600" fill="#2C2C2A">Related work landscape: the empty cell in attention decode characterization</text>
+<text x="30" y="46" font-size="10.5" fill="#888780">27 sources surveyed · 7 closest priors identified · none fill our cell (MLA decode x sm_103 x FP16-NVFP4 x prediction-vs-measured roofline)</text>
+
+<!-- Table headers -->
+<rect x="30" y="62" width="860" height="24" rx="4" fill="#F1F5F9"/>
+<text x="46" y="78" font-size="9.5" font-weight="700" fill="#475569">Work</text>
+<text x="240" y="78" font-size="9.5" font-weight="700" fill="#475569">Arch</text>
+<text x="340" y="78" font-size="9.5" font-weight="700" fill="#475569">Attention</text>
+<text x="440" y="78" font-size="9.5" font-weight="700" fill="#475569">Precision</text>
+<text x="540" y="78" font-size="9.5" font-weight="700" fill="#475569">Phase</text>
+<text x="630" y="78" font-size="9.5" font-weight="700" fill="#475569">Analysis</text>
+<text x="780" y="78" font-size="9.5" font-weight="700" fill="#475569">Gap</text>
+
+<!-- Row 1: Attn-QAT -->
+<rect x="30" y="88" width="860" height="36" rx="0" fill="#FEF2F2"/>
+<text x="46" y="104" font-size="9" font-weight="600" fill="#991B1B">Attn-QAT</text>
+<text x="46" y="116" font-size="8" fill="#991B1B">arXiv 2603.00040</text>
+<text x="240" y="108" font-size="9" fill="#334155">RTX 5090 / B200</text>
+<text x="340" y="108" font-size="9" fill="#334155">Standard</text>
+<text x="440" y="104" font-size="9" fill="#334155">FP4 QK (native TC)</text>
+<text x="440" y="116" font-size="8" fill="#64748B">BF16 PV</text>
+<text x="540" y="108" font-size="9" fill="#334155">Prefill only</text>
+<text x="630" y="108" font-size="9" fill="#334155">Benchmarks</text>
+<text x="780" y="104" font-size="8" fill="#991B1B">No decode</text>
+<text x="780" y="116" font-size="8" fill="#991B1B">No MLA / No sm_103</text>
+
+<!-- Row 2: SageAttention3 (NEW) -->
+<rect x="30" y="126" width="860" height="36" rx="0" fill="#FEF2F2"/>
+<text x="46" y="142" font-size="9" font-weight="600" fill="#991B1B">SageAttention3</text>
+<text x="46" y="154" font-size="8" fill="#991B1B">arXiv 2505.11594</text>
+<text x="240" y="146" font-size="9" fill="#334155">RTX 5090 (SM120)</text>
+<text x="340" y="146" font-size="9" fill="#334155">Standard</text>
+<text x="440" y="142" font-size="9" fill="#334155">FP4 microscaling</text>
+<text x="440" y="154" font-size="8" fill="#64748B">1038 TOPS, NeurIPS Spot.</text>
+<text x="540" y="146" font-size="9" fill="#334155">Prefill only</text>
+<text x="630" y="146" font-size="9" fill="#334155">Benchmarks</text>
+<text x="780" y="142" font-size="8" fill="#991B1B">No decode / No MLA</text>
+<text x="780" y="154" font-size="8" fill="#991B1B">No datacenter BB</text>
+
+<!-- Row 3: SnapMLA -->
+<rect x="30" y="164" width="860" height="36" rx="0" fill="#FFFBEB"/>
+<text x="46" y="180" font-size="9" font-weight="600" fill="#854D0E">SnapMLA</text>
+<text x="46" y="192" font-size="8" fill="#854D0E">arXiv 2602.10718</text>
+<text x="240" y="184" font-size="9" fill="#334155">Hopper (H100)</text>
+<text x="340" y="184" font-size="9" fill="#334155">MLA decode</text>
+<text x="440" y="184" font-size="9" fill="#334155">FP8 TC compute</text>
+<text x="540" y="184" font-size="9" fill="#334155">Decode</text>
+<text x="630" y="184" font-size="9" fill="#334155">Benchmarks</text>
+<text x="780" y="180" font-size="8" fill="#854D0E">No Blackwell</text>
+<text x="780" y="192" font-size="8" fill="#854D0E">No FP4 / No roofline</text>
+
+<!-- Row 4: arXiv 2506.02523 -->
+<rect x="30" y="202" width="860" height="36" rx="0" fill="#F8FAFC"/>
+<text x="46" y="218" font-size="9" font-weight="600" fill="#475569">MLA HW analysis</text>
+<text x="46" y="230" font-size="8" fill="#475569">arXiv 2506.02523</text>
+<text x="240" y="218" font-size="9" fill="#334155">Edge TPU / A17</text>
+<text x="240" y="230" font-size="8" fill="#64748B">(no NVIDIA GPU)</text>
+<text x="340" y="222" font-size="9" fill="#334155">MLA (analytical)</text>
+<text x="440" y="222" font-size="9" fill="#334155">N/A</text>
+<text x="540" y="222" font-size="9" fill="#334155">Both (analytical)</text>
+<text x="630" y="222" font-size="9" fill="#334155">Analytical only</text>
+<text x="780" y="218" font-size="8" fill="#475569">No GPU kernel</text>
+<text x="780" y="230" font-size="8" fill="#475569">No measurements</text>
+
+<!-- Row 5: Microbenchmark paper -->
+<rect x="30" y="240" width="860" height="36" rx="0" fill="#F8FAFC"/>
+<text x="46" y="256" font-size="9" font-weight="600" fill="#475569">GPU perf model</text>
+<text x="46" y="268" font-size="8" fill="#475569">arXiv 2605.04178</text>
+<text x="240" y="260" font-size="9" fill="#334155">B200 / H200</text>
+<text x="340" y="260" font-size="9" fill="#334155">GEMM only</text>
+<text x="440" y="260" font-size="9" fill="#334155">FP16/FP8/FP4</text>
+<text x="540" y="260" font-size="9" fill="#334155">N/A</text>
+<text x="630" y="256" font-size="9" fill="#334155">Roofline model</text>
+<text x="630" y="268" font-size="8" fill="#64748B">(1.31% MAE)</text>
+<text x="780" y="256" font-size="8" fill="#475569">No sm_103</text>
+<text x="780" y="268" font-size="8" fill="#475569">No attention kernels</text>
+
+<!-- Row 6: Blackwell microbench -->
+<rect x="30" y="278" width="860" height="36" rx="0" fill="#F8FAFC"/>
+<text x="46" y="294" font-size="9" font-weight="600" fill="#475569">BB microbench</text>
+<text x="46" y="306" font-size="8" fill="#475569">arXiv 2512.02189</text>
+<text x="240" y="298" font-size="9" fill="#334155">B200 / sm_100</text>
+<text x="340" y="298" font-size="9" fill="#334155">GEMM only</text>
+<text x="440" y="294" font-size="9" fill="#334155">FP4 MMA</text>
+<text x="440" y="306" font-size="8" fill="#64748B">7700 TFLOPS, 96%</text>
+<text x="540" y="298" font-size="9" fill="#334155">N/A</text>
+<text x="630" y="298" font-size="9" fill="#334155">Microbenchmarks</text>
+<text x="780" y="294" font-size="8" fill="#475569">No sm_103</text>
+<text x="780" y="306" font-size="8" fill="#475569">No attention kernels</text>
+
+<!-- Row 7: GLA -->
+<rect x="30" y="316" width="860" height="36" rx="0" fill="#EFF6FF"/>
+<text x="46" y="332" font-size="9" font-weight="600" fill="#1E40AF">GLA (closest prior)</text>
+<text x="46" y="344" font-size="8" fill="#1E40AF">arXiv 2505.21487</text>
+<text x="240" y="332" font-size="9" fill="#3B82F6">H100</text>
+<text x="340" y="332" font-size="9" fill="#3B82F6">MLA decode</text>
+<text x="440" y="332" font-size="9" fill="#3B82F6">BF16</text>
+<text x="540" y="332" font-size="9" fill="#3B82F6">Decode</text>
+<text x="630" y="332" font-size="9" fill="#3B82F6" font-weight="600">Roofline</text>
+<text x="780" y="328" font-size="8" fill="#1E40AF">No sm_103</text>
+<text x="780" y="340" font-size="8" fill="#1E40AF">No KV-quant</text>
+
+<!-- Row 8: FA4 -->
+<rect x="30" y="354" width="860" height="36" rx="0" fill="#F8FAFC"/>
+<text x="46" y="370" font-size="9" font-weight="600" fill="#475569">FA4</text>
+<text x="46" y="382" font-size="8" fill="#475569">arXiv 2603.05451</text>
+<text x="240" y="374" font-size="9" fill="#334155">B200 / sm_100</text>
+<text x="340" y="374" font-size="9" fill="#334155">Standard</text>
+<text x="440" y="374" font-size="9" fill="#334155">BF16</text>
+<text x="540" y="374" font-size="9" fill="#334155">Prefill/training</text>
+<text x="630" y="374" font-size="9" fill="#334155">Roofline (partial)</text>
+<text x="780" y="370" font-size="8" fill="#475569">No decode</text>
+<text x="780" y="382" font-size="8" fill="#475569">No sm_103</text>
+
+<!-- Row 9: FlashInfer/FlashMLA -->
+<rect x="30" y="392" width="860" height="36" rx="0" fill="#F8FAFC"/>
+<text x="46" y="408" font-size="9" font-weight="600" fill="#475569">FlashInfer / FlashMLA</text>
+<text x="240" y="412" font-size="9" fill="#334155">B300 / sm_103</text>
+<text x="340" y="412" font-size="9" fill="#334155">GQA / MLA</text>
+<text x="440" y="412" font-size="9" fill="#334155">FP8 / NVFP4 KV</text>
+<text x="540" y="412" font-size="9" fill="#334155">Decode (prod)</text>
+<text x="630" y="412" font-size="9" fill="#334155">Benchmarks only</text>
+<text x="780" y="412" font-size="8" fill="#475569">No roofline</text>
+
+<!-- Row 10: OURS -->
+<rect x="30" y="434" width="860" height="38" rx="4" fill="#DCFCE7" stroke="#22C55E" stroke-width="1.5"/>
+<text x="46" y="452" font-size="9.5" font-weight="700" fill="#166534">Ours (this paper)</text>
+<text x="240" y="452" font-size="9.5" font-weight="700" fill="#166534">T4-B300/sm_103</text>
+<text x="340" y="452" font-size="9.5" font-weight="700" fill="#166534">MHA-GQA-MLA</text>
+<text x="440" y="452" font-size="9.5" font-weight="700" fill="#166534">FP16-FP8-NVFP4</text>
+<text x="540" y="452" font-size="9.5" font-weight="700" fill="#166534">Decode</text>
+<text x="630" y="448" font-size="9.5" font-weight="700" fill="#166534">Pred-vs-measured</text>
+<text x="630" y="462" font-size="8" font-weight="600" fill="#166534">roofline</text>
+<text x="780" y="452" font-size="9" font-weight="700" fill="#166534">THE EMPTY CELL</text>
+
+<!-- Delta annotations -->
+<rect x="30" y="480" width="860" height="42" rx="5" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1"/>
+<text x="46" y="496" font-size="9.5" fill="#1E3A5F"><tspan font-weight="600" fill="#1E40AF">Delta vs closest prior (GLA):</tspan> sm_103 + KV-quant (FP8/NVFP4) + cross-type (MHA-GQA-MLA) + cross-gen (T4-B300)</text>
+<text x="46" y="510" font-size="9" fill="#1E3A5F"><tspan font-weight="600" fill="#1E40AF">vs Attn-QAT/SageAttn3:</tspan> decode (not prefill) + MLA (not standard) + sm_103 (not SM120) + roofline · <tspan font-weight="600" fill="#1E40AF">vs SnapMLA:</tspan> sm_103 (not Hopper) + FP4 + roofline</text>
+</svg>
