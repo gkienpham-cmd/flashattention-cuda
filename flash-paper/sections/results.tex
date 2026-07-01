@@ -1,0 +1,241 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{The prefill arc (v1--v5, T4)}
+\label{sec:results-prefill}
+The first five kernels rebuild FlashAttention for prefill and establish the
+methodology; each pure-roofline miss teaches something the traffic model cannot
+see. \textbf{v1} (naive, three-pass FP32) is HBM-bound in principle
+($\ai \approx 0.25$) but runs \emph{faster} than its cache-free floor at mid-$N$
+(85.6\,ms vs a 109\,ms floor at $N{=}2048$, $d{=}64$) because the T4's 4\,MB L2
+absorbs the redundant operand reads; only at $N{=}8192$, when L2 overflows, does
+it converge to the floor. \textbf{v2} (shared-memory tiling) is
+$2.8$--$3.2\times$ faster than v1, but \texttt{ncu} shows the win is
+\emph{compute/scheduling, not bandwidth}: DRAM traffic is essentially unchanged
+($1.02\times$ at $N{=}8192$), because the L2 had already served the operands and
+because $\sim$99\% of DRAM traffic is the materialized score matrix $S$, which is
+byte-identical in v1 and v2. The roofline predicted a $\sim$30$\times$ traffic
+cut; the measured cut was zero. \textbf{v3} (online softmax) eliminates $S$ from
+HBM entirely---peak memory drops $125\times$ (2164\,MB $\to$ 17\,MB)---yet is
+$3$--$7\times$ \emph{slower} than v2, proving $S$ was never the bottleneck on a
+machine that was never bandwidth-bound; the kernel sits $151\times$ above its MMA
+floor, occupancy/latency-bound. \textbf{v4} (fused single-pass, warp-per-row)
+recovers the schedule ($1.7$--$2.6\times$ over v2, $7.5$--$15\times$ over v3) and
+closes the distance to the floor from $151\times$ to $\sim$18$\times$; the
+residual gap is FMA under-utilization---warp-per-row scoring is GEMV-shaped, a
+per-key shuffle reduction dominating the two FMAs. \textbf{v5} (tensor-core WMMA)
+is predicted to drop the floor $8\times$ but its prefill benchmark was
+\emph{never executed}; we report it as a prediction only and never as a measured
+result (Section~\ref{sec:threats}).
+
+\subsection{The decode arc (v6--v12)}
+\label{sec:results-decode}
+The decode arc is the contribution. All decode readings use the counter-free
+proxy of Section~\ref{sec:measure}.
+
+\paragraph{Split-KV and paging (v6--v7)}
+Decode with $N_q{=}1$ leaves a single-query kernel with one CTA and idle SMs.
+Split-KV partitions the KV across blocks, each emitting an unnormalized partial
+$(O, m, \ell)$ that an LSE merge recombines. \textbf{v6} beats the naive
+$N_q{=}1$ loop by $5.7$--$8.2\times$ and torch SDPA by $1.5$--$3.3\times$, but
+reaches only \textbf{9--15\% of HBM} ($6.5$--$11.6\times$ above the bandwidth
+floor): the limiter is occupancy/launch, not bandwidth. \textbf{v7} adds a paged
+block-table gather (the vLLM cache layout) and---critically---a \emph{batch
+sweep} that \emph{refutes} the predicted occupancy$\to$bandwidth crossover: \%HBM
+stays flat at $9.4$--$12.4\%$ from $BH{=}8$ to $BH{=}512$
+(Table~\ref{tab:v7batch}). Code inspection confirms the cause: shared memory
+caps residency at 2 blocks/SM, and at $N_q{=}1$ only one of eight warps computes,
+so batch merely adds waves. Decode is \emph{per-CTA-bound at every batch size},
+not grid-occupancy-bound---which reorders the roadmap: per-CTA efficiency
+(GEMV$\to$GEMM) before bytes.
+
+\begin{table}[t]
+  \centering
+  \caption{v7 batch sweep at $N_k{=}8192$ (T4). \%HBM is flat across a
+  $64\times$ batch range: no occupancy$\to$bandwidth crossover. v7 also loses to
+  SDPA at $B{\ge}8$ (SDPA amortizes launch; v7 is already SM-saturated at $B{=}1$).}
+  \label{tab:v7batch}
+  \small
+  \begin{tabular}{rrrrr}
+    \toprule
+    $B$ & $BH$ & \%HBM $d{=}64$ & \%HBM $d{=}128$ & vs SDPA $d{=}64$ \\
+    \midrule
+    1  & 8   & 9.8\%  & 12.2\% & 2.65$\times$ \\
+    8  & 64  & 9.4\%  & 11.4\% & 0.56$\times$ \\
+    16 & 128 & 9.4\%  & 11.4\% & 0.56$\times$ \\
+    32 & 256 & 9.5\%  & 11.6\% & 0.51$\times$ \\
+    64 & 512 & 10.3\% & 12.4\% & 0.50$\times$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{GQA $M$-packing and score-stationary (v8, v8.7)}
+Packing the $G$ query heads of a GQA group into the CTA's $M$ dimension activates
+$G$ warps (not one) and reads the shared KV once, raising \ai\ from $2/b$ to
+$2G/b$. On plain CUDA cores this \textbf{v8 Cut~1} tracks $\sim G\times$ up to
+$G{=}8$ (measured $8.59\times$ at $d{=}64$, $8.71\times$ at $d{=}128$ versus
+no-packing) and beats SDPA $6$--$10\times$ at \emph{every} batch $B{=}1$--$64$---
+reclaiming the serving regime v7 had lost. \%HBM stays $\le 11\%$: the roofline
+got the speedup \emph{scaling} right (a first partial win in six steps) while the
+kernel never approaches the absolute floor. Tensor cores are the \emph{wrong}
+tool here: a Turing WMMA variant (Cut~2) is $2.1$--$3.3\times$ \emph{slower} than
+Cut~1 even at $G{=}16$ (a full WMMA tile), pinned by the opaque-fragment
+staging tax, not compute. Two further single-variable ablations---double-buffered
+KV (v8.5) and key-ILP/occupancy (v8.6)---were both null, isolating the floor as
+the per-row serial online-softmax recurrence. \textbf{v8.7} removes it: a
+score-stationary relayout (lane $=$ key) eliminates the per-key cross-lane
+reduction and shortens the recurrence $32\times$. It is the first inner-loop
+lever to move the clock-robust \%HBM (up $2$--$3$ points, to $\sim$10--12\%) and
+beats Cut~1 by $1.1$--$1.6\times$ at matched clock---confirming the recurrence was
+a real, \emph{removable} floor component, while a residual per-CTA ceiling
+remains.
+
+\paragraph{Cross-precision KV (v9--v10)}
+\textbf{v9} stores the KV cache in FP8 E4M3 (1 byte), dequantized fused per tile.
+The pre-registered ``capacity-only'' prediction is \emph{refuted}: FP8 delivers a
+real, clock-matched $\sim$1.3$\times$ decode-latency win (median across $G$;
+$0.96$--$1.52\times$), and the win \emph{shrinks as $G$ grows}
+($1.37\times$ at $G{=}2 \to 0.96\times$ at $G{=}32$, $d{=}64$)---the fingerprint of
+an L2$\to$SM \emph{load} effect that $M$-packing amortizes away, not an HBM
+effect. \%HBM \emph{drops} versus FP16 and never flips the limiter; per-tensor
+E4M3 RMSE versus FP16 KV is $\sim$6--7$\times10^{-4}$. \textbf{v10} stores NVFP4
+(packed E2M1 nibble $+$ per-16 micro-scale, 0.5625\,B/element): measured capacity
+is $3.56\times$ versus FP16 and $1.78\times$ versus FP8. NVFP4 RMSE is
+$\sim$2.4$\times10^{-3}$, about $4\times$ FP8's---E2M1's single mantissa bit, not
+a bug---and there is \emph{no} latency win (\%HBM falls to $\sim$3\%). An
+asymmetric per-channel-K / per-token-V recipe recovers accuracy only where real
+(GPT-2) KV has channel-outlier structure and is layer-conditional, so we ship the
+robust block-16 default.
+
+\paragraph{v9 Task~1: the confound-free per-CTA verdict}
+The ``$\sim$10\% HBM, per-CTA-bound'' reading recurs from v6, but until v9~Task~1
+it was confounded: the micro-bench KV fit in L2, clocks were unlocked, and $N_k$
+never passed L2. On a \emph{root} T4 we removed all three at once (clocks locked
+at 1590\,MHz, L2 flushed, $N_k \to$ 128K so the working set is 537\,MB $\gg$ 4\,MB
+L2) with \texttt{ncu} finally live---the first counter-validated measurement in
+the project. Achieved \%HBM plateaus at $\sim$28--29\% under full occupancy (never
+near the $\sim$70\% achievable ceiling), with \emph{no bandwidth knee} at the L2
+crossing; \texttt{ncu} reports L2 hit-rate 1.1\% (data genuinely from HBM) yet
+DRAM throughput only 12.85\%. The verdict is earned: decode is
+\emph{per-CTA / low-MLP latency-bound}, not bandwidth-bound, and the counter-free
+proxy is validated (13.8\% vs 12.85\%). \textbf{Bytes are not the decode wall}---
+FP8/NVFP4 are a capacity$+$accuracy play, not a decode-latency play.
+
+\paragraph{MLA decode: the shape change (v11--v12)}
+With bytes exhausted and occupancy capped, the only lever left is the
+\emph{shape}. \textbf{v11} implements MLA on CUDA cores: all $h_q{=}128$ heads
+share one latent, so $M{=}128$ by construction and \ai\ jumps to $\approx$235.
+Pure roofline calls this the arc's first compute-flip; the per-CTA-corrected
+layer predicts it \emph{stays} per-CTA because a warp-per-head kernel packs
+$M{=}128$ as $16$ blocks $\times 8$ warps, not one GEMM. Measurement confirms the
+corrected layer on \emph{both} T4 and B300: per-CTA-bound to $N_k{=}2$M past a
+$5\times$ L2 overflow (\%HBM $\approx 0$), at $0.75\tflops$ ($<$1\% of either
+compute peak). The headline is a $\sim$4$\times$ gap: torch dense-MQA, which
+routes $M{=}128$ into cuBLAS tensor-core GEMMs, beats our CUDA-core kernel
+$\sim$4$\times$ on B300. This is a clean result either way---the MLA \emph{shape}
+is correct and tensor-core-friendly, but the CUDA-core default is the wrong tool.
+(We attribute the gap to cuBLAS exploiting the tensor cores; the torch baseline
+itself was not profiled, so the ``$M{=}128$-as-one-TC-GEMM'' benefit is shown
+structurally and externally~\cite{gla}, not by a torch-side measurement.)
+Capacity is $202\times$ versus MHA / $12.6\times$ versus GQA-8, and the latent
+absorption identity (absorbed kernel $\equiv$ explicit per-head materialization)
+is verified in the correctness suite.
+
+\textbf{v12} changes only the engine. On the B300 box we found that CUTLASS 4.6
+example~77 already ships the production \texttt{tcgen05} MLA decode kernel
+(\texttt{Sm100FmhaMlaKernelTmaWarpspecialized}: $M{=}128$ by
+\texttt{static\_assert}, FP8-native, paged $+$ split-KV $+$ LSE), so v12's
+deliverable became characterizing that canonical kernel directly rather than
+reinventing NVIDIA's scheduler. Figure~\ref{fig:regime} and Table~\ref{tab:v12}
+give the result: at realistic single-request decode ($B{=}1$, $K{\le}32$K) even
+the production kernel runs at \textbf{1--2\% of FP8 peak}, exactly the
+pre-registered per-CTA/pipeline-depth floor; but throughput \emph{scales with
+total work $B\times K$} to \textbf{1785\tflops\ $=$ 35.7\% of FP8 peak / 46.3\% of
+HBM} at $B{=}64$, $K{=}524{,}288$. FP16 tracks FP8 (not compute-bound), and
+\texttt{--verbose} confirms 174\,KB shared memory $\to \sim$1 CTA/SM (the measured
+capacity pressure). The transition is smooth in $B\times K$ with no hard knee.
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=\columnwidth]{v12-throughput-regime}
+  \caption{v12 (production \texttt{tcgen05} MLA decode, B300): FP8 throughput
+  versus total work $B\times K$. Single-stream decode ($B{=}1$, moderate $K$)
+  sits at 1--2\% of the 5\,PF FP8 peak; throughput climbs to 35.7\% peak / 46.3\%
+  HBM as $B\times K$ grows. The floor is work-starvation, not a fixed wall.}
+  \label{fig:regime}
+\end{figure}
+
+\begin{table}[t]
+  \centering
+  \caption{v12 FP8 decode throughput vs work (B300, CUTLASS ex77, \texttt{sm\_103a}).
+  Peaks: FP8 5\,PF, HBM 8\tbs.}
+  \label{tab:v12}
+  \small
+  \begin{tabular}{rrrrr}
+    \toprule
+    $B$ & $K$ & \tflops & \% FP8 peak & \% HBM \\
+    \midrule
+    1  & 256    & 2.4    & 0.05\% & 0.15\% \\
+    1  & 8192   & 51.4   & 1.0\%  & 1.4\%  \\
+    1  & 32768  & 112.5  & 2.2\%  & 2.9\%  \\
+    1  & 524288 & 790.6  & 15.8\% & 20.5\% \\
+    64 & 8192   & 944.8  & 18.9\% & 25.5\% \\
+    64 & 131072 & 1717.3 & 34.3\% & 44.5\% \\
+    64 & 524288 & \textbf{1785.3} & \textbf{35.7\%} & \textbf{46.3\%} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=\columnwidth]{v12-work-starvation-correction}
+  \caption{The correction. v6--v11 CUDA-core decode is flat near the per-CTA
+  floor (v11 MLA: $0.75\tflops$ regardless of $B\times K$). The \texttt{tcgen05}
+  engine (v12) spans $2.4 \to 1785\tflops$ as work grows---so ``per-CTA-bound
+  \emph{forever}'' was a small-$B\times K$ artifact; the wall is work-starvation
+  and the engine is the lever.}
+  \label{fig:starvation}
+\end{figure}
+
+This \emph{corrects} the hedged v6--v11 reading. ``Per-CTA-bound \emph{forever}''
+was a small-$B\times K$ artifact of the CUDA-core kernels: v11's warp-per-head
+GEMV is flat at $0.75\tflops$, whereas the same-shape \texttt{tcgen05} kernel
+spans $2.4 \to 1785\tflops$ ($\sim$70$\times$ v11 at $B{=}1$/$K{=}8$K,
+$\sim$1000$\times$ at $K{=}524$K). The per-CTA wall is work-starvation; the right
+\emph{engine} converts work into throughput (Figure~\ref{fig:starvation}). We
+measured NVIDIA's canonical kernel---we complement, not beat it. (Honest
+deviation: the pre-registered v12 row assumed NVFP4 storage, \ai\ 835; ex77 is
+FP8-storage, \ai\ 470 $<$ the FP8 ridge 625, so pure roofline predicts
+HBM-bound---and at scale the kernel indeed leans to the HBM roof, 46.3\% HBM above
+its 35.7\% compute fraction. NVFP4-storage and the native-FP4 \emph{compute} arm
+remain unmeasured; see Section~\ref{sec:stagea}.)
+
+\subsection{The cross-architecture per-CTA ceiling}
+\label{sec:results-crossarch}
+The strongest evidence that the decode floor is a \emph{shape} property, not a
+hardware limit, is architecture-independence. At $B{=}1$ decode the CUDA-core
+kernels achieve $\sim$40\gbs\ on T4, B200, \emph{and} B300
+(Table~\ref{tab:crossarch})---11--14\% of the T4's 320\gbs\ but only $\sim$0.5\%
+of Blackwell's 8\tbs. If decode were bandwidth-bound the \emph{percentage} would
+be constant; instead the \emph{absolute} $\sim$40\gbs\ ceiling holds across a
+$25\times$ span of peak bandwidth, which is the per-CTA/low-MLP latency signature.
+On B300 the CUDA-core MLA kernel confirms this to $N_k{=}2$M (a $5\times$ L2
+overflow), with \%HBM flat near zero throughout.
+
+\begin{table}[t]
+  \centering
+  \caption{The architecture-independent $\sim$40\gbs\ per-CTA ceiling at $B{=}1$
+  decode. The absolute achieved bandwidth---not the percentage---is invariant
+  across a $25\times$ span of peak HBM.}
+  \label{tab:crossarch}
+  \small
+  \begin{tabular}{lrrl}
+    \toprule
+    Arch & HBM peak & achieved @ $B{=}1$ & \% of peak \\
+    \midrule
+    T4 (\texttt{sm\_75})   & 320\gbs & $\sim$36--46\gbs & 11--14\% \\
+    B200 (\texttt{sm\_100}) & 8\tbs   & $\sim$40\gbs      & $\sim$0.5\% \\
+    B300 (\texttt{sm\_103}) & 8\tbs   & $\sim$40\gbs      & $\sim$0.5\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}

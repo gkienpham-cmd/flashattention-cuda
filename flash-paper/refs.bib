@@ -1,0 +1,150 @@
+% =============================================================================
+% refs.bib --- PMBS'26 attention-decode characterization paper
+%
+% Web-verified this session (title/authors/arXiv-id confirmed):
+%   gla, roofmethod, attnqat, sage3, snapmla, flashinfer, fa4, deepseekhw,
+%   blackwellubench, flashmla.
+% Sourced from established prior knowledge (standard, widely cited; not
+%   re-verified online this session --- see paper honesty note):
+%   fa1, fa2, fa3, gqa, deepseekv2, deepseekv3, roofline.
+% =============================================================================
+
+% ---- The three closest prior works ------------------------------------------
+
+@article{gla,
+  title   = {Hardware-Efficient Attention for Fast Decoding},
+  author  = {Zadouri, Ted and Strauss, Hubert and Dao, Tri},
+  journal = {arXiv preprint arXiv:2505.21487},
+  year    = {2025},
+  note    = {Introduces Grouped-Tied Attention (GTA) and Grouped-Latent Attention (GLA); open MLA-decode roofline on H100}
+}
+
+@article{roofmethod,
+  title   = {Microbenchmark-Driven Analytical Performance Modeling Across Modern GPU Architectures},
+  author  = {Anonymous},
+  journal = {arXiv preprint arXiv:2605.04178},
+  year    = {2026},
+  note    = {1.31\% MAE on B200 GEMMs vs >95\% for naive roofline; owns the prediction-vs-measured method}
+}
+
+@article{attnqat,
+  title   = {Attn-QAT: 4-Bit Attention With Quantization-Aware Training},
+  author  = {Anonymous},
+  journal = {arXiv preprint arXiv:2603.00040},
+  year    = {2026},
+  note    = {FP4 attention with QAT; prefill forward/backward}
+}
+
+% ---- Attention kernels / FlashAttention lineage -----------------------------
+
+@inproceedings{fa1,
+  title     = {{FlashAttention}: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
+  author    = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2022},
+  note      = {arXiv:2205.14135}
+}
+
+@article{fa2,
+  title   = {{FlashAttention-2}: Faster Attention with Better Parallelism and Work Partitioning},
+  author  = {Dao, Tri},
+  journal = {arXiv preprint arXiv:2307.08691},
+  year    = {2023}
+}
+
+@article{fa3,
+  title   = {{FlashAttention-3}: Fast and Accurate Attention with Asynchrony and Low-Precision},
+  author  = {Shah, Jay and Bikshandi, Ganesh and Zhang, Ying and Thakkar, Vijay and Ramani, Pradeep and Dao, Tri},
+  journal = {arXiv preprint arXiv:2407.08608},
+  year    = {2024}
+}
+
+@article{fa4,
+  title   = {{FlashAttention-4}: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling},
+  author  = {Together AI},
+  journal = {arXiv preprint arXiv:2603.05451},
+  year    = {2026},
+  note    = {Blackwell B200 BF16 prefill; up to 1605 TFLOP/s / 71\% utilization}
+}
+
+@misc{flashmla,
+  title        = {{FlashMLA}: Efficient Multi-head Latent Attention Kernels},
+  author       = {{DeepSeek-AI}},
+  year         = {2025},
+  howpublished = {\url{https://github.com/deepseek-ai/FlashMLA}},
+  note         = {Production MLA decode kernel for Hopper; 3000 GB/s memory-bound, 580 TFLOP/s compute-bound (H800)}
+}
+
+@inproceedings{flashinfer,
+  title     = {{FlashInfer}: Efficient and Customizable Attention Engine for {LLM} Inference Serving},
+  author    = {Ye, Zihao and Chen, Lequn and Lai, Ruihang and Lin, Wuwei and Zhang, Yineng and Wang, Stephanie and Chen, Tianqi and Kasikci, Baris and Grover, Vinod and Krishnamurthy, Arvind and Ceze, Luis},
+  booktitle = {Proceedings of Machine Learning and Systems (MLSys)},
+  year      = {2025},
+  note      = {arXiv:2501.01005}
+}
+
+% ---- MLA / grouped-query attention ------------------------------------------
+
+@article{gqa,
+  title   = {{GQA}: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints},
+  author  = {Ainslie, Joshua and Lee-Thorp, James and de Jong, Michiel and Zemlyanskiy, Yury and Lebr{\'o}n, Federico and Sanghai, Sumit},
+  journal = {arXiv preprint arXiv:2305.13245},
+  year    = {2023}
+}
+
+@article{deepseekv2,
+  title   = {{DeepSeek-V2}: A Strong, Economical, and Efficient Mixture-of-Experts Language Model},
+  author  = {{DeepSeek-AI}},
+  journal = {arXiv preprint arXiv:2405.04434},
+  year    = {2024},
+  note    = {Introduces Multi-head Latent Attention (MLA)}
+}
+
+@article{deepseekv3,
+  title   = {{DeepSeek-V3} Technical Report},
+  author  = {{DeepSeek-AI}},
+  journal = {arXiv preprint arXiv:2412.19437},
+  year    = {2024}
+}
+
+% ---- Low-precision attention / MLA ------------------------------------------
+
+@article{snapmla,
+  title   = {{SnapMLA}: Efficient Long-Context {MLA} Decoding via Hardware-Aware {FP8} Quantized Pipelining},
+  author  = {Anonymous},
+  journal = {arXiv preprint arXiv:2602.10718},
+  year    = {2026}
+}
+
+@article{sage3,
+  title   = {{SageAttention3}: Microscaling {FP4} Attention for Inference and An Exploration of 8-Bit Training},
+  author  = {Zhang, Jintao and others},
+  journal = {arXiv preprint arXiv:2505.11594},
+  year    = {2025}
+}
+
+% ---- Hardware / architecture analyses ---------------------------------------
+
+@article{deepseekhw,
+  title   = {Hardware-Centric Analysis of {DeepSeek}'s Multi-Head Latent Attention},
+  author  = {Anonymous},
+  journal = {arXiv preprint arXiv:2506.02523},
+  year    = {2025}
+}
+
+@article{blackwellubench,
+  title   = {Microbenchmarking {NVIDIA}'s Blackwell Architecture: An In-Depth Architectural Analysis},
+  author  = {Anonymous},
+  journal = {arXiv preprint arXiv:2512.02189},
+  year    = {2025}
+}
+
+@article{roofline,
+  title   = {Roofline: An Insightful Visual Performance Model for Multicore Architectures},
+  author  = {Williams, Samuel and Waterman, Andrew and Patterson, David},
+  journal = {Communications of the ACM},
+  volume  = {52},
+  number  = {4},
+  pages   = {65--76},
+  year    = {2009}
+}

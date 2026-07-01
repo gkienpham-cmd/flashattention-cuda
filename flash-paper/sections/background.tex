@@ -1,0 +1,79 @@
+\section{Background}
+\label{sec:background}
+
+\subsection{Attention variants}
+For a sequence of length $N$ with head dimension $d$, self-attention computes
+$O = \mathrm{softmax}(QK^\top/\sqrt{d})V$. During decode, the query is a single
+new token ($N_q{=}1$) attending over a KV cache of length $N_k$. The variants
+differ in how much KV must be read per generated token:
+\begin{itemize}
+  \item \textbf{MHA} (multi-head): $H_q{=}H_{kv}$; every query head has its own KV,
+  so the cache is $O(B \cdot H \cdot N_k \cdot d)$ and decode arithmetic intensity
+  (\ai, FLOPs per byte) is $\approx 2/b$ where $b$ is bytes per KV element.
+  \item \textbf{GQA} (grouped-query~\cite{gqa}): $H_{kv} < H_q$, with
+  $G{=}H_q/H_{kv}$ query heads sharing one KV group. A decode kernel can pack the
+  $G$ queries of a group into one CTA, reading the shared KV \emph{once} and
+  raising \ai\ from $2/b$ to $2G/b$.
+  \item \textbf{MLA} (multi-head latent, DeepSeek~\cite{deepseekv2,deepseekv3}):
+  one shared low-rank latent (dimension $576 = 512$ latent $+\,64$ RoPE) replaces
+  all KV heads. At decode all $h_q$ query heads attend to the single latent, so
+  the packed row dimension is $M{=}h_q{=}128$ \emph{by construction}, and
+  $\ai \approx 2\,h_q(2L{+}R)/((L{+}R)\,b) \approx 3.78\,h_q/b$. MLA is the only
+  decode shape that meets the Blackwell block-scaled NVFP4 tensor-core gate
+  ($M \ge 128$) with no speculative draft.
+\end{itemize}
+
+\subsection{The roofline model, and why it fails for decode}
+The classical roofline~\cite{roofline} bounds attainable throughput by
+$\min(\text{peak FLOP/s},\ \ai \times \text{peak bandwidth})$; the ridge point
+$\ai^\star = \text{peak FLOP/s} / \text{peak bandwidth}$ separates memory-bound
+($\ai < \ai^\star$) from compute-bound ($\ai > \ai^\star$). Applied naively to
+modern GPUs, this over-predicts sustained throughput by wide margins: datasheet
+peaks are unreachable, and the model is blind to the L2 cache, per-CTA
+scheduling, occupancy, and tensor-core pipeline fill. Microbenchmark-driven
+analysis~\cite{roofmethod} quantifies this---naive roofline exceeds 95\% error on
+B200 GEMMs where a microbenchmark-grounded model reaches 1.31\% MAE. Our
+per-CTA-corrected layer (Section~\ref{sec:method}) adds exactly those on-chip
+constraints: shared-memory staging $\to$ occupancy, warp packing (GEMV vs GEMM),
+and pipeline depth vs available MMA tiles.
+
+\subsection{Blackwell Ultra (B300 / \texttt{sm\_103})}
+\label{sec:bg-blackwell}
+Our headline architecture is the B300 (GB300, \texttt{sm\_103}). We use
+\emph{measured} constants throughout, several of which correct commonly cited
+datasheet values (Table~\ref{tab:archs}):
+148 streaming multiprocessors (SMs) enabled (not 160), 8\tbs\ HBM (flat versus
+B200; only capacity grew to 288\,GB), \textbf{132.6\,MB} L2 (measured; the widely
+repeated ``192\,MB'' appears to conflate B200's 192\,GB capacity), 228\,KB
+shared memory per SM, and a measured boost clock of \textbf{2032\,MHz} (below the
+2600\,MHz marketing figure). The \texttt{tcgen05} tensor cores deliver dense
+peaks of 2.5\,PF (FP16), 5\,PF (FP8), and 15\,PF (block-scaled NVFP4). We also
+measured the exponential throughput used by softmax: an EX2 microkernel sustains
+\textbf{5.33\,TExp/s}, only $0.50\times$ the 10.7\,TExp/s vendor peak---a datasheet
+gap we fold into the model but which is immaterial to $M{=}1$ decode (the MUFU
+term is $<3\%$ of decode time).
+
+\begin{table}[t]
+  \centering
+  \caption{Measured architectural constants (from \texttt{roofline/archs.py}).
+  Blackwell values are torch device-property / microbenchmark measurements taken
+  on the rented parts; peaks in PF are dense tensor-core datasheet figures.}
+  \label{tab:archs}
+  \small
+  \begin{tabular}{lrrrr}
+    \toprule
+    & T4 & A100 & B200 & B300 \\
+    & \texttt{sm\_75} & \texttt{sm\_80} & \texttt{sm\_100} & \texttt{sm\_103} \\
+    \midrule
+    SMs                 & 40    & 108   & 148   & 148 \\
+    HBM BW              & 320\gbs & 2.0\tbs & 8\tbs & 8\tbs \\
+    HBM capacity        & 16\,GB & 80\,GB & 192\,GB & 288\,GB \\
+    L2 cache            & 4\,MB & 40\,MB & 132.6\,MB & 132.6\,MB \\
+    Boost clock         & 1590 & 1410 & 1965 & 2032\,MHz \\
+    \smem/SM            & 64\,KB & 164\,KB & 228\,KB & 228\,KB \\
+    FP16 TC peak        & 65\,TF & 312\,TF & 2.25\,PF & 2.5\,PF \\
+    FP8 TC peak         & --    & --    & 4.5\,PF & 5\,PF \\
+    NVFP4 TC peak       & --    & --    & 9\,PF & 15\,PF \\
+    \bottomrule
+  \end{tabular}
+\end{table}

@@ -1,0 +1,92 @@
+<svg width="100%" viewBox="0 0 920 380" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Arm 2: NVFP4 KV-compute for MLA decode — staged kill-early research plan</title>
+<desc>A decision tree for the NVFP4 native-compute research direction. Stage A (days): GEMM crossover test — does FP4 block-scaled GEMM beat FP8 at M=128, K=256? If no → publish the negative (M=128 removes padding but decode still doesn't win). Stage B (days): accuracy — does QK-in-NVFP4 preserve quality? Stage C (weeks): fused kernel — only build if A+B both pass. The likely outcome is a novel negative result at Stage A.</desc>
+<rect x="0" y="0" width="920" height="380" fill="#ffffff"/>
+
+<text x="30" y="28" font-size="14" font-weight="600" fill="#2C2C2A">Arm 2: NVFP4 KV-compute for MLA decode — staged kill-early plan</text>
+<text x="30" y="46" font-size="10.5" fill="#888780">Every stage publishes · negative results are first-class deliverables · ~6 weeks at 4–5 hr/day</text>
+
+<!-- ===== STAGE A ===== -->
+<rect x="30" y="66" width="260" height="130" rx="7" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+<text x="46" y="90" font-size="12" font-weight="700" fill="#1E40AF">Stage A: GEMM crossover</text>
+<text x="46" y="108" font-size="10" fill="#334155">Does FP4 block-scaled GEMM beat FP8</text>
+<text x="46" y="122" font-size="10" fill="#334155">at the MLA QK shape (M=128, K=256)?</text>
+<text x="46" y="142" font-size="9" fill="#64748B">Tool: CUTLASS block-scaled GEMM profiler</text>
+<text x="46" y="156" font-size="9" fill="#64748B">Hardware: unprivileged B300 (already rented)</text>
+<text x="46" y="170" font-size="9" fill="#64748B">Effort: ~3 days, no kernel surgery needed</text>
+<rect x="46" y="178" width="36" height="12" rx="3" fill="#DBEAFE"/>
+<text x="64" y="187" font-size="8" text-anchor="middle" fill="#1E40AF" font-weight="600">DAYS</text>
+
+<!-- Arrow down-left: KILL (likely) -->
+<line x1="140" y1="196" x2="100" y2="230" stroke="#EF4444" stroke-width="2.5"/>
+<polygon points="100,230 108,218 94,222" fill="#EF4444"/>
+<text x="105" y="218" font-size="9" fill="#EF4444" font-weight="600">LIKELY</text>
+
+<!-- Arrow down-right: PROCEED -->
+<line x1="220" y1="196" x2="420" y2="230" stroke="#22C55E" stroke-width="2"/>
+<polygon points="420,230 412,218 408,226" fill="#22C55E"/>
+<text x="330" y="218" font-size="9" fill="#22C55E" font-weight="600">FP4 wins ≥1.2×</text>
+
+<!-- Kill outcome A -->
+<rect x="16" y="234" width="280" height="90" rx="6" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.2"/>
+<text x="32" y="256" font-size="11" font-weight="700" fill="#991B1B">Publish the negative (novel)</text>
+<text x="32" y="274" font-size="9.5" fill="#7F1D1D">"M=128 removes the FP4 M-padding penalty</text>
+<text x="32" y="288" font-size="9.5" fill="#7F1D1D">(TRT-LLM #4412), but decode still doesn't</text>
+<text x="32" y="302" font-size="9.5" fill="#7F1D1D">win — because decode is HBM/latency-bound,</text>
+<text x="32" y="316" font-size="9.5" fill="#7F1D1D">not compute-bound. Padding was a red herring."</text>
+
+<!-- ===== STAGE B ===== -->
+<rect x="340" y="234" width="240" height="100" rx="7" fill="#F0FDF4" stroke="#22C55E" stroke-width="1.5"/>
+<text x="356" y="258" font-size="12" font-weight="700" fill="#166534">Stage B: Accuracy</text>
+<text x="356" y="276" font-size="10" fill="#334155">QK-in-NVFP4 (q+latent FP4,</text>
+<text x="356" y="290" font-size="10" fill="#334155">score ≥ FP16) preserve quality?</text>
+<text x="356" y="310" font-size="9" fill="#64748B">Reuse v10 recipes + GPT-2 KV</text>
+<text x="356" y="324" font-size="9" fill="#64748B">Effort: ~3 days</text>
+
+<!-- Stage B arrows -->
+<line x1="420" y1="334" x2="390" y2="358" stroke="#EF4444" stroke-width="1.8"/>
+<polygon points="390,358 398,348 386,350" fill="#EF4444"/>
+
+<line x1="510" y1="334" x2="640" y2="344" stroke="#22C55E" stroke-width="2"/>
+<polygon points="640,344 630,338 630,350" fill="#22C55E"/>
+
+<!-- Kill outcome B -->
+<text x="346" y="374" font-size="9" fill="#991B1B" font-weight="600">Accuracy unrecoverable → stop</text>
+
+<!-- ===== STAGE C ===== -->
+<rect x="620" y="234" width="270" height="100" rx="7" fill="#FEFCE8" stroke="#EAB308" stroke-width="1.5"/>
+<text x="636" y="258" font-size="12" font-weight="700" fill="#854D0E">Stage C: Fused kernel</text>
+<text x="636" y="276" font-size="10" fill="#334155">Fork ex77, plumb block-scale SF</text>
+<text x="636" y="290" font-size="10" fill="#334155">tensors through the QK mainloop.</text>
+<text x="636" y="310" font-size="9" fill="#64748B">Effort: 3–6 weeks</text>
+<text x="636" y="324" font-size="9" fill="#64748B">Only build if A + B both pass</text>
+
+<!-- Stage C → prize -->
+<line x1="755" y1="334" x2="755" y2="354" stroke="#3B82F6" stroke-width="2"/>
+<polygon points="755,354 749,344 761,344" fill="#3B82F6"/>
+
+<rect x="620" y="356" width="270" height="20" rx="4" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1"/>
+<text x="636" y="370" font-size="9" fill="#1E40AF" font-weight="600">Prize: first native FP4-compute MLA decode kernel</text>
+
+<!-- Timeline bar -->
+<rect x="30" y="340" width="260" height="34" rx="5" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="0.8"/>
+<text x="42" y="356" font-size="9" font-weight="600" fill="#334155">Timeline (6 weeks, 4–5 hr/day)</text>
+<rect x="42" y="362" width="40" height="5" rx="2" fill="#3B82F6"/>
+<rect x="86" y="362" width="40" height="5" rx="2" fill="#22C55E"/>
+<rect x="130" y="362" width="140" height="5" rx="2" fill="#EAB308" opacity="0.4"/>
+<text x="62" y="374" font-size="7" text-anchor="middle" fill="#64748B">A</text>
+<text x="106" y="374" font-size="7" text-anchor="middle" fill="#64748B">B</text>
+<text x="200" y="374" font-size="7" text-anchor="middle" fill="#64748B">C (only if A+B pass)</text>
+
+<!-- Novel angle box -->
+<rect x="340" y="66" width="550" height="56" rx="6" fill="#FEFCE8" stroke="#EAB308" stroke-width="1"/>
+<text x="356" y="86" font-size="10.5" font-weight="600" fill="#854D0E">The novel angle (unexplored in the literature):</text>
+<text x="356" y="102" font-size="9.5" fill="#78350F">MLA decode is the ONLY attention shape with M=128 by construction (all h_q heads packed). Normal decode</text>
+<text x="356" y="114" font-size="9.5" fill="#78350F">is M=1 → FP4 pads 1→128 = 128× wasted work (TRT-LLM #4412). MLA meets the FP4 gate with zero padding waste.</text>
+
+<!-- Honest risk box -->
+<rect x="340" y="130" width="550" height="56" rx="6" fill="#FEF2F2" stroke="#EF4444" stroke-width="1"/>
+<text x="356" y="150" font-size="10.5" font-weight="600" fill="#991B1B">The honest risk (pre-registered):</text>
+<text x="356" y="166" font-size="9.5" fill="#7F1D1D">v12 proved MLA decode is NOT compute-bound (FP8≈FP16, work-starved). FP4 compute only helps if you're</text>
+<text x="356" y="178" font-size="9.5" fill="#7F1D1D">compute-bound. So the likely outcome is a NEGATIVE — the padding was a red herring. That's still novel.</text>
+</svg>

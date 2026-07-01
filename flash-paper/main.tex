@@ -1,0 +1,100 @@
+%==============================================================================
+% Roofline-Guided Characterization of Attention Decode on Blackwell
+% PMBS @ SC26 --- first draft (LaTeX, IEEE two-column)
+%
+% Compile on Overleaf (recommended): pdfLaTeX + BibTeX, with shell-escape ON so
+% the `svg' package can invoke Inkscape to rasterize/convert the figures.
+% See README.md for local-build notes (no LaTeX/Inkscape toolchain is assumed).
+%
+% Document class: IEEEtran, conference option, two-column. See README for the
+% caveat that the exact PMBS'26 class/page-limit could not be auto-confirmed
+% from the CfP (deadlines were confirmed: full paper Aug 5 AoE 2026).
+%==============================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% --- packages -----------------------------------------------------------------
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{svg}                 % \includesvg ; needs shell-escape + Inkscape (Overleaf default)
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{textcomp}
+\usepackage[hidelinks]{hyperref}
+
+% svg package: figures live in figures/ ; keep the same basename as the .svg
+\svgpath{{figures/}}
+\svgsetup{inkscapelatex=false}
+
+% --- convenience macros -------------------------------------------------------
+\newcommand{\ai}{\ensuremath{\mathit{AI}}}
+\newcommand{\tflops}{\,TFLOP/s}
+\newcommand{\gbs}{\,GB/s}
+\newcommand{\tbs}{\,TB/s}
+\newcommand{\pct}{\,\%}
+\newcommand{\smem}{\textsc{smem}}
+\newcommand{\citeverify}[1]{\textcolor{red}{[CITATION-VERIFY: #1]}}
+
+\begin{document}
+
+\title{Roofline-Guided Characterization of Attention Decode on Blackwell:\\
+From Per-CTA-Bound to Work-Starvation Across MHA, GQA, and MLA}
+
+\author{\IEEEauthorblockN{Kien Pham}
+\IEEEauthorblockA{\textit{Independent}\\
+pgkien11@gmail.com}}
+
+\maketitle
+
+\begin{abstract}
+Attention decode is the latency-critical phase of large language model (LLM)
+serving, yet no published work provides a \emph{prediction-vs-measured} roofline
+characterization on NVIDIA's latest datacenter GPU (B300 / \texttt{sm\_103})
+across attention types and precisions. We build twelve attention kernels of
+increasing sophistication---naive, tiled, fused, split-KV, GQA-packed,
+score-stationary, FP8, NVFP4, MLA, and tensor-core (\texttt{tcgen05})---and pair
+each with a \emph{pre-registered two-layer roofline prediction} (pure roofline
+plus a per-CTA-corrected layer) evaluated against measured results on Tesla T4,
+A100, B200, and B300. Our central finding is that decode's apparent per-CTA
+throughput ceiling is \emph{work-starvation}: the right engine
+(\texttt{tcgen05} tensor cores) converts work into throughput
+($0.75 \to 1785\tflops$ on B300), but only in the high-throughput serving regime
+(large batch $\times$ long context). At single-stream, moderate-context decode,
+even NVIDIA's production kernel runs at 1--2\% of the FP8 peak. Across the seven
+decode steps the per-CTA-corrected layer matched the measured limiter every time,
+while pure roofline predicted the wrong regime at every single-stream step. As a
+pre-registered boundary test, we confirm on B300 that native NVFP4 \emph{compute}
+does not accelerate MLA decode---both FP4 and FP8 GEMMs remain HBM-bound at the
+$M{=}128$ decode shape (at most 5.8\% / 21.7\% of their tensor-core peaks). We
+\emph{complement}, not beat, production kernels: the contribution is the open,
+prediction-vs-measured characterization, the two-layer model, and the boundary
+results.
+\end{abstract}
+
+\begin{IEEEkeywords}
+roofline model, attention, LLM inference, decode, Blackwell, GPU performance,
+MLA, GQA, FP8, NVFP4, quantization
+\end{IEEEkeywords}
+
+\input{sections/intro}
+\input{sections/background}
+\input{sections/method}
+\input{sections/results}
+\input{sections/discussion}
+\input{sections/related}
+\input{sections/conclusion}
+
+\section*{Artifact Availability}
+The twelve kernels, roofline tool, benchmark harness, and the notebooks of record
+for every measurement are open source at
+\url{https://github.com/gkienpham-cmd/flashattention-cuda}.
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}

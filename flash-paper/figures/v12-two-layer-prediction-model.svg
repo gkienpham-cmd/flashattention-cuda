@@ -1,0 +1,70 @@
+<svg width="100%" viewBox="0 0 920 320" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>The two-layer prediction model: pure roofline vs per-CTA-corrected, and why the second layer wins</title>
+<desc>The paper's methodological contribution: a two-layer prediction model where Layer 1 (pure roofline) predicts the limiter from AI vs ridge, and Layer 2 (per-CTA-corrected) adds the on-chip constraints the roofline is blind to. Across v6-v12, Layer 1 was wrong 5 times while Layer 2 called every result correctly. The gap between the layers IS the finding.</desc>
+<rect x="0" y="0" width="920" height="320" fill="#ffffff"/>
+
+<text x="30" y="28" font-size="14" font-weight="600" fill="#2C2C2A">The two-layer prediction model — why the corrected layer always wins</text>
+<text x="30" y="46" font-size="10.5" fill="#888780">Each step pre-registers BOTH predictions before coding · the gap between the layers IS the finding</text>
+
+<!-- Layer 1 box -->
+<rect x="30" y="64" width="410" height="180" rx="8" fill="#FFFBEB" stroke="#EAB308" stroke-width="1.5"/>
+<text x="46" y="88" font-size="12" font-weight="700" fill="#854D0E">Layer 1: Pure roofline</text>
+<text x="46" y="106" font-size="10" fill="#334155">AI = FLOPs / HBM bytes</text>
+<text x="46" y="120" font-size="10" fill="#334155">Limiter = max(t_hbm, t_mma, t_mufu)</text>
+<text x="46" y="140" font-size="9.5" fill="#64748B">What it captures:</text>
+<text x="46" y="154" font-size="9" fill="#64748B">✓ Operand traffic (Q/K/V/O bytes per token)</text>
+<text x="46" y="166" font-size="9" fill="#64748B">✓ Compute work (QK + PV FLOPs)</text>
+<text x="46" y="178" font-size="9" fill="#64748B">✓ Special functions (exp/softmax MUFU)</text>
+<text x="46" y="196" font-size="9.5" fill="#EF4444" font-weight="600">What it's BLIND to:</text>
+<text x="46" y="210" font-size="9" fill="#EF4444">✗ L2 cache effects (hiding HBM traffic)</text>
+<text x="46" y="222" font-size="9" fill="#EF4444">✗ Per-CTA scheduling (warps, occupancy, smem)</text>
+<text x="46" y="234" font-size="9" fill="#EF4444">✗ Pipeline fill (B×K work-starvation)</text>
+
+<!-- Arrow -->
+<line x1="444" y1="154" x2="476" y2="154" stroke="#3B82F6" stroke-width="2.5"/>
+<polygon points="476,154 466,148 466,160" fill="#3B82F6"/>
+<text x="460" y="140" font-size="8" fill="#3B82F6" text-anchor="middle" font-weight="600">add the</text>
+<text x="460" y="130" font-size="8" fill="#3B82F6" text-anchor="middle">blind spots</text>
+
+<!-- Layer 2 box -->
+<rect x="480" y="64" width="410" height="180" rx="8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+<text x="496" y="88" font-size="12" font-weight="700" fill="#1E40AF">Layer 2: Per-CTA-corrected (the real prediction)</text>
+<text x="496" y="106" font-size="10" fill="#334155">Same AI, same roofline → but adds the schedule</text>
+<text x="496" y="126" font-size="9.5" fill="#64748B">What it adds:</text>
+<text x="496" y="140" font-size="9" fill="#166534">✓ Smem/TMEM staging capacity → occupancy cap</text>
+<text x="496" y="152" font-size="9" fill="#166534">✓ Warp-level packing (GEMV vs GEMM at M=1/128)</text>
+<text x="496" y="164" font-size="9" fill="#166534">✓ TC pipeline depth vs available MMA tiles</text>
+<text x="496" y="176" font-size="9" fill="#166534">✓ The counter-prediction (what kills the thesis)</text>
+<text x="496" y="196" font-size="9.5" fill="#1E40AF" font-weight="600">Track record (v6→v12, decode arc):</text>
+<text x="496" y="210" font-size="9" fill="#1E40AF">Layer 1 wrong 5/7 times (limiter or magnitude)</text>
+<text x="496" y="222" font-size="9" fill="#1E40AF">Layer 2 correct 7/7 times (all predictions landed)</text>
+<text x="496" y="236" font-size="9" fill="#1E40AF">Counter-predictions: 3 landed, 0 needed fallback</text>
+
+<!-- Scorecard -->
+<rect x="30" y="254" width="860" height="56" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="46" y="274" font-size="10" font-weight="600" fill="#334155">Prediction scorecard across the decode arc (v6→v12)</text>
+
+<!-- Table header -->
+<text x="46" y="290" font-size="8.5" font-weight="600" fill="#64748B">Step</text>
+<text x="120" y="290" font-size="8.5" font-weight="600" fill="#64748B">Layer 1 (pure roofline)</text>
+<text x="340" y="290" font-size="8.5" font-weight="600" fill="#64748B">Layer 2 (per-CTA-corrected)</text>
+<text x="580" y="290" font-size="8.5" font-weight="600" fill="#64748B">Measured reality</text>
+<text x="780" y="290" font-size="8.5" font-weight="600" fill="#64748B">Winner</text>
+
+<!-- v6 row -->
+<text x="46" y="302" font-size="8" fill="#334155">v6</text>
+<text x="120" y="302" font-size="8" fill="#EF4444">HBM-bound → bandwidth win</text>
+<text x="340" y="302" font-size="8" fill="#3B82F6">Per-CTA-bound (occupancy)</text>
+<text x="580" y="302" font-size="8" fill="#334155">Per-CTA, 9–15% HBM</text>
+<text x="780" y="302" font-size="8" fill="#3B82F6" font-weight="600">Layer 2 ✓</text>
+
+<!-- v11 row -->
+<text x="46" y="302" font-size="8" fill="#334155">v11</text>
+<text x="120" y="302" font-size="8" fill="#EF4444">Compute-flip (AI 835 > ridge)</text>
+<text x="340" y="302" font-size="8" fill="#3B82F6">Stays per-CTA (CUDA-core GEMV)</text>
+<text x="580" y="302" font-size="8" fill="#334155">Per-CTA, 0.75 TF, ~4× cuBLAS gap</text>
+<text x="780" y="302" font-size="8" fill="#3B82F6" font-weight="600">Layer 2 ✓</text>
+
+<!-- summary -->
+<text x="46" y="304" font-size="8.5" fill="#334155">v6: L1=HBM → L2=per-CTA → measured=per-CTA (L2✓) · v11: L1=compute-flip → L2=stays-per-CTA → measured=per-CTA (L2✓) · v12: L1=compute → L2=SMEM-BW → measured=work-starved (L2✓)</text>
+</svg>

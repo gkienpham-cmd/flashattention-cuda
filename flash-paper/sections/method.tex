@@ -1,0 +1,112 @@
+\section{Methodology}
+\label{sec:method}
+
+\subsection{The two-layer prediction model}
+\label{sec:twolayer}
+Every kernel step is accompanied by two predictions, both recorded
+\emph{before} the kernel is written (Figure~\ref{fig:twolayer}):
+
+\begin{itemize}
+  \item \textbf{Layer 1 (pure roofline).} \ai\ from operand traffic and FLOPs;
+  the limiter from datasheet peak throughputs. This captures the \emph{what}---how
+  much work and how much data---but is blind to the \emph{how}.
+  \item \textbf{Layer 2 (per-CTA-corrected).} The same \ai, plus the on-chip
+  constraints the roofline cannot see: (a) shared-memory / tensor-memory staging
+  $\to$ how many CTAs fit per SM (occupancy); (b) warp-level packing
+  ($M{=}1$ GEMV vs $M{=}128$ GEMM); (c) tensor-core pipeline depth vs the number
+  of available MMA tiles; and (d) a \emph{counter-prediction}---the observation
+  that, if made, would falsify the thesis.
+\end{itemize}
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=\columnwidth]{v12-two-layer-prediction-model}
+  \caption{The two-layer prediction model. Layer 1 (pure roofline) predicts the
+  regime from FLOPs/bytes and peak throughputs; Layer 2 adds per-CTA structure
+  (occupancy, GEMV-vs-GEMM packing, pipeline depth). Both are pre-registered; the
+  gap between them is the reported result.}
+  \label{fig:twolayer}
+\end{figure}
+
+The value of the exercise is that the counter-prediction makes every step
+publishable regardless of sign: a confirmed thesis and a confirmed
+counter-prediction (a negative or boundary result) are equally informative.
+
+\subsection{Pre-registration and single-variable steps}
+The twelve kernels form a chain in which each step changes exactly one variable
+(schedule, shape, or precision) relative to the previous, so that a measured
+delta is attributable (Figure~\ref{fig:arc}). Predictions are committed to the
+repository before coding; we never retrofit a prediction to a measurement.
+Table~\ref{tab:scorecard} is the resulting prediction-vs-measured scorecard.
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=\columnwidth]{v1-v12-arc-summary}
+  \caption{The v1--v12 arc as four phases: prefill \emph{schedule}
+  (v1--v5), decode \emph{shape} (v6--v8, v11), \emph{precision}
+  (v9--v10), and \emph{engine} (v12). Each arrow changes a single variable.}
+  \label{fig:arc}
+\end{figure}
+
+\subsection{Measurement methodology}
+\label{sec:measure}
+Vendor performance counters (\texttt{ncu}) are blocked on every containerized
+rental we used (\texttt{ERR\_NVGPUCTRPERM}), so decode throughput is read with a
+\emph{counter-free proxy}: effective bandwidth $=$ KV bytes moved $/$ measured
+time, reported as \%HBM against peak, using CUDA-event timing. On a
+\emph{privileged} (root) T4 we validated this proxy directly against \texttt{ncu}:
+the proxy read 13.8\% HBM where \texttt{ncu} DRAM throughput was 12.85\%---within
+$\approx 1$ percentage point (Section~\ref{sec:results-decode}, v9~Task~1). Every
+decode reading in this paper uses the validated proxy. We additionally (i) lock
+clocks on the root T4 and idle-pin them on Blackwell, (ii) flush the L2 with a
+zeroed buffer $\ge 2\times$ L2 outside the timed window so that data genuinely
+comes from HBM, and (iii) push the working set past L2 (up to
+$N_k{=}2{,}097{,}152$, a $5\times$ overflow of the 132.6\,MB Blackwell L2) to
+remove the L2-residency confound. Kernels are measured on T4 (\texttt{sm\_75}),
+A100 (\texttt{sm\_80}), B200 (\texttt{sm\_100}), and B300 (\texttt{sm\_103}).
+
+\begin{table*}[t]
+  \centering
+  \caption{Pre-registered prediction-vs-measured scorecard. ``L1'' is pure
+  roofline; ``L2'' is per-CTA-corrected. A dash in L1/L2 marks steps where only a
+  schedule change was predicted. The decode arc (v6--v12) is the contribution;
+  the per-CTA-corrected layer matches the measured limiter at every step, while
+  pure roofline predicts the wrong regime at every single-stream decode step.}
+  \label{tab:scorecard}
+  \small
+  \begin{tabular}{llllll}
+    \toprule
+    Step & Kernel (single variable) & L1 predicted & Measured limiter & L1 & L2 \\
+    \midrule
+    v1  & naive FP32 (baseline)                 & HBM, \ai$\approx$0.25 & HBM, masked by L2 at mid-$N$ & partial & --- \\
+    v2  & shared-memory tiling                  & HBM, $\sim$30$\times$ traffic cut & compute/schedule; DRAM traffic flat & miss & --- \\
+    v3  & online softmax (S off HBM)            & MMA-bound                & occupancy/latency; 151$\times$ off floor & miss & --- \\
+    v4  & fused single-pass (warp/row)          & MMA-bound                & FMA under-utilization (GEMV), 18$\times$ off & miss & --- \\
+    v5  & tensor-core WMMA                       & MMA, $8\times$ lower floor & \emph{not measured} (prediction only) & --- & --- \\
+    \midrule
+    v6  & split-KV decode                       & HBM, split-KV fills SMs  & per-CTA (occupancy), $\sim$12\% HBM & miss & hit \\
+    v7  & paged KV + batch sweep                & occupancy$\to$bandwidth crossover & per-CTA at \emph{all} batch (flat \%HBM) & refuted & hit \\
+    v8  & GQA $M$-packing (CUDA cores)          & HBM, speedup $\sim G\times$ & per-CTA; speedup $=G\times$, \%HBM $\le$11 & split & hit \\
+    v8.7& score-stationary inner loop           & remove serial recurrence & per-CTA load latency; recurrence removed & --- & hit \\
+    v9  & FP8 E4M3 KV (bytes)                    & capacity-only, halve floor & L2$\to$SM load-latency win ($\sim$1.3$\times$) & miss & hit \\
+    v10 & NVFP4 KV (bytes)                       & HBM, $3.55\times$ lower floor & per-CTA; capacity $3.56\times$, no latency win & miss & hit \\
+    v11 & MLA latent (shape, CUDA cores)        & compute-flip (\ai\ 235) & per-CTA, $0.75\tflops$, $4\times$ off cuBLAS & miss & hit \\
+    v12 & \texttt{tcgen05} engine (production)  & HBM at scale (\ai\ 470)  & work-starved; $1$--$2\%\to 36\%$ peak w/ $B{\times}K$ & hit@scale & hit \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\subsection{Reading the scorecard}
+\label{sec:scorecard-read}
+Table~\ref{tab:scorecard} is the paper's methodological spine. Across the seven
+decode steps (v6--v12), the per-CTA-corrected layer (L2) predicted the measured
+limiter every time. Pure roofline (L1) predicted the wrong operative regime at
+every \emph{single-stream} decode step (v6, v7, v9, v10, v11) and at v8 got the
+speedup \emph{magnitude} right ($G\times$) while still misplacing the absolute
+limiter; it was vindicated only at v12, where large-batch, long-context work
+finally drove the production kernel toward the HBM roof it had predicted. We state
+this as the defensible tally---L2 correct at all seven decode steps, L1 wrong at
+the operative limiter for the single-stream steps---rather than any cleaner-looking
+ratio, because the per-step verdicts in the table are what the record supports.
+The prefill steps (v2--v4) contribute three further pure-roofline misses that are
+first-class findings in their own right (Section~\ref{sec:results-prefill}).

@@ -1,0 +1,39 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented an open, prediction-vs-measured roofline characterization of
+attention decode on B300 / \texttt{sm\_103}, built as twelve single-variable
+kernel steps spanning MHA $\to$ GQA $\to$ MLA and FP16 $\to$ FP8 $\to$ NVFP4. The
+central finding is that decode's apparent per-CTA ceiling is
+\emph{work-starvation}: a warp-per-head CUDA-core MLA kernel is flat at
+$0.75\tflops$, but the production \texttt{tcgen05} kernel on the same shape spans
+$2.4 \to 1785\tflops$ as batch $\times$ context grows---so ``per-CTA-bound
+forever'' was a small-work artifact, and the right \emph{engine} converts work
+into throughput, though only in the high-throughput serving regime. The
+per-CTA-corrected layer of our two-layer model matched the measured limiter at
+every decode step, while pure roofline predicted the wrong regime at every
+single-stream step and was vindicated only at serving scale. A pre-registered
+boundary test settles that native NVFP4 \emph{compute} does not accelerate MLA
+decode (both FP4 and FP8 GEMMs HBM-bound, $\le$5.8\% / 21.7\% of peak), so
+FP4/NVFP4 is a capacity$+$accuracy lever, not a decode-compute one. Throughout we
+\emph{complement}, not beat, the production kernels; the contribution is the open
+characterization, the model, and the boundary results---the empty cell, filled.
+Figure~\ref{fig:positioning} summarizes the scope.
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=\columnwidth]{v12-paper-positioning}
+  \caption{Paper positioning: what we claim (an open, prediction-vs-measured
+  decode characterization on \texttt{sm\_103}; the two-layer model; the
+  work-starvation correction; the FP4-compute boundary) and what we do not (a SOTA
+  wall-clock win over production kernels).}
+  \label{fig:positioning}
+\end{figure}
+
+\paragraph{Future work}
+Native FP4 \emph{compute} is settled negative for decode, so the open directions
+are: grouped-latent / sparse attention (GLA, DSA/CSA) as a different shape; a
+cross-generation roofline spine (a clean A100 point to show the $\sim$40\gbs\
+per-CTA ceiling is architecture-independent across four generations); and
+\texttt{ncu} validation of the \%HBM proxy on a privileged B300 to upgrade the
+counter-free readings on \texttt{sm\_103}.
