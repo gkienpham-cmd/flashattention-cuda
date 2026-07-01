@@ -1,143 +1,92 @@
-<svg width="100%" viewBox="0 0 920 520" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
-<title>The v1→v12 decode arc: prediction-vs-measured roofline characterization of attention decode</title>
-<desc>A four-phase journey diagram showing 12 kernel versions across T4, A100, and B300 architectures, tracking how each step's prediction-vs-measured result motivated the next. Phase 1 (v1-v5): prefill fundamentals on T4. Phase 2 (v6-v8.7): decode schedule optimization. Phase 3 (v9-v10): bytes and regime characterization across T4 and B300. Phase 4 (v11-v12): shape change (MLA) and engine change (tcgen05) on B300/sm_103.</desc>
-<rect x="0" y="0" width="920" height="520" fill="#ffffff"/>
+<svg width="100%" viewBox="0 0 760 360" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>The v1 to v12 arc in four phases</title>
+<desc>Twelve single-variable kernel steps in four phases: prefill schedule (v1-v5), decode schedule (v6-v8.7), precision (v9-v10), and shape+engine (v11-v12). Dot color marks the pure-roofline verdict: green landed, amber partial, red missed and was corrected by the per-CTA layer.</desc>
+<rect x="0" y="0" width="760" height="360" fill="#ffffff"/>
 
-<text x="30" y="26" font-size="14" font-weight="600" fill="#2C2C2A">The v1→v12 arc: prediction-vs-measured roofline characterization of attention decode</text>
-<text x="30" y="44" font-size="10.5" fill="#888780">12 steps · 3 architectures (T4 / A100 / B300) · 4 precisions (FP32→FP16→FP8→NVFP4) · MHA→GQA→MLA · every prediction recorded before coding</text>
+<text x="24" y="30" font-size="22" font-weight="700" fill="#2C2C2A">The v1&#8594;v12 arc: four phases, one variable each</text>
 
-<!-- ===== PHASE 1 ===== -->
-<rect x="30" y="56" width="62" height="16" rx="3" fill="#DBEAFE"/>
-<text x="61" y="68" font-size="8" text-anchor="middle" fill="#1E40AF" font-weight="700">PHASE 1</text>
-<text x="100" y="68" font-size="10" font-weight="600" fill="#1E40AF">Prefill fundamentals (v1–v5, T4/sm_75, FP32→FP16)</text>
+<!-- Phase headers -->
+<text x="20"  y="60" font-size="15" font-weight="700" fill="#6D28D9">1. Prefill schedule</text>
+<text x="205" y="60" font-size="15" font-weight="700" fill="#1E40AF">2. Decode schedule</text>
+<text x="390" y="60" font-size="15" font-weight="700" fill="#B45309">3. Precision</text>
+<text x="575" y="60" font-size="15" font-weight="700" fill="#166534">4. Shape + engine</text>
 
+<!-- ==== helper: chip = rect(w170,h40) + version + takeaway + dot ==== -->
+<!-- Phase 1 col x=20 -->
+<g font-family="Helvetica, Arial, sans-serif">
 <!-- v1 -->
-<rect x="30" y="78" width="164" height="54" rx="5" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
-<text x="42" y="94" font-size="9.5" font-weight="600" fill="#334155">v1 Naive (FP32, 3-pass)</text>
-<text x="42" y="108" font-size="8.5" fill="#64748B">AI≈0.25, HBM-bound. L2 absorbs</text>
-<text x="42" y="120" font-size="8.5" fill="#64748B">reads → beats floor at mid-N.</text>
-<circle cx="186" cy="86" r="4" fill="#22C55E"/>
-
+<rect x="20" y="72" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"/>
+<text x="32" y="90" font-size="15" font-weight="700" fill="#4C1D95">v1 naive</text>
+<text x="32" y="107" font-size="13" fill="#555">HBM-bound; L2 masks it</text>
+<circle cx="180" cy="82" r="5" fill="#F59E0B"/>
 <!-- v2 -->
-<rect x="200" y="78" width="164" height="54" rx="5" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
-<text x="212" y="94" font-size="9.5" font-weight="600" fill="#334155">v2 Tiled (smem 64×64)</text>
-<text x="212" y="108" font-size="8.5" fill="#64748B">1.3–3.2× over v1. ncu: tiling cut</text>
-<text x="212" y="120" font-size="8.5" fill="#64748B">0% DRAM — L2 already did it.</text>
-<circle cx="356" cy="86" r="4" fill="#EF4444"/>
-
+<rect x="20" y="118" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"/>
+<text x="32" y="136" font-size="15" font-weight="700" fill="#4C1D95">v2 tiled</text>
+<text x="32" y="153" font-size="13" fill="#555">3&#215; faster; 0% DRAM cut</text>
+<circle cx="180" cy="128" r="5" fill="#EF4444"/>
 <!-- v3 -->
-<rect x="370" y="78" width="164" height="54" rx="5" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
-<text x="382" y="94" font-size="9.5" font-weight="600" fill="#334155">v3 Online softmax</text>
-<text x="382" y="108" font-size="8.5" fill="#64748B">S gone (+17 vs +2164 MB).</text>
-<text x="382" y="120" font-size="8.5" fill="#64748B">But 3–7× slower. 150× off floor.</text>
-<circle cx="526" cy="86" r="4" fill="#EF4444"/>
-
+<rect x="20" y="164" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"/>
+<text x="32" y="182" font-size="15" font-weight="700" fill="#4C1D95">v3 online</text>
+<text x="32" y="199" font-size="13" fill="#555">S gone; 3&#8211;7&#215; slower</text>
+<circle cx="180" cy="174" r="5" fill="#EF4444"/>
 <!-- v4 -->
-<rect x="540" y="78" width="164" height="54" rx="5" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
-<text x="552" y="94" font-size="9.5" font-weight="600" fill="#334155">v4 Fused FA-1</text>
-<text x="552" y="108" font-size="8.5" fill="#64748B">Single-pass O-rescale. 1.7–2.6×</text>
-<text x="552" y="120" font-size="8.5" fill="#64748B">over v2. Still 6× off SDPA (GEMV).</text>
-<circle cx="696" cy="86" r="4" fill="#EF4444"/>
-
+<rect x="20" y="210" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"/>
+<text x="32" y="228" font-size="15" font-weight="700" fill="#4C1D95">v4 fused</text>
+<text x="32" y="245" font-size="13" fill="#555">1.7&#8211;2.6&#215;; GEMV wall</text>
+<circle cx="180" cy="220" r="5" fill="#EF4444"/>
 <!-- v5 -->
-<rect x="710" y="78" width="180" height="54" rx="5" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
-<text x="722" y="94" font-size="9.5" font-weight="600" fill="#334155">v5 WMMA tensor cores</text>
-<text x="722" y="108" font-size="8.5" fill="#64748B">FP16-in. GEMV→GEMM fix for</text>
-<text x="722" y="120" font-size="8.5" fill="#64748B">prefill. Correct but unmeasured.</text>
-<circle cx="882" cy="86" r="4" fill="#F59E0B"/>
+<rect x="20" y="256" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"/>
+<text x="32" y="274" font-size="15" font-weight="700" fill="#4C1D95">v5 WMMA</text>
+<text x="32" y="291" font-size="13" fill="#555">predicted, not measured</text>
+<circle cx="180" cy="266" r="5" fill="#9CA3AF"/>
+</g>
 
-<!-- Transition arrow -->
-<text x="30" y="148" font-size="8.5" fill="#94A3B8" font-style="italic">v4's GEMV wall → v5 TC fix for prefill; decode (M=1) needs a different approach → split the arc</text>
+<!-- Phase 2 col x=205 -->
+<g>
+<rect x="205" y="72" width="172" height="40" rx="6" fill="#EFF6FF" stroke="#93C5FD"/>
+<text x="217" y="90" font-size="15" font-weight="700" fill="#1E3A8A">v6 split-KV</text>
+<text x="217" y="107" font-size="13" fill="#555">5.7&#8211;8.2&#215;; per-CTA</text>
+<circle cx="365" cy="82" r="5" fill="#EF4444"/>
+<rect x="205" y="118" width="172" height="40" rx="6" fill="#EFF6FF" stroke="#93C5FD"/>
+<text x="217" y="136" font-size="15" font-weight="700" fill="#1E3A8A">v7 paged</text>
+<text x="217" y="153" font-size="13" fill="#555">flat %HBM, all batch</text>
+<circle cx="365" cy="128" r="5" fill="#EF4444"/>
+<rect x="205" y="164" width="172" height="40" rx="6" fill="#EFF6FF" stroke="#93C5FD"/>
+<text x="217" y="182" font-size="15" font-weight="700" fill="#1E3A8A">v8 GQA pack</text>
+<text x="217" y="199" font-size="13" fill="#555">8.6&#215; at G=8</text>
+<circle cx="365" cy="174" r="5" fill="#F59E0B"/>
+<rect x="205" y="210" width="172" height="40" rx="6" fill="#EFF6FF" stroke="#93C5FD"/>
+<text x="217" y="228" font-size="15" font-weight="700" fill="#1E3A8A">v8.7 score-st.</text>
+<text x="217" y="245" font-size="13" fill="#555">1.1&#8211;1.6&#215;; recurrence out</text>
+<circle cx="365" cy="220" r="5" fill="#22C55E"/>
+</g>
 
-<!-- ===== PHASE 2 ===== -->
-<rect x="30" y="158" width="62" height="16" rx="3" fill="#FEF3C7"/>
-<text x="61" y="170" font-size="8" text-anchor="middle" fill="#92400E" font-weight="700">PHASE 2</text>
-<text x="100" y="170" font-size="10" font-weight="600" fill="#92400E">Decode schedule (v6–v8.7, T4→A100, FP16)</text>
+<!-- Phase 3 col x=390 -->
+<g>
+<rect x="390" y="72" width="172" height="40" rx="6" fill="#FEF3E4" stroke="#FBBF77"/>
+<text x="402" y="90" font-size="15" font-weight="700" fill="#92400E">v9 FP8 KV</text>
+<text x="402" y="107" font-size="13" fill="#555">1.3&#215;; capacity+accuracy</text>
+<circle cx="550" cy="82" r="5" fill="#EF4444"/>
+<rect x="390" y="118" width="172" height="40" rx="6" fill="#FEF3E4" stroke="#FBBF77"/>
+<text x="402" y="136" font-size="15" font-weight="700" fill="#92400E">v10 NVFP4</text>
+<text x="402" y="153" font-size="13" fill="#555">3.56&#215; capacity; no lat.</text>
+<circle cx="550" cy="128" r="5" fill="#F59E0B"/>
+</g>
 
-<!-- v6 -->
-<rect x="30" y="180" width="210" height="54" rx="5" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1"/>
-<text x="42" y="196" font-size="9.5" font-weight="600" fill="#334155">v6 Split-KV decode (N_q=1)</text>
-<text x="42" y="210" font-size="8.5" fill="#64748B">5.7–8.2× over naive. %HBM flat 9–15%</text>
-<text x="42" y="224" font-size="8.5" fill="#64748B">→ per-CTA-bound (not bandwidth).</text>
-<circle cx="232" cy="188" r="4" fill="#F59E0B"/>
+<!-- Phase 4 col x=575 -->
+<g>
+<rect x="575" y="72" width="172" height="40" rx="6" fill="#F0FDF4" stroke="#86EFAC"/>
+<text x="587" y="90" font-size="15" font-weight="700" fill="#166534">v11 MLA</text>
+<text x="587" y="107" font-size="13" fill="#555">M=128; still per-CTA</text>
+<circle cx="735" cy="82" r="5" fill="#EF4444"/>
+<rect x="575" y="118" width="172" height="40" rx="6" fill="#F0FDF4" stroke="#86EFAC"/>
+<text x="587" y="136" font-size="15" font-weight="700" fill="#166534">v12 tcgen05</text>
+<text x="587" y="153" font-size="13" fill="#555">2.4&#8594;1785; work-starved</text>
+<circle cx="735" cy="128" r="5" fill="#22C55E"/>
+</g>
 
-<!-- v7 -->
-<rect x="246" y="180" width="210" height="54" rx="5" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1"/>
-<text x="258" y="196" font-size="9.5" font-weight="600" fill="#334155">v7 Paged KV</text>
-<text x="258" y="210" font-size="8.5" fill="#64748B">%HBM flat 9–12% at ALL batch B=1→512.</text>
-<text x="258" y="224" font-size="8.5" fill="#64748B">No occupancy crossover. Per-CTA confirmed.</text>
-<circle cx="448" cy="188" r="4" fill="#22C55E"/>
-
-<!-- v8 -->
-<rect x="462" y="180" width="210" height="54" rx="5" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1"/>
-<text x="474" y="196" font-size="9.5" font-weight="600" fill="#334155">v8 GQA M-packing</text>
-<text x="474" y="210" font-size="8.5" fill="#64748B">~G× speedup (8.6× at G=8). Beats SDPA</text>
-<text x="474" y="224" font-size="8.5" fill="#64748B">6–10×. TC = dead end on decode GEMV.</text>
-<circle cx="664" cy="188" r="4" fill="#22C55E"/>
-
-<!-- v8.7 -->
-<rect x="678" y="180" width="210" height="54" rx="5" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1"/>
-<text x="690" y="196" font-size="9.5" font-weight="600" fill="#334155">v8.7 Score-stationary</text>
-<text x="690" y="210" font-size="8.5" fill="#64748B">Lane=key layout. 1.1–1.6× over Cut 1.</text>
-<text x="690" y="224" font-size="8.5" fill="#64748B">Removes serial recurrence (v8.5/8.6 null).</text>
-<circle cx="880" cy="188" r="4" fill="#22C55E"/>
-
-<!-- Transition -->
-<text x="30" y="250" font-size="8.5" fill="#94A3B8" font-style="italic">Schedule closed; per-CTA at ~10% HBM → bytes premature → but what IS the floor? Need regime characterization.</text>
-
-<!-- ===== PHASE 3 ===== -->
-<rect x="30" y="260" width="62" height="16" rx="3" fill="#FCE7F3"/>
-<text x="61" y="272" font-size="8" text-anchor="middle" fill="#9D174D" font-weight="700">PHASE 3</text>
-<text x="100" y="272" font-size="10" font-weight="600" fill="#9D174D">Bytes + regime (v9–v10, T4→B200→B300, FP8→NVFP4)</text>
-
-<!-- v9 -->
-<rect x="30" y="282" width="420" height="54" rx="5" fill="#FDF2F8" stroke="#EC4899" stroke-width="1"/>
-<text x="42" y="298" font-size="9.5" font-weight="600" fill="#334155">v9 FP8 KV + regime characterization (root T4, ncu FIRST TIME)</text>
-<text x="42" y="312" font-size="8.5" fill="#64748B">%HBM caps 28%, per-CTA confound-free (locked clocks, L2-flushed, ncu L2-hit 1.1%). Counter-free proxy validated.</text>
-<text x="42" y="326" font-size="8.5" fill="#64748B">FP8 ~1.3× latency win (L2→SM load, not BW). "~10% HBM" was an occupancy artifact, not the floor.</text>
-<circle cx="442" cy="290" r="4" fill="#22C55E"/>
-
-<!-- v10 -->
-<rect x="460" y="282" width="428" height="54" rx="5" fill="#FDF2F8" stroke="#EC4899" stroke-width="1"/>
-<text x="472" y="298" font-size="9.5" font-weight="600" fill="#334155">v10 NVFP4 KV + B300/sm_103 record</text>
-<text x="472" y="312" font-size="8.5" fill="#64748B">Capacity 3.56×. Latency ≤FP8 (no win). B200+B300: %HBM flat 0.5% to 2M. Per-CTA 7th time.</text>
-<text x="472" y="326" font-size="8.5" fill="#64748B">~40 GB/s ceiling on THREE arches (T4/B200/B300). Prediction-vs-measured 4/4 + 1 honest miss.</text>
-<circle cx="880" cy="290" r="4" fill="#22C55E"/>
-
-<!-- Transition -->
-<text x="30" y="352" font-size="8.5" fill="#94A3B8" font-style="italic">Bytes exhausted, M=1 per-CTA wall unbreakable → raise M (the shape change) → then fix the engine</text>
-
-<!-- ===== PHASE 4 ===== -->
-<rect x="30" y="362" width="62" height="16" rx="3" fill="#DCFCE7"/>
-<text x="61" y="374" font-size="8" text-anchor="middle" fill="#166534" font-weight="700">PHASE 4</text>
-<text x="100" y="374" font-size="10" font-weight="600" fill="#166534">Shape + engine (v11–v12, B300/sm_103, MLA + tcgen05)</text>
-
-<!-- v11 -->
-<rect x="30" y="384" width="420" height="54" rx="5" fill="#F0FDF4" stroke="#22C55E" stroke-width="1"/>
-<text x="42" y="400" font-size="9.5" font-weight="600" fill="#334155">v11 MLA latent-KV decode (the SHAPE change)</text>
-<text x="42" y="414" font-size="8.5" fill="#64748B">M=128 by construction (all h_q heads packed). AI 8→835 (30× lift). Capacity 202× vs MHA.</text>
-<text x="42" y="428" font-size="8.5" fill="#64748B">Still per-CTA on CUDA cores (0.75 TF). ~4× slower than cuBLAS → validates the TC opportunity.</text>
-<circle cx="442" cy="392" r="4" fill="#22C55E"/>
-
-<!-- v12 -->
-<rect x="460" y="384" width="428" height="54" rx="5" fill="#F0FDF4" stroke="#22C55E" stroke-width="1.5"/>
-<text x="472" y="400" font-size="9.5" font-weight="600" fill="#334155">v12 tcgen05 tensor-core MLA decode (the ENGINE change)</text>
-<text x="472" y="414" font-size="8.5" fill="#64748B">CUTLASS ex77 production kernel. 2.4→1785 TFLOP/s (scales with B×K, 744× span).</text>
-<text x="472" y="428" font-size="8.5" fill="#64748B">"Per-CTA forever" CORRECTED → work-starvation. 46% HBM at serving scale. Complement, not beat.</text>
-<circle cx="880" cy="392" r="4" fill="#22C55E"/>
-
-<!-- Legend -->
-<text x="30" y="460" font-size="9" font-weight="600" fill="#64748B">Roofline verdict:</text>
-<circle cx="130" cy="457" r="4" fill="#22C55E"/>
-<text x="138" y="460" font-size="8.5" fill="#64748B">Prediction landed</text>
-<circle cx="230" cy="457" r="4" fill="#F59E0B"/>
-<text x="238" y="460" font-size="8.5" fill="#64748B">Partial (location not magnitude)</text>
-<circle cx="370" cy="457" r="4" fill="#EF4444"/>
-<text x="378" y="460" font-size="8.5" fill="#64748B">Honest miss (limiter wrong)</text>
-
-<!-- Bottom thesis -->
-<rect x="30" y="472" width="860" height="38" rx="6" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.2"/>
-<text x="46" y="490" font-size="10" font-weight="600" fill="#1E40AF">Paper thesis:</text>
-<text x="130" y="490" font-size="9.5" fill="#1E3A5F">The first open, prediction-vs-measured roofline characterization of attention decode on sm_103 (MHA→GQA→MLA,</text>
-<text x="46" y="504" font-size="9.5" fill="#1E3A5F">FP16→FP8→NVFP4). Complementing, not beating, production kernels. Closest prior: Tri Dao GLA on H100; delta = sm_103 + KV-quant.</text>
+<!-- legend -->
+<circle cx="34" cy="330" r="5" fill="#22C55E"/><text x="46" y="335" font-size="13" fill="#555">roofline landed</text>
+<circle cx="190" cy="330" r="5" fill="#F59E0B"/><text x="202" y="335" font-size="13" fill="#555">partial</text>
+<circle cx="300" cy="330" r="5" fill="#EF4444"/><text x="312" y="335" font-size="13" fill="#555">missed (per-CTA layer corrected it)</text>
 </svg>

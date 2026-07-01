@@ -39,14 +39,16 @@ delta is attributable (Figure~\ref{fig:arc}). Predictions are committed to the
 repository before coding; we never retrofit a prediction to a measurement.
 Table~\ref{tab:scorecard} is the resulting prediction-vs-measured scorecard.
 
-\begin{figure}[t]
+\begin{figure*}[t]
   \centering
-  \includesvg[width=\columnwidth]{v1-v12-arc-summary}
-  \caption{The v1--v12 arc as four phases: prefill \emph{schedule}
-  (v1--v5), decode \emph{shape} (v6--v8, v11), \emph{precision}
-  (v9--v10), and \emph{engine} (v12). Each arrow changes a single variable.}
+  \includesvg[width=0.86\textwidth]{v1-v12-arc-summary}
+  \caption{The v1--v12 arc as four phases, each step changing one variable:
+  prefill schedule (v1--v5), decode schedule (v6--v8.7), precision (v9--v10),
+  and shape then engine (v11--v12). Dot colour marks the pure-roofline verdict
+  (green landed, amber partial, red missed and corrected by the per-CTA layer);
+  the per-step verdicts are Table~\ref{tab:scorecard}.}
   \label{fig:arc}
-\end{figure}
+\end{figure*}
 
 \subsection{Measurement methodology}
 \label{sec:measure}
@@ -63,7 +65,13 @@ zeroed buffer $\ge 2\times$ L2 outside the timed window so that data genuinely
 comes from HBM, and (iii) push the working set past L2 (up to
 $N_k{=}2{,}097{,}152$, a $5\times$ overflow of the 132.6\,MB Blackwell L2) to
 remove the L2-residency confound. Kernels are measured on T4 (\texttt{sm\_75}),
-A100 (\texttt{sm\_80}), B200 (\texttt{sm\_100}), and B300 (\texttt{sm\_103}).
+A100 (\texttt{sm\_80}), B200 (\texttt{sm\_100}), and B300 (\texttt{sm\_103}). For
+full transparency about compute provenance: all T4 runs used Google Colab (free
+tier) for JIT build, correctness, and benchmarking, except the clock-locked,
+L2-flushed, \texttt{ncu}-validated regime run (v9~Task~1), which used a root
+(privileged) T4 rented from vast.ai; the A100, B200, and B300 were rented from
+vast.ai. The privileged root T4 is the one host on which \texttt{ncu} counters
+were available---every other measurement uses the counter-free proxy above.
 
 \begin{table*}[t]
   \centering
