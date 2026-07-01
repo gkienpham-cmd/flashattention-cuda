@@ -18,9 +18,11 @@ bench/raw/
 *.nsys-rep
 *.ncu-rep
 
-# OS / editor cruft
+# OS / editor / agent cruft
 .DS_Store
 .vscode/
+# Claude Code local settings + agent worktrees (15 MB of checkouts) — never commit
+.claude/
 
 # Large source papers (cited by arXiv id in docs/; not committed to keep the repo lean)
 *.pdf
