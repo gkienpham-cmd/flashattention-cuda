@@ -24,7 +24,7 @@ host-agnostic except where noted.
 - GPU: **B300** (sm_103a, cap `(10,3)`).
 - **OS/CUDA: Ubuntu 24.04 LTS + CUDA ≥ 12.9.** On Nebius that is
   **"Ubuntu 24.04 LTS for NVIDIA GPUs (CUDA 13)"** (`ubuntu24.04-cuda13.0`) — **CUDA 13.0 is fine**:
-  CUTLASS gained CUDA-13 support at v4.2.0, so the pinned **v4.6.0 builds on it**, and CUDA 13.0
+  CUTLASS gained CUDA-13 support at v4.2.0, so the pinned **v4.5.2 builds on it**, and CUDA 13.0
   supports sm_103a. **Do NOT pick CUDA 12.4 or any < 12.9** — sm_103a only compiles on 12.9+.
 - **Boot/system disk: ≥ 40 GB** (60 GB comfortable) — the 270 GB is HBM; CUTLASS's build tree needs
   system disk.
@@ -61,7 +61,7 @@ python -c "import torch; print('cap', torch.cuda.get_device_capability())"     #
 
 ## 2. Run the notebook (run-of-record)
 
-The notebook clones + builds CUTLASS 4.6 (profiler + example 72a/72b) itself, then runs the sweep.
+The notebook clones + builds CUTLASS v4.5.2 (profiler + example 72a/72b) itself, then runs the sweep.
 Headless execution writes an executed copy you commit:
 
 ```bash
@@ -133,9 +133,9 @@ Destroy on the vast.ai portal once the push is confirmed (`git log origin/main` 
   Cell 10). This is the documented escape hatch, normally unused.
 - **CUTLASS build OOM / disk full** → the notebook builds only 3 targets (profiler, 72a, 72b) in
   Release; if disk is still tight, rent with 60 GB.
-- **CUTLASS 4.6 build errors on CUDA 13.0** (unlikely — 4.6 > 4.2 which added CUDA-13 support) →
-  the build cell pins `--branch v4.6.0`; bump it to a newer 4.x tag (CUTLASS builds best on CUDA
-  13.x per current docs). Edit the `git clone --branch` line in the notebook's build cell.
+- **CUTLASS v4.5.2 build errors on CUDA 13.0** (unlikely — v4.2.0 added CUDA-13 support) → the build
+  cell pins `CUTLASS_TAG='v4.5.2'` and auto-falls back to the default branch if the tag clone fails;
+  to force a specific newer tag, edit `CUTLASS_TAG` in the notebook's build cell.
 
 ## Recording the outcome in the paper
 
