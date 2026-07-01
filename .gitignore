@@ -21,6 +21,7 @@ bench/raw/
 # OS / editor / agent cruft
 .DS_Store
 .vscode/
+*.code-workspace
 # Claude Code local settings + agent worktrees (15 MB of checkouts) — never commit
 .claude/
 
