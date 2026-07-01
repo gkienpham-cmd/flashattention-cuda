@@ -29,7 +29,7 @@ The dead ends are a feature, not a bug. Each one narrowed the search space and b
 
 - **Decode speedup:** 8-16x over PyTorch SDPA at all batch sizes (v8.7 score-stationary + GQA M-packing)
 - **Tensor-core throughput:** 1785 TFLOP/s = 35.7% of B300 FP8 peak at serving scale (v12 CUTLASS tcgen05)
-- **Per-CTA diagnosis:** earned across 7 steps, validated by Nsight Compute (counter-free proxy 13.8% vs ncu 12.85%)
+- **Per-CTA diagnosis:** earned across 7 steps; the counter-free %HBM proxy was validated against Nsight Compute on T4 (13.8% vs ncu 12.85%), then carried to Blackwell where ncu was blocked (proxy-grade on B200/B300)
 - **Memory wins:** 125x (S elimination), 3.56x (NVFP4 capacity), 202x (MLA vs MHA)
 - **Honest negatives:** 4 consecutive dead ends (tensor cores, double-buffer, occupancy, ILP) led to finding the score-stationary layout
 - **Multi-architecture:** same ~40 GB/s per-CTA ceiling measured on T4, B200, B300

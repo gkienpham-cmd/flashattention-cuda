@@ -98,5 +98,5 @@
 
 <!-- ===================== bottom takeaway ===================== -->
 <rect x="30" y="416" width="880" height="26" rx="6" fill="#F1EFFA" stroke="#9B92D8" stroke-width="1"/>
-<text x="470" y="433" font-size="10.5" font-weight="600" fill="#3C3489" text-anchor="middle">MLA+NVFP4: 202× capacity by construction; the cost is 3.5× FP8 RMSE (the floor).</text>
+<text x="470" y="433" font-size="10.5" font-weight="600" fill="#3C3489" text-anchor="middle">MLA+NVFP4: 202× capacity by construction; the cost is 3.5× FP8 RMSE (the floor, single-seed).</text>
 </svg>

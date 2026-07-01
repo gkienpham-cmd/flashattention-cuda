@@ -44,7 +44,7 @@ Starting at Step 10, the project uses a two-layer prediction model that separate
 
 **Layer 2 -- Per-CTA-corrected:** Adjusts for schedule realities that the pure roofline is blind to -- occupancy limits from shared memory usage, launch overhead, warp utilization at small M dimensions, L2 residency effects. This is the layer that actually predicts real-world behavior. When the two layers disagree, the per-CTA-corrected layer wins -- and did, at every step measured.
 
-**Counter-free %HBM proxy:** For environments where Nsight Compute is unavailable (containerized GPU rentals), a proxy metric `effective_bw = KV_bytes / time` compared to peak HBM bandwidth serves as a profiler substitute. This proxy was validated within 1 percentage point of Nsight Compute hardware counters (13.8% vs ncu's 12.85%) at Step 9 Task 1.
+**Counter-free %HBM proxy:** For environments where Nsight Compute is unavailable (containerized GPU rentals block hardware counters with ERR_NVGPUCTRPERM), a proxy metric `effective_bw = KV_bytes / time` compared to peak HBM bandwidth serves as a profiler substitute. This proxy was validated within 1 percentage point of Nsight Compute hardware counters (13.8% vs ncu's 12.85%) at Step 9 Task 1 -- **on the T4**. The Blackwell (B200/B300) runs used rented unprivileged containers where ncu was blocked, so the frontier %HBM / per-CTA verdicts (v10--v12) are **proxy-grade, not counter-grade** -- validated once on T4 and disclosed as such throughout. A privileged-box ncu run on Blackwell is the highest-value open item.
 
 ### Confound Removal
 
@@ -201,9 +201,9 @@ The single variable changed: lane = key (not lane = head-dimension). Each lane c
 Forks v8.7 (score-stationary), changing only the KV storage format to FP8 E4M3 with fused per-tile dequant and per-tensor FP32 scales. FP32 accumulator. Score-stationary inner loop, M-packing grid, split-KV, LSE merge all byte-identical to v8.7.
 
 **Task 2 (kernel):**
-- ~1.3x median decode-latency win -- prediction REFUTED ("capacity-only" predicted; actual load-bandwidth win)
+- ~1.3x median decode-latency win -- prediction REFUTED ("capacity-only" predicted; actual load-latency / issue win, regime-specific -- it flips negative under L2-flush)
 - Win shrinks with G (d=64: G2 1.37x to G32 0.96x) -- M-packing amortizes the KV load
-- Accuracy: E4M3 RMSE ~6--7e-4 vs FP16
+- Accuracy: E4M3 RMSE ~6--7e-4 vs FP16 (single-seed, small substrate -- see accuracy caveat below)
 - 76/76 correctness
 
 **Task 1 (regime characterization, ROOT T4, clocks LOCKED 1590 MHz, L2 FLUSHED):**
@@ -220,10 +220,10 @@ Forks v8.7 (score-stationary), changing only the KV storage format to FP8 E4M3 w
 Paged K/V as NVFP4 E2M1 (4-bit, 0.5625 bytes/elem with one E4M3 micro-scale per 16 elements + per-tensor FP32 scale). Fused per-tile dequant to FP16. Score-stationary inner loop, M-packing, split-KV, LSE merge byte-identical to v9.
 
 - **Capacity:** 3.56x vs FP16, 1.78x vs FP8 (measured)
-- **Accuracy:** Standard NVFP4 ~2.4e-3 RMSE (~4x penalty vs FP8's ~6e-4 -- E2M1's 1-bit mantissa)
+- **Accuracy:** Standard NVFP4 ~2.4e-3 RMSE (~4x penalty vs FP8's ~6e-4 -- E2M1's 1-bit mantissa). Single-seed, small-substrate point estimate -- the ~3.5-4x NVFP4-vs-FP8 ratio holds for this setup but is not a general constant (published FP4-vs-FP8 gaps range from sub-1% task accuracy to several-x RMSE depending on the scaling scheme).
 - **Latency:** NVFP4 is latency-NEGATIVE past L2 (12--30% slower than FP16 -- dequant ALU tax)
 - 146/146 correctness
-- B300/sm_103 measured: %HBM ~0.5%, per-CTA-bound confirmed to 2M tokens past 8x L2 overflow
+- B300/sm_103: %HBM ~0.5%, per-CTA-bound confirmed to 2M tokens past 8x L2 overflow (counter-free proxy; ncu blocked on the unprivileged B300 container -- proxy-grade, validated once on T4)
 - Architecture-independent ceiling: ~40 GB/s achieved at B=1 on THREE architectures (T4 at 11% of 320 GB/s, B200 at 0.5% of 8 TB/s, B300 at 0.5% of 8 TB/s -- a 25x bandwidth span, same ceiling)
 - B300 arch constants MEASURED: 148 SMs (not 160), L2 132.6 MB (not 192), 2032 MHz (not 2600) -- correcting published specifications
 - FlashInfer comparison: ~3x faster ("complementing, not beating")
@@ -237,12 +237,12 @@ MQA over one shared latent (H_kv=1, G=h_q=128). All 128 query heads share one la
 
 - **Pure roofline FLIPS** compute-bound for the first time in the arc
 - **Measured (CUDA-core kernel):** 0.75 TFLOP/s achieved -- still per-CTA-bound (<1% of peaks)
-- ~4x slower than torch dense-MQA (torch routes M=128 into cuBLAS tensor-core GEMMs)
+- ~4x slower than torch dense-MQA -- the ~4x wall-clock gap is measured; the likely cause (torch routing M=128 into a cuBLAS tensor-core GEMM) is a structural inference, not a torch-side profile (the torch baseline is a batched FP32 matmul, unprofiled)
 - **Capacity:** 202x more KV resident vs MHA, 12.6x vs GQA-8 (99.5% reduction)
 - 148/148 correctness
 - B300 nsys: partial kernel 99.9% GPU time, merge <0.01%
-- B300/sm_103 measured: %HBM ~0%, eff_bw ~0.9 GB/s to 2M tokens past a 5x L2 overflow -- confound-free
-- **Finding:** The shape is correct and tensor-core-friendly (validated by the 4x cuBLAS gap), but CUDA-core GEMV is the wrong engine on Blackwell. This motivated v12.
+- B300/sm_103: %HBM ~0%, eff_bw ~0.9 GB/s to 2M tokens past a 5x L2 overflow -- confound-free on the L2 axis (counter-free proxy; ncu was blocked on the unprivileged B300 container -- see Independent Validation)
+- **Finding:** The shape is correct and tensor-core-friendly (strongly suggested by the 4x gap -- a structural inference, not a profiled measurement), but CUDA-core GEMV is the wrong engine on Blackwell. This motivated v12.
 
 #### v12 -- Native tcgen05 Tensor-Core MLA Decode (CUTLASS ex77, B300/sm_103)
 
@@ -289,10 +289,12 @@ Scope pivot: CUTLASS ex77 already ships the canonical production weight-absorbed
 | v6 | HBM-bound | Occupancy-bound (7--9x off) | Magnitude wrong |
 | v7 | Crossover with batch | Flat %HBM | Refuted |
 | v8 | AI=2G/b, ~Gx speedup | AI=2G/b, ~Gx speedup | FIRST WIN |
-| v9 T1 | Per-CTA-bound | Per-CTA / low-MLP | Confirmed (ncu) |
-| v10 | Capacity 3.55x, no latency | 3.56x, latency-negative | Capacity hit, latency sign missed |
-| v11 | AI to 235, compute-flip? | Still per-CTA (CUDA-core) | Per-CTA-corrected layer won |
-| v12 | HBM-bound at scale | 46% HBM at scale | Engine-correct prediction hit |
+| v9 T1 | Per-CTA-bound | Per-CTA / low-MLP | Confirmed (ncu, T4) |
+| v10 | Capacity 3.55x, no latency | 3.56x, latency-negative | Capacity hit, latency sign missed (proxy) |
+| v11 | AI to 235, compute-flip? | Still per-CTA (CUDA-core) | Per-CTA-corrected layer won (proxy) |
+| v12 | HBM-bound at scale | 46% HBM at scale | Engine-correct prediction hit (proxy) |
+
+*"(proxy)" marks verdicts resting on the counter-free %HBM proxy (Blackwell ncu was blocked); the proxy was ncu-validated once, on T4.*
 
 ### Memory and Capacity Wins
 
@@ -349,12 +351,43 @@ From v6 through v11, every decode measurement showed ~10% HBM utilization. The d
 
 ---
 
+## Independent Validation
+
+![Independent validation scorecard: reproduced roofline AIs and literature-checked claims](diagrams/portfolio-validation-scorecard.svg)
+
+The project was put through an independent review that re-ran the roofline tool against the repository and cross-checked the headline external claims against current literature. It reproduced every published arithmetic-intensity number **exactly**:
+
+| Claim (from `results.md`) | Independent re-run of `roofline.predict` | Match |
+|---|---|---|
+| MLA FP16 AI = 234.8, ridge 312.5, HBM-bound | 234.8, ridge 312.5, HBM | Yes |
+| MLA FP8 AI = 469.7, compute-bound | 469.7, MMA | Yes |
+| MLA NVFP4 AI = 835.0, compute-bound | 835.0, MMA | Yes |
+| GQA-8 NVFP4 AI ~= 3.6 (G=1) | 3.6, HBM | Yes |
+
+External claims that held up against the literature: the **B300/sm_103 hardware constants** (288 GB HBM3e, 15 PFLOPS dense FP4, 8 TB/s flat vs B200, and the INT8 throughput cut that motivates the NVFP4-not-INT8 KV choice); the **decode-is-work-starved** characterization (aligns with and sharpens the current large-batch-inference consensus); the **MLA capacity math** (202x vs MHA, 12.6x vs GQA-8); and the **"complement, not beat" positioning** (production kernels like FlashMLA run ~3 orders of magnitude above the v11 CUDA-core kernel, exactly as the log states). The related-work anchor -- Grouped Latent Attention (arXiv 2505.21487), open MLA-decode roofline on H100 -- is a real, on-point closest-prior, and the stated delta (sm_103 + KV-quantization) is a genuine gap.
+
+The review's verdict: the methodology (pre-registered predictions, confound removal, negative results as first-class deliverables) is *"more careful than much of what appears in published kernel-optimization papers"* and is *"genuinely publication-grade for a characterization venue."*
+
+**Three hardening items** it flagged -- all of which the project's own logs had already raised, and which are now reflected in the caveats above:
+
+1. **The 4x cuBLAS gap is inferred, not profiled.** The "M=128 is a real tensor-core GEMM" conclusion rests on a structural argument plus a measured 4x wall-clock gap against a torch baseline that was never profiled to confirm it hit an M=128 TC GEMM. Stated as inference throughout.
+2. **Blackwell verdicts are proxy-grade.** The T4 era has ncu ground truth; the B200/B300 runs were on unprivileged containers where ncu counters were blocked, so the sm_103 limiter reads rest on the counter-free proxy (validated once, on T4). A privileged-box ncu run is the top open item.
+3. **Accuracy numbers are single-seed.** The FP8 ~6-7e-4 and NVFP4 ~2.4e-3 RMSE figures, and the ~3.5x ratio, are one seed per shape on a small substrate -- real for this setup, not general constants.
+
+Two performance cells remain genuinely unmeasured and are logged as such: the **v5 prefill benchmark** and the **native NVFP4-compute arm (Arm 2)**. Nothing is misrepresented -- all 17 kernels are built and correctness-tested; two performance cells are open.
+
+*(The review was an independent AI-assisted re-run of the tool plus a literature cross-check, not a human peer review. Its value is the reproduction and the external fact-checking, both of which are independently repeatable from the repo.)*
+
+---
+
 ## Diagrams
 
 All diagrams are hand-authored SVGs in `docs/diagrams/`.
 
 ### Full-Arc Overview
+- `portfolio-hero.svg` -- the hero image (17 kernels, 4 architectures, three eras, headline metrics)
 - `v1-v12-arc-summary.svg` -- the complete v1 to v12 journey
+- `portfolio-validation-scorecard.svg` -- independent-validation scorecard (reproduced AIs + literature-checked claims)
 
 ### Roofline and Regime
 - `decode-roofline.svg` -- decode AI (2/b) vs ridges; how FP4-KV / GQA / MLA approach the ridge
@@ -426,7 +459,7 @@ All diagrams are hand-authored SVGs in `docs/diagrams/`.
 
 ### Next Steps
 
-**v13 -- GLA / Sparse Attention.** Gated Linear Attention (Tri Dao's GLA, arXiv 2505.21487), DSA (DeepSeek V3.2), CSA (DeepSeek V4). The field is moving toward linear and sparse attention variants. The roofline-first methodology transfers directly.
+**v13 -- GLA / Sparse Attention.** Grouped Latent Attention (Tri Dao, arXiv 2505.21487 -- also the closest-prior decode-roofline anchor, on H100), then the sparse direction: DSA (DeepSeek V3.2), CSA (DeepSeek V4). The field is moving toward latent and sparse attention variants, and the roofline-first methodology transfers directly. (Note: arXiv 2505.21487 is *Grouped* Latent Attention -- not to be confused with *Gated Linear* Attention, arXiv 2312.06635, a separate line of work.)
 
 **Arm 2 -- Native NVFP4 Compute.** No kernel anywhere does native FP4 tensor-core decode (CUTLASS ex77 is FP8-native; the M >= 128 tcgen05 gate for block-scaled NVFP4 is met by MLA's M=128). This is genuine open novelty for a future kernel.
 

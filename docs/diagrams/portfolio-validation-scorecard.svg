@@ -1,0 +1,107 @@
+<svg width="100%" viewBox="0 0 960 580" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Independent Validation — reproduced roofline AIs and literature-checked claims</title>
+<desc>An independent review re-ran the project's roofline tool and reproduced every published arithmetic-intensity number exactly (MLA FP16 234.8, MLA FP8 469.7, MLA NVFP4 835.0, GQA-8 3.6), and cross-checked the headline external claims against current literature (B300 hardware constants, decode work-starvation, MLA capacity math, complement-not-beat positioning, and the Grouped Latent Attention closest-prior anchor). Three hardening items were flagged, all previously noted in the project's own logs.</desc>
+
+<defs>
+<linearGradient id="vbg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#0F172A"/>
+<stop offset="1" stop-color="#1E293B"/>
+</linearGradient>
+</defs>
+
+<rect x="0" y="0" width="960" height="580" fill="url(#vbg)"/>
+
+<!-- HEADER -->
+<text x="40" y="50" font-size="26" font-weight="700" fill="#F8FAFC">Independent Validation</text>
+<text x="40" y="74" font-size="13" fill="#94A3B8">An independent re-run of the roofline tool + a literature cross-check — reproducible from the repo</text>
+
+<!-- ===== LEFT PANEL: reproduced AIs ===== -->
+<rect x="40" y="94" width="446" height="238" rx="10" fill="#0F1A2E" stroke="#1E3A5F" stroke-width="1"/>
+<text x="62" y="120" font-size="14" font-weight="700" fill="#60A5FA">Roofline AIs — reproduced exactly</text>
+<text x="62" y="138" font-size="10.5" fill="#64748B">re-ran `python -m roofline.predict` against the repo</text>
+
+<!-- column header -->
+<text x="62" y="162" font-size="9" font-weight="600" fill="#475569">SHAPE / PRECISION</text>
+<text x="300" y="162" font-size="9" font-weight="600" fill="#475569">AI · LIMITER</text>
+<line x1="62" y1="168" x2="464" y2="168" stroke="#1E3A5F" stroke-width="1"/>
+
+<g font-size="11">
+<text x="62" y="190" fill="#CBD5E1">MLA · FP16</text>
+<text x="300" y="190" fill="#7DD3FC" font-weight="600">234.8 · HBM</text>
+<circle cx="452" cy="186" r="7" fill="#0D2A20" stroke="#10B981"/>
+<text x="452" y="190" font-size="9" text-anchor="middle" fill="#34D399" font-weight="700">✓</text>
+
+<text x="62" y="220" fill="#CBD5E1">MLA · FP8</text>
+<text x="300" y="220" fill="#7DD3FC" font-weight="600">469.7 · MMA</text>
+<circle cx="452" cy="216" r="7" fill="#0D2A20" stroke="#10B981"/>
+<text x="452" y="220" font-size="9" text-anchor="middle" fill="#34D399" font-weight="700">✓</text>
+
+<text x="62" y="250" fill="#CBD5E1">MLA · NVFP4</text>
+<text x="300" y="250" fill="#7DD3FC" font-weight="600">835.0 · MMA</text>
+<circle cx="452" cy="246" r="7" fill="#0D2A20" stroke="#10B981"/>
+<text x="452" y="250" font-size="9" text-anchor="middle" fill="#34D399" font-weight="700">✓</text>
+
+<text x="62" y="280" fill="#CBD5E1">GQA-8 · NVFP4 (G=1)</text>
+<text x="300" y="280" fill="#7DD3FC" font-weight="600">3.6 · HBM</text>
+<circle cx="452" cy="276" r="7" fill="#0D2A20" stroke="#10B981"/>
+<text x="452" y="280" font-size="9" text-anchor="middle" fill="#34D399" font-weight="700">✓</text>
+</g>
+
+<line x1="62" y1="296" x2="464" y2="296" stroke="#1E3A5F" stroke-width="1"/>
+<text x="62" y="318" font-size="10.5" fill="#34D399" font-weight="600">4 / 4 published AIs reproduced to the decimal</text>
+
+<!-- ===== RIGHT PANEL: claims checked vs literature ===== -->
+<rect x="500" y="94" width="420" height="238" rx="10" fill="#0A2018" stroke="#0F3D2E" stroke-width="1"/>
+<text x="522" y="120" font-size="14" font-weight="700" fill="#34D399">Claims — checked vs literature</text>
+<text x="522" y="138" font-size="10.5" fill="#5B7A6E">every externally-checkable headline held</text>
+
+<g font-size="10.5">
+<text x="540" y="164" fill="#6EE7B7" font-weight="700">✓</text>
+<text x="558" y="164" fill="#D1FAE5">B300 constants — 288 GB, 15 PF FP4, 8 TB/s flat</text>
+
+<text x="540" y="192" fill="#6EE7B7" font-weight="700">✓</text>
+<text x="558" y="192" fill="#D1FAE5">Decode is work-starved, not simply HBM-bound</text>
+
+<text x="540" y="220" fill="#6EE7B7" font-weight="700">✓</text>
+<text x="558" y="220" fill="#D1FAE5">MLA capacity math — 202× vs MHA, 12.6× vs GQA-8</text>
+
+<text x="540" y="248" fill="#6EE7B7" font-weight="700">✓</text>
+<text x="558" y="248" fill="#D1FAE5">"Complement, not beat" — FlashMLA ~10³× above v11</text>
+
+<text x="540" y="276" fill="#6EE7B7" font-weight="700">✓</text>
+<text x="558" y="276" fill="#D1FAE5">Closest-prior anchor legit — Grouped Latent Attn</text>
+</g>
+
+<line x1="522" y1="296" x2="900" y2="296" stroke="#0F3D2E" stroke-width="1"/>
+<text x="522" y="318" font-size="10.5" fill="#6EE7B7" font-weight="600">Methodology judged "publication-grade for a characterization venue"</text>
+
+<!-- ===== HARDENING ITEMS ===== -->
+<text x="40" y="366" font-size="13" font-weight="700" fill="#FBBF24">Three hardening items — all already flagged in the project's own logs</text>
+
+<rect x="40" y="378" width="286" height="86" rx="8" fill="#241A08" stroke="#3F2D0A"/>
+<text x="56" y="400" font-size="10.5" font-weight="600" fill="#FDE68A">1 · The 4× cuBLAS gap</text>
+<text x="56" y="418" font-size="9.5" fill="#A8A29E">The gap is measured; the "M=128 is a</text>
+<text x="56" y="431" font-size="9.5" fill="#A8A29E">TC GEMM" cause is a structural</text>
+<text x="56" y="444" font-size="9.5" fill="#A8A29E">inference — torch baseline unprofiled.</text>
+<text x="56" y="458" font-size="9" fill="#78716C" font-style="italic">→ stated as inference throughout</text>
+
+<rect x="337" y="378" width="286" height="86" rx="8" fill="#241A08" stroke="#3F2D0A"/>
+<text x="353" y="400" font-size="10.5" font-weight="600" fill="#FDE68A">2 · Blackwell = proxy-grade</text>
+<text x="353" y="418" font-size="9.5" fill="#A8A29E">T4 has ncu ground truth; B200/B300</text>
+<text x="353" y="431" font-size="9.5" fill="#A8A29E">ran on unprivileged containers (ncu</text>
+<text x="353" y="444" font-size="9.5" fill="#A8A29E">blocked). Proxy validated once, on T4.</text>
+<text x="353" y="458" font-size="9" fill="#78716C" font-style="italic">→ privileged-box ncu = top open item</text>
+
+<rect x="634" y="378" width="286" height="86" rx="8" fill="#241A08" stroke="#3F2D0A"/>
+<text x="650" y="400" font-size="10.5" font-weight="600" fill="#FDE68A">3 · Accuracy is single-seed</text>
+<text x="650" y="418" font-size="9.5" fill="#A8A29E">FP8 ~6–7e-4, NVFP4 ~2.4e-3 RMSE,</text>
+<text x="650" y="431" font-size="9.5" fill="#A8A29E">~3.5× ratio — one seed per shape on</text>
+<text x="650" y="444" font-size="9.5" fill="#A8A29E">a small substrate, not a constant.</text>
+<text x="650" y="458" font-size="9" fill="#78716C" font-style="italic">→ labeled single-seed in the doc</text>
+
+<!-- VERDICT STRIP -->
+<rect x="40" y="484" width="880" height="66" rx="8" fill="#0D2A20" stroke="#10B981" stroke-width="1.2"/>
+<text x="58" y="508" font-size="11" font-weight="700" fill="#A7F3D0">Verdict</text>
+<text x="58" y="527" font-size="10.5" fill="#D1FAE5">"The findings are valid. Every claim I could independently check holds up against both the code and the current literature.</text>
+<text x="58" y="543" font-size="10.5" fill="#D1FAE5">The honesty about misses is not a weakness — it is the strongest evidence that the wins are real."</text>
+</svg>
