@@ -88,7 +88,7 @@ Use these verbatim as large pull-quotes in the Methodology / Journey sections.
   1875/625). So low precision (FP8/NVFP4) is a KV-cache **capacity + accuracy** lever, not a decode-speed
   one. This is the newest honest negative — it *closes* the last open decode-lever question. (Distinct
   from the v10 "Stage A" precision-accuracy ablation — different experiment, same name.)
-- Research target: a PMBS@SC-tier characterization paper — the first open, kernel-level,
+- The characterization paper (PMBS@SC 2026, in preparation) — the first open, kernel-level,
   prediction-vs-measured roofline characterization of FlashAttention decode on sm_103. Complements
   (does **not** beat) production kernels like FlashInfer / FlashMLA.
 - Honesty guardrails to preserve on the site: v5 prefill bench is unmeasured; the 4× cuBLAS gap is a

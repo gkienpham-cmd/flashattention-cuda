@@ -25,4 +25,5 @@ available for tailored applications.
 > analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth) via
 > Nsight Compute across 3 architectures, and confirmed it at the GEMM level with a B300 FP4-vs-FP8
 > characterization showing native FP4 compute stays HBM-bound (≤5.8% of its 15 PF peak) — so low
-> precision cuts KV-cache size, not decode latency; targeting a PMBS@SC characterization paper.
+> precision cuts KV-cache size, not decode latency; being written up as a PMBS@SC 2026 characterization
+> paper (in preparation).

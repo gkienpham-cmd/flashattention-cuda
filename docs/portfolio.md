@@ -16,7 +16,7 @@ Over 12 steps, I wrote 17 CUDA attention kernels spanning the full design space:
 
 The project covers four GPU architectures (T4 Turing, A100 Ampere, B200 Blackwell, B300 Blackwell Ultra), three attention patterns (MHA, GQA, MLA), and four precision formats (FP32, FP16, FP8 E4M3, NVFP4 E2M1). Honest misses are first-class deliverables. When the roofline model predicted a 30x traffic cut and reality showed 1.02x, that became a lesson about L2 cache behavior that shaped every subsequent design decision.
 
-The research target is a PMBS@SC characterization paper: the first open, kernel-level, prediction-vs-measured roofline characterization of FlashAttention decode on sm_103. The kernel library itself is the foundation for a from-scratch mini-vLLM inference engine.
+This work is being written up as a characterization paper (PMBS@SC 2026, in preparation): the first open, kernel-level, prediction-vs-measured roofline characterization of FlashAttention decode on sm_103. The kernel library itself is the foundation for a from-scratch mini-vLLM inference engine.
 
 ---
 
@@ -529,7 +529,7 @@ Built 17 CUDA attention kernels from scratch across 4 GPU architectures (T4 thro
 
 ### Version B -- ML Research / Applied ML
 
-Designed and measured a 12-step roofline-driven optimization arc for FlashAttention decode on NVIDIA Blackwell (B300/sm_103), spanning MHA to GQA to MLA and FP16 to FP8 to NVFP4 with prediction-vs-measured analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth) via Nsight Compute across 3 architectures, and confirmed it at the GEMM level with a B300 FP4-vs-FP8 characterization showing native FP4 compute stays HBM-bound (≤5.8% of its 15 PF peak) -- so low precision cuts KV-cache size, not decode latency; targeting a PMBS@SC characterization paper.
+Designed and measured a 12-step roofline-driven optimization arc for FlashAttention decode on NVIDIA Blackwell (B300/sm_103), spanning MHA to GQA to MLA and FP16 to FP8 to NVFP4 with prediction-vs-measured analysis at every step; identified per-CTA work-starvation as the decode limiter (not bandwidth) via Nsight Compute across 3 architectures, and confirmed it at the GEMM level with a B300 FP4-vs-FP8 characterization showing native FP4 compute stays HBM-bound (≤5.8% of its 15 PF peak) -- so low precision cuts KV-cache size, not decode latency; being written up as a PMBS@SC 2026 characterization paper (in preparation).
 
 ### Version C -- Robotics / Mechanical Engineering Crossover
 
