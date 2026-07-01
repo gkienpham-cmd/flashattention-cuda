@@ -24,8 +24,10 @@ bench/raw/
 # Claude Code local settings + agent worktrees (15 MB of checkouts) — never commit
 .claude/
 
-# Large source papers (cited by arXiv id in docs/; not committed to keep the repo lean)
+# Large source papers (cited by arXiv id in docs/)
 *.pdf
+# Exception: papers/ directory holds the PMBS@SC related work references
+!papers/*.pdf
 
 # Raw research dumps — the curated synthesis lives in docs/{b300-decode,fa-next}-research.md
 /B300 FlashAttention Optimization Research.txt
