@@ -77,8 +77,8 @@ Roofline columns. Rows (verbatim):
 - SnapMLA    | H100      | MLA        | FP8         | check | cross
 - SageAttn3  | RTX 5090  | Standard   | FP4         | cross | cross
 - FlashInfer / MLA | B300 | GQA / MLA | FP8 / NVFP4 | check | cross
-- Ours       | T4–B300   | MHA→MLA    | FP16→NVFP4  | check | check
-Highlight the "Ours" row with a light green fill and green border; make it read as
+- RGD (ours) | T4–B300   | MHA→MLA    | FP16→NVFP4  | check | check
+Highlight the "RGD (ours)" row with a light green fill and green border; make it read as
 the punchline (the only row with decode + roofline across all types/precisions).
 Header row bold with a rule beneath it.
 ```

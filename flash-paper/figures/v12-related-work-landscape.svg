@@ -52,9 +52,9 @@
 <text x="620" y="250" font-size="16" fill="#16A34A" text-anchor="middle">&#10003;</text>
 <text x="705" y="250" font-size="16" fill="#DC2626" text-anchor="middle">&#10007;</text>
 
-<!-- Ours (highlighted) -->
+<!-- RGD, this work (highlighted) -->
 <rect x="24" y="260" width="721" height="34" rx="5" fill="#DCFCE7" stroke="#22C55E" stroke-width="1.5"/>
-<text x="28"  y="282" font-size="15" font-weight="700" fill="#166534">Ours</text>
+<text x="28"  y="282" font-size="15" font-weight="700" fill="#166534">RGD (ours)</text>
 <text x="185" y="282" font-size="15" font-weight="700" fill="#166534">T4&#8211;B300</text>
 <text x="315" y="282" font-size="15" font-weight="700" fill="#166534">MHA&#8594;MLA</text>
 <text x="470" y="282" font-size="15" font-weight="700" fill="#166534">FP16&#8594;NVFP4</text>

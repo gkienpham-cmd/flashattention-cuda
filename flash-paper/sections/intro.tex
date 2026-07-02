@@ -26,7 +26,8 @@ attention but for prefill. Microbenchmark-driven analytical
 modeling~\cite{roofmethod} establishes why naive roofline fails on modern GPUs
 and owns the method---we cite and apply it. The cell for an open,
 prediction-vs-measured decode roofline on \texttt{sm\_103}, across attention
-types and precisions, is empty. This paper fills it.
+types and precisions, is empty. We fill it with \emph{Roofline-Guided Decode}
+(RGD), the study this paper presents.
 
 \begin{figure*}[t]
   \centering
@@ -35,9 +36,10 @@ types and precisions, is empty. This paper fills it.
   Section~\ref{sec:related}: FA4~\cite{fa4}, GLA~\cite{gla}, SnapMLA~\cite{snapmla},
   SageAttention3~\cite{sage3}, FlashInfer/FlashMLA~\cite{flashinfer,flashmla}).
   Existing work covers prefill, Hopper, or ships production Blackwell decode
-  without an open roofline; only our row combines \texttt{sm\_103} decode across
-  MHA$\to$GQA$\to$MLA and FP16$\to$FP8$\to$NVFP4 with a prediction-vs-measured
-  roofline. GLA is the closest prior (delta: \texttt{sm\_103} + KV-quant).}
+  without an open roofline; only the RGD row (this work) combines \texttt{sm\_103}
+  decode across MHA$\to$GQA$\to$MLA and FP16$\to$FP8$\to$NVFP4 with a
+  prediction-vs-measured roofline. GLA is the closest prior (delta:
+  \texttt{sm\_103} + KV-quant).}
   \label{fig:landscape}
 \end{figure*}
 

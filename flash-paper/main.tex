@@ -54,12 +54,12 @@ From Per-CTA-Bound to Work-Starvation Across MHA, GQA, and MLA}
 Attention decode is the latency-critical phase of large language model (LLM)
 serving, yet no published work provides a \emph{prediction-vs-measured} roofline
 characterization on NVIDIA's latest datacenter GPU (B300 / \texttt{sm\_103})
-across attention types and precisions. We build twelve attention kernels of
-increasing sophistication---naive, tiled, fused, split-KV, GQA-packed,
-score-stationary, FP8, NVFP4, MLA, and tensor-core (\texttt{tcgen05})---and pair
-each with a \emph{pre-registered two-layer roofline prediction} (pure roofline
-plus a per-CTA-corrected layer) evaluated against measured results on Tesla T4,
-A100, B200, and B300. Our central finding is that decode's apparent per-CTA
+across attention types and precisions. We present \emph{Roofline-Guided Decode}
+(RGD): twelve attention kernels of increasing sophistication---naive, tiled,
+fused, split-KV, GQA-packed, score-stationary, FP8, NVFP4, MLA, and tensor-core
+(\texttt{tcgen05})---each paired with a pre-registered two-layer roofline
+prediction (pure roofline plus a per-CTA-corrected layer) and evaluated against
+measured results on Tesla T4, A100, B200, and B300. Our central finding is that decode's apparent per-CTA
 throughput ceiling is \emph{work-starvation}: the right engine
 (\texttt{tcgen05} tensor cores) converts work into throughput
 ($0.75 \to 1785\tflops$ on B300), but only in the high-throughput serving regime
