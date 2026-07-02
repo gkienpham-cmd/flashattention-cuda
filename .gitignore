@@ -29,6 +29,8 @@ bench/raw/
 *.pdf
 # Exception: papers/ directory holds the PMBS@SC related work references
 !papers/*.pdf
+!flash-paper/figures/*.pdf
+!flash-paper/rgd-paper.pdf
 
 # Raw research dumps — the curated synthesis lives in docs/{b300-decode,fa-next}-research.md
 /B300 FlashAttention Optimization Research.txt

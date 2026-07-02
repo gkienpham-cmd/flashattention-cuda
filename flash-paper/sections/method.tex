@@ -81,7 +81,8 @@ were available; every other measurement uses the counter-free proxy above.
   the per-CTA-corrected layer matches the measured limiter at every step, while
   pure roofline predicts the wrong regime at every single-stream decode step.}
   \label{tab:scorecard}
-  \small
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
   \begin{tabular}{llllll}
     \toprule
     Step & Kernel (single variable) & L1 predicted & Measured limiter & L1 & L2 \\
