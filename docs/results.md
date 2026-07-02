@@ -2192,3 +2192,47 @@ profiler build — it OOM/compile-failed on the whole multi-arch library — or 
 **Consequence:** Stage B/C (accuracy) is **not** unlocked by a compute win (there is none). FP4/NVFP4
 stays a **capacity + accuracy** lever (v9/v10), not a decode-compute lever. See `decisions.md` Arm 2
 Stage A, `paper-outline.md` §5.3, `interview-prep.md` C19.
+
+## Audit fixes applied (2026-07-02) — model + launch-heuristic corrections; what stays valid, what to rerun
+
+The 2026-07-02 read-only audit ([`AUDIT-FINDINGS.md`](../AUDIT-FINDINGS.md); 0 critical/high, 2 medium,
+5 low) is now **implemented** (same day, authored on the no-CUDA Mac — the `.cu` edits owe a Colab T4
+rebuild). What changed and what it does to the recorded numbers:
+
+- **F1 — the roofline MUFU bound now honors `Arch.exp_per_s`** (`roofline/model.py`, both branches).
+  Where an arch records a vendor-stated absolute exp throughput (only B300: 10.7 TExp/s), the model uses
+  it directly instead of `mufu_ratio × (fp32 FMA/s)` = 13.125 TExp/s built from two constants tagged
+  placeholder/UNCONFIRMED. Effect: **sm_103 `t_mufu` grows ~1.23×** (MLA @ N_k=128K: util 6.8% → 8.3%);
+  T4/A100/B200 predictions are byte-identical (`exp_per_s=None` → old fallback, CLI-verified). **No
+  recorded limiter flips** (MUFU never owned a max; decode share <3%). Quote future sm_103 predictions
+  from the new CLI output.
+- **F4 — `choose_splits` no longer assumes a 40-SM T4** (the 4 current forks: v8.7/v9/v10/v11 hosts now
+  query `multiProcessorCount`: T4=40, A100=108, B200/B300=148). **T4 launches are bit-identical** (the
+  query returns 40) → every recorded T4 number stands as-is. **Blackwell runs are a NEW launch
+  condition:** the recorded v11 B300 rows ran **S=5** where 148 SMs now pick **S=19** (h_q=128, B=1,
+  N_k 8K–2M), so the Step-11 **"~4× slower than torch" *magnitude* is partially heuristic-confounded**
+  (up to ~3.8× of it may be split-starvation, not engine; the *direction* survives via v12's independent
+  tcgen05 proof). **Unaffected:** every B=1/H_kv=1/G≤8 knee-hunt row (v9 T1, v10/v11 regime sweeps) —
+  there `S = min(by_size, 32)` at 40 *and* 148 SMs, so the flat-%HBM / no-knee / per-CTA conclusions
+  stand unchanged. **Heuristic-dependent:** H_kv=8 and large-batch Blackwell magnitudes (e.g. the
+  "occupancy lever ~4×, caps ~2.3% HBM" absolutes). Never splice old-S and new-S numbers in one table.
+  The 5 frozen v8-family variants (Cut 1/tc/db/occ/ilp) keep the old default — they are measured A/B
+  artifacts.
+- **F5 — loud ceilings** (same 4 forks): merge grid.y (`B·H_q ≤ 65535`) now TORCH_CHECKs instead of an
+  opaque CUDA launch failure; the paged-gather flat index widens to int64 *before* the multiply. No
+  recorded shape hit either ceiling.
+- **F2/F3/F6/F7 — label honesty:** the harness `L2!` flag now fires for every backend (was v9_fp8-only);
+  `config.py`'s "fp8 illegal on sm_75" corrected (v9 runs on sm_75, software-emulated); the refuted
+  "FA4 stops at B200" phrasing removed from `archs.py` live comments; `model.py`'s "limiter OPEN"
+  paragraph now records the settled v9-T1 per-CTA verdict.
+
+**Rerun ledger:**
+1. **REQUIRED (free Colab T4):** rebuild + `pytest tests/test_correctness.py -k "v8_gqa_ss or v9_fp8
+   or v10_nvfp4 or v11_mla"`. Expect green and bit-identical behavior (T4 S unchanged, no math touched)
+   — this only exists because the `.cu` edits were authored without a compiler.
+2. **RECOMMENDED (next B300 rental, ~minutes):** the audit's top item — rerun v11 @ (576,512) via
+   `python -m bench.regime --backend v11_mla --dim 576 --gqa-group 128 --h-kv 1 --kv-lens 8192 131072
+   2097152`, confirm S=19, A/B against the recorded S=5 µs/tok, then re-derive the Step-11 "4× vs
+   torch" sentence (sharper or partially deflated — both are paper-grade outcomes).
+3. **Nothing else.** No committed notebook is invalidated — they are the data of record *for the old
+   launch condition*; T4 results reproduce bit-identically under the new code.

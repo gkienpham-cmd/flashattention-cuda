@@ -584,6 +584,21 @@ into any serving-regime kernel. See `results.md`/`decisions.md` Step 12 + `inter
   notebook `notebooks/stage_a_gemm_profiler.ipynb`. See `results.md`/`decisions.md` "Arm 2 Stage A",
   `paper-outline.md` §5.3, `interview-prep.md` C19.
 
+- **Repo audit + fixes (2026-07-02).** Read-only audit per `FABLE5-AUDIT-INSTRUCTIONS.md` →
+  `AUDIT-FINDINGS.md` (0 critical/high; wiring 17/17 clean; 2 medium + 5 low), then **all 7 findings
+  implemented same day.** (F1) `roofline/model.py` MUFU bound now honors `Arch.exp_per_s` → sm_103
+  `t_mufu` ×~1.23 (MLA@128K util 6.8→8.3%), T4/A100/B200 byte-identical, **no limiter flips**. (F4)
+  the 4 current forks (v8.7/v9/v10/v11) `choose_splits` now uses a device-queried SM count instead of
+  the hardcoded 40 — **T4 launches bit-identical; Blackwell = NEW launch condition** (v11 B300 headline
+  shape was measured at S=5, 148 SMs pick S=19 → the Step-11 "4× vs torch" *magnitude* is partially
+  heuristic-confounded; direction survives via v12). B=1/H_kv=1 knee-hunt rows unaffected (S_CAP binds
+  identically); the 5 frozen v8-family variants untouched (measured A/B artifacts). (F5) merge-grid
+  TORCH_CHECK + int64 gather widen; (F2/F3/F6/F7) stale comments + the fp8-only `L2!` flag fixed.
+  **Owed: free-Colab T4 rebuild + correctness (`-k "v8_gqa_ss or v9_fp8 or v10_nvfp4 or v11_mla"`) —
+  the `.cu` edits were authored on the no-CUDA Mac; expect green/unchanged. Next B300 rental's first
+  task: confirm S=19, A/B v11 @ (576,512) vs the recorded S=5 rows, re-derive the "4×" sentence.**
+  See `results.md` "Audit fixes applied (2026-07-02)", `decisions.md` "Audit fixes (2026-07-02)".
+
 **Cheap pre-v10 experiment — DONE (2026-06-29, `results.md` Step 8.5/8.6 past-L2 re-test; figure
 `diagrams/v8_5_v8_6_pastL2.svg`; data `notebooks/v8_5_v8_6_pastL2_regime_output.ipynb`).** Re-ran v8.5
 (double-buffer) + v8.6 (occ/ILP) past L2 (clock-robust speedup-vs-Cut-1, L2-flushed; this Colab even locked

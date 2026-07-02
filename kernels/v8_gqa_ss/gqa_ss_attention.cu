@@ -126,7 +126,7 @@ __global__ void gqa_ss_partial_kernel(const __half* __restrict__ Q,        // [B
             if (gj < j_end) {
                 int pb  = bt_b[gj / page_size];
                 int off = gj % page_size;
-                int64_t src = ((int64_t)(pb * page_size + off) * H_kv + h_kv) * D + t;
+                int64_t src = (((int64_t)pb * page_size + off) * H_kv + h_kv) * D + t;
                 sK[t * (TN + 1) + r] = K_pool[src];        // transposed [d][key] + pad
                 sV[r * D + t]        = V_pool[src];        // natural [key][d]
             } else {
@@ -296,7 +296,11 @@ torch::Tensor gqa_ss_attention_forward(torch::Tensor q, torch::Tensor k_pool, to
     auto O  = torch::empty({B, H_q, N_q, d}, q.options().dtype(torch::kFloat32));
 
     const int64_t BH_kv = (int64_t)B * H_kv;
-    const int S = choose_splits(B, H_kv, G, N_q, N_k);
+    // Split target is 2*SM — query the device (T4=40, A100=108, B200/B300=148) rather than assume the
+    // old hardcoded T4 default (audit F4, 2026-07-02: 40 under-split a 148-SM B300 ~3.8x at the v11
+    // headline shape). On a T4 the query returns 40, so historical launches are unchanged.
+    const int num_sm = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
+    const int S = choose_splits(B, H_kv, G, N_q, N_k, num_sm);
     const int chunk = ceil_div(N_k, S);
 
     auto opts_f = q.options().dtype(torch::kFloat32);
@@ -324,6 +328,8 @@ torch::Tensor gqa_ss_attention_forward(torch::Tensor q, torch::Tensor k_pool, to
         TORCH_CHECK(false, "v8.7 gqa_ss supports head_dim 64 or 128 (got ", d, ")");
     }
 
+    TORCH_CHECK((int64_t)B * H_q <= 65535,
+                "merge grid.y = B*H_q must be <= 65535 (CUDA grid.y cap); got ", (int64_t)B * H_q);
     dim3 mgrid((unsigned)N_q, (unsigned)(B * H_q));
     gqa_ss_merge_kernel<<<mgrid, d, 0, stream>>>(Op, Mp, Lp, O.data_ptr<float>(), N_q, S, d);
 

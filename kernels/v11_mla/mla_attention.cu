@@ -172,7 +172,7 @@ __global__ void mla_partial_kernel(const __half*  __restrict__ Q,          // [B
             if (gj < j_end) {
                 int pb  = bt_b[gj / page_size];
                 int off = gj % page_size;
-                int64_t tok  = (int64_t)(pb * page_size + off) * H_kv + h_kv;   // token-(latent-head) index
+                int64_t tok  = ((int64_t)pb * page_size + off) * H_kv + h_kv;   // token-(latent-head) index
                 int64_t psrc = tok * DP + (t >> 1);          // packed byte holding dim t
                 int64_t msrc = tok * DM + (t >> 4);          // E4M3 micro-scale for dim t's 16-block
                 float lv = dequant_nvfp4(L_pool[psrc], t & 1) * dequant_e4m3(L_scale[msrc]) * scale_l;
@@ -359,7 +359,11 @@ torch::Tensor mla_attention_forward(torch::Tensor q, torch::Tensor l_pool, torch
     auto O  = torch::empty({B, H_q, N_q, DV}, q.options().dtype(torch::kFloat32));
 
     const int64_t BH_kv = (int64_t)B * H_kv;   // = B
-    const int S = choose_splits(B, H_kv, G, N_q, N_k);
+    // Split target is 2*SM — query the device (T4=40, A100=108, B200/B300=148) rather than assume the
+    // old hardcoded T4 default (audit F4, 2026-07-02: on the 148-SM B300 the (h_q=128, B=1, N_k=8192)
+    // headline shape ran S=5 where 148 SMs pick S=19). On a T4 the query returns 40 -> launches unchanged.
+    const int num_sm = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
+    const int S = choose_splits(B, H_kv, G, N_q, N_k, num_sm);
     const int chunk = ceil_div(N_k, S);
 
     auto opts_f = q.options().dtype(torch::kFloat32);
@@ -396,6 +400,8 @@ torch::Tensor mla_attention_forward(torch::Tensor q, torch::Tensor l_pool, torch
     }
     #undef MLA_LAUNCH
 
+    TORCH_CHECK((int64_t)B * H_q <= 65535,
+                "merge grid.y = B*H_q must be <= 65535 (CUDA grid.y cap); got ", (int64_t)B * H_q);
     dim3 mgrid((unsigned)N_q, (unsigned)(B * H_q));
     mla_merge_kernel<<<mgrid, DV, 0, stream>>>(Op, Mp, Lp, O.data_ptr<float>(), N_q, S, DV);
 

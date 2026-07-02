@@ -1345,3 +1345,32 @@ smem=174 KB → ~1 CTA/SM (§9-Q2, measured). FP8≈FP16 throughput → not comp
   not the ratio. Optional hardening: matched-harness FP8 (fix profiler build / MXFP8 example) — verdict-neutral.
 - **Consequence:** Stage B/C accuracy work is **not** triggered (no compute win to justify it). See
   `results.md` "Arm 2 Stage A", `paper-outline.md` §5.3, `interview-prep.md` C19.
+
+## Audit fixes (2026-07-02) — device-queried split heuristic + honor exp_per_s
+
+Context: the 2026-07-02 read-only audit (`AUDIT-FINDINGS.md`, merged to main; 0 critical/high, 2 medium,
+5 low) → all seven findings implemented the same day (authored on the no-CUDA Mac; a Colab T4 correctness
+rebuild is owed). Effect-on-recorded-numbers ledger: `results.md` "Audit fixes applied (2026-07-02)".
+
+- **Defects (the two mediums):** (1) every current decode fork hardcoded `choose_splits(..., num_sm=40)`
+  — the 2×SM split target under-filled Blackwell (v11 B300 headline shape: S=5 vs 19 on 148 SMs), so up
+  to ~3.8× of the v11 "4× vs torch" gap magnitude may be launch-heuristic, not engine; (2) the roofline
+  MUFU bound ignored the one B300 constant tagged FACT (`exp_per_s`=10.7 TExp/s), deriving instead from
+  placeholder×UNCONFIRMED constants (13.125 TExp/s).
+- **Options weighed (F4):** (a) leave all forks frozen for comparability, document only; (b) fix the 4
+  current forks (v8.7/v9/v10/v11), keep the 5 historical v8-family variants byte-frozen; (c) fix all.
+  **Chosen: (b)** — hosts now use `at::cuda::getCurrentDeviceProperties()->multiProcessorCount`. On a T4
+  the query returns 40 → recorded T4 numbers reproduce bit-identically; Blackwell becomes a *new, labeled*
+  launch condition. Historical variants stay frozen as measured A/B artifacts.
+- **Chosen (F1):** `model.py` prefers `arch.exp_per_s` when not None (sm_103 `t_mufu` ×~1.23, util
+  6.8→8.3% on MLA@128K; **no limiter flips**; all other arches byte-identical). Open owner choice, logged:
+  whether the numerator should be the vendor peak 10.7 or the measured-achievable 5.33 TExp/s — the code
+  honors whatever `archs.py` records.
+- **Also:** merge-grid TORCH_CHECK (`B·H_q ≤ 65535`) + int64-widened gather index (F5); `L2!` flag
+  un-gated to all backends (F3); three stale/refuted comments corrected (F2 config.py, F6 archs.py,
+  F7 model.py).
+- **What changes on another arch:** the split heuristic now tracks any future device automatically; the
+  MUFU bound silently improves on any arch that later records `exp_per_s`.
+- **Verification:** CPU — sm_75 CLI byte-identical pre/post; sm_103 MLA as predicted; ast-clean. GPU owed
+  — T4 rebuild + `-k "v8_gqa_ss or v9_fp8 or v10_nvfp4 or v11_mla"`; the B300 S=5→19 A/B is the next
+  rental's first task (re-derive the Step-11 "4×" sentence from its outcome).

@@ -115,7 +115,10 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         t_hbm = hbm_bytes / (arch.hbm_bw_gbps * 1e9)
 
         exp_count = float(B) * h_q * N_q * N_k             # one exp per (head, key) score entry
-        mufu_rate = (arch.fp32_cuda_flops / 2.0) * arch.mufu_ratio
+        # Prefer the vendor-stated absolute exp throughput where one is recorded (B300 exp_per_s);
+        # else the mufu_ratio * (fp32 FMA/s) estimate — the fallback archs.py documents.
+        mufu_rate = arch.exp_per_s if arch.exp_per_s is not None \
+            else (arch.fp32_cuda_flops / 2.0) * arch.mufu_ratio
         t_mufu = exp_count / mufu_rate
 
         times = {"mma": t_mma, "hbm": t_hbm, "mufu": t_mufu}
@@ -195,9 +198,10 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
         # even if the kernel IS memory-bound -- just bound by the wrong memory. The bench also never
         # locked clocks (free Colab) nor pushed N_k past ~16K. COUNTER-FREE L2 TEST: effective_bw =
         # kv_bytes / measured_time; if effective_bw > arch.hbm_bw_gbps the data came from L2, so %HBM
-        # is meaningless as a boundedness metric. v9 Task 1 (root T4: lock clocks, flush L2, sweep N_k
-        # 1K..128K, measure L2 hit-rate) earns or overturns the per-CTA verdict. Until then the
-        # bytes-vs-per-CTA decode limiter is OPEN. See docs/v9-kickoff.md, results.md threats-section.
+        # is meaningless as a boundedness metric. v9 Task 1 ran exactly that (2026-06-28, root T4:
+        # clocks locked, L2 flushed, N_k to 128K, ncu live) and SETTLED it — per-CTA-bound,
+        # confound-free; reaffirmed past-L2 on B200/B300 (Step 10). The counter-free eff_bw test
+        # remains the per-run guard. See results.md Step 9 Task 1.
         #
         # v8 GQA M-packing IS that lever (promoted from the old "v10/v11, not modeled" note): G query
         # heads share one KV head, so KV is read once per group (bh/G) instead of per head (bh). KV bytes
@@ -210,8 +214,10 @@ def estimate(arch: Arch, *, B: int, H: int, N_q: int, N_k: int, d: int,
 
     # --- MUFU exp: one exp per score entry ---
     exp_count = float(bh) * N_q * N_k
-    # MUFU op/s ~= (FP32 FMA/s) * ratio. fp32_cuda_flops counts 2 FLOPs per FMA, so /2.
-    mufu_rate = (arch.fp32_cuda_flops / 2.0) * arch.mufu_ratio
+    # MUFU op/s ~= (FP32 FMA/s) * ratio. fp32_cuda_flops counts 2 FLOPs per FMA, so /2. Where an arch
+    # records an absolute exp throughput (B300 exp_per_s), use it directly instead of the ratio estimate.
+    mufu_rate = arch.exp_per_s if arch.exp_per_s is not None \
+        else (arch.fp32_cuda_flops / 2.0) * arch.mufu_ratio
     t_mufu = exp_count / mufu_rate
 
     times = {"mma": t_mma, "hbm": t_hbm, "mufu": t_mufu}

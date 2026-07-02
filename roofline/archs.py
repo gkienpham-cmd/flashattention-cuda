@@ -98,7 +98,8 @@ A100 = Arch(
 # B200 (Blackwell), sm_100. An OPTIONAL cheaper dev rung for the v10 NVFP4 path (~$3.44/hr; most
 # tcgen05/TMEM code ports sm_100 -> sm_103), NOT the destination — the record/paper runs on B300
 # (sm_103), the project's final goal, because no published FA paper has characterized a B300 (FA4
-# stops at B200). NOT yet measured by us. The one number that matters for the decode roofline is firm:
+# targets/benchmarks B200; deployed but never characterized on sm_103 — results.md close-out). NOT yet
+# measured by us. The one number that matters for the decode roofline is firm:
 # HBM 8 TB/s (same flat 8 TB/s as B300). Compute peaks are
 # vendor "dense" figures and SPECULATIVE placeholders — fix vs a primary spec sheet before quoting any
 # sm_100 compute prediction. Decode is memory-bound regardless (AI << ridge), so the 8 TB/s drives the
@@ -123,7 +124,8 @@ B200 = Arch(
 )
 
 # B300 (Blackwell Ultra), sm_103. THE FINAL GOAL — the v10/v11 record target and the paper's novelty
-# (first open roofline-documented FA decode study on sm_103; FA4 stops at B200). Device constants now
+# (first open roofline-documented FA decode study on sm_103; FA4 targets/benchmarks B200 and is
+# deployed-but-never-characterized on sm_103 — results.md close-out). Device constants now
 # MEASURED on a vast.ai B300/sm_103 (2026-06-29): num_sm/clock/L2 below — see results.md Step 10 sm_103 record.
 # B300-only levers the paper exploits: 2x exp/SFU throughput (exp_per_s below), 288 GB capacity, NVFP4
 # 15 PF dense. Sources:

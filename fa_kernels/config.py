@@ -42,7 +42,8 @@ class AttnConfig:
     tile_n: Optional[int] = None
 
     # --- hardware target ---
-    # arch gates which backends are legal (e.g. fp8 is illegal on sm_75). See dispatch.py.
+    # arch gates which backends are legal (e.g. v12_mla_tc needs sm_100+; v9_fp8 DOES run on sm_75 —
+    # E4M3 is software-emulated there, see dispatch.py "v9_fp8"). See dispatch.py.
     arch: str = "sm_75"
 
     # fixed convention; kept as a field so it travels with the config in logs/results.

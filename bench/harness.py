@@ -344,7 +344,7 @@ def run(backend: str, precision: str, batches: list[int], H: int, causal: bool,
                 # Counter-free L2 test (no ncu): if the KV working set streamed from L2 (~4x HBM on T4),
                 # %HBM exceeds 100 -> "L2!" -> the %HBM number is NOT a bandwidth-boundedness signal (the
                 # v9 Task-1 confound). vs_naive for v9 is the FP8-vs-FP16 (v8.7) byte-isolation ratio.
-                l2flag = " L2!" if (is_fp8 and hbm_pct == hbm_pct and hbm_pct > 100.0) else ""
+                l2flag = " L2!" if (hbm_pct == hbm_pct and hbm_pct > 100.0) else ""
                 label = f"{B}x{H}x{qn}x{d}/{N}" + (f" G{G}" if is_gqa else "")
                 print(f"  {label:>19} | {o_p50:7.3f}/{o_max:7.3f} | {us_tok:8.2f} | "
                       f"{hbm_pct:5.1f}%{l2flag} | {speedup:7.2f}x | {vs_naive:7.2f}x | {roof}")
