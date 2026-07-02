@@ -13,7 +13,7 @@
   <g>
     <rect x="20" y="124" width="168" height="42" rx="8" fill="#F5F3FF" stroke="#C4B5FD"></rect>
     <text x="30" y="141" font-size="14" font-weight="700" fill="#6D28D9">v2 tiled</text>
-    <text x="30" y="158" font-size="13" fill="#374151">3× faster; 0% DRAM cut</text>
+    <text x="30" y="158" font-size="13" fill="#374151">up to 3.2×; 0% DRAM cut</text>
     <circle cx="173" cy="139" r="5" fill="#EF4444"></circle>
   </g>
   <g>

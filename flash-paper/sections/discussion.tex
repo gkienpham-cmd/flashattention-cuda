@@ -16,7 +16,7 @@ FLOP peak does not, by itself, help a memory-lean decode workload.
 
 \begin{figure}[t]
   \centering
-  \includesvg[width=\columnwidth]{v12-engine-ridge-comparison}
+  \includegraphics[width=\columnwidth]{v12-engine-ridge-comparison.pdf}
   \caption{Engine-ridge comparison on B300. Each precision's ridge scales with
   its tensor-core peak (FP16 $\approx$312, FP8 625, NVFP4 1875 FLOP/byte). Decode
   arithmetic intensities land left of every ridge, so NVFP4's 15\,PF peak
@@ -63,8 +63,8 @@ and~\ref{sec:serving}, not tensor-core throughput.
 
 \begin{figure}[t]
   \centering
-  \includesvg[width=\columnwidth]{v12-arm2-research-plan}
-  \caption{The native-FP4-compute boundary test (paper §\ref{sec:stagea}). At the
+  \includegraphics[width=\columnwidth]{v12-arm2-research-plan.pdf}
+  \caption{The native-FP4-compute boundary test (Section~\ref{sec:stagea}). At the
   $M{=}128$ MLA-decode QK-GEMM shape, both FP4 and FP8 GEMMs are HBM-bound at
   every context length; FP4 tops out at 5.8\% of its 15\,PF peak. The result is a
   pre-registered negative: FP4/NVFP4 stays a capacity+accuracy lever, not a

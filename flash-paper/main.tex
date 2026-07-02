@@ -18,7 +18,6 @@
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
 \usepackage{graphicx}
-\usepackage{svg}                 % \includesvg ; needs shell-escape + Inkscape (Overleaf default)
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{multirow}
@@ -27,9 +26,9 @@
 \usepackage{textcomp}
 \usepackage[hidelinks]{hyperref}
 
-% svg package: figures live in figures/ ; keep the same basename as the .svg
-\svgpath{{figures/}}
-\svgsetup{inkscapelatex=false}
+% Figures are PDF (converted from the SVG sources in figures/) for arXiv
+% compatibility: arXiv PDFLaTeX accepts PDF/PNG/JPEG only, no shell-escape.
+\graphicspath{{figures/}}
 
 % --- convenience macros -------------------------------------------------------
 \newcommand{\ai}{\ensuremath{\mathit{AI}}}
@@ -38,11 +37,10 @@
 \newcommand{\tbs}{\,TB/s}
 \newcommand{\pct}{\,\%}
 \newcommand{\smem}{\textsc{smem}}
-\newcommand{\citeverify}[1]{\textcolor{red}{[CITATION-VERIFY: #1]}}
 
 \begin{document}
 
-\title{Roofline-Guided Characterization of Attention Decode on Blackwell:\\
+\title{Roofline-Guided Characterization (RGD) of Attention Decode on Blackwell:\\
 From Per-CTA-Bound to Work-Starvation Across MHA, GQA, and MLA}
 
 \author{\IEEEauthorblockN{Kien Pham}

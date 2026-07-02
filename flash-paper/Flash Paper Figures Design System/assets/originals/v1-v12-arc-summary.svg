@@ -22,7 +22,7 @@
 
 <rect x="20" y="118" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"></rect>
 <text x="32" y="136" font-size="15" font-weight="700" fill="#4C1D95">v2 tiled</text>
-<text x="32" y="153" font-size="13" fill="#555">3× faster; 0% DRAM cut</text>
+<text x="32" y="153" font-size="13" fill="#555">up to 3.2×; 0% DRAM cut</text>
 <circle cx="180" cy="128" r="5" fill="#EF4444"></circle>
 
 <rect x="20" y="164" width="172" height="40" rx="6" fill="#F5F3FF" stroke="#C4B5FD"></rect>

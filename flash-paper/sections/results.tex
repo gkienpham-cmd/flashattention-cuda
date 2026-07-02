@@ -10,7 +10,7 @@ see. \textbf{v1} (naive, three-pass FP32) is HBM-bound in principle
 (85.6\,ms vs a 109\,ms floor at $N{=}2048$, $d{=}64$) because the T4's 4\,MB L2
 absorbs the redundant operand reads; only at $N{=}8192$, when L2 overflows, does
 it converge to the floor. \textbf{v2} (shared-memory tiling) is
-$2.8$--$3.2\times$ faster than v1, but \texttt{ncu} shows the win is
+$1.3$--$3.2\times$ faster than v1, but \texttt{ncu} shows the win is
 \emph{compute/scheduling, not bandwidth}: DRAM traffic is essentially unchanged
 ($1.02\times$ at $N{=}8192$), because the L2 had already served the operands and
 because $\sim$99\% of DRAM traffic is the materialized score matrix $S$, which is
@@ -157,7 +157,7 @@ capacity pressure). The transition is smooth in $B\times K$ with no hard knee.
 
 \begin{figure}[t]
   \centering
-  \includesvg[width=\columnwidth]{v12-throughput-regime}
+  \includegraphics[width=\columnwidth]{v12-throughput-regime.pdf}
   \caption{v12 (production \texttt{tcgen05} MLA decode, B300): FP8 throughput
   versus total work $B\times K$. Single-stream decode ($B{=}1$, moderate $K$)
   sits at 1--2\% of the 5\,PF FP8 peak; throughput climbs to 35.7\% peak / 46.3\%
@@ -188,7 +188,7 @@ capacity pressure). The transition is smooth in $B\times K$ with no hard knee.
 
 \begin{figure}[t]
   \centering
-  \includesvg[width=\columnwidth]{v12-work-starvation-correction}
+  \includegraphics[width=\columnwidth]{v12-work-starvation-correction.pdf}
   \caption{The correction. v6--v11 CUDA-core decode is flat near the per-CTA
   floor (v11 MLA: $0.75\tflops$ regardless of $B\times K$). The \texttt{tcgen05}
   engine (v12) spans $2.4 \to 1785\tflops$ as work grows, so ``per-CTA-bound

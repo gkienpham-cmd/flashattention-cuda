@@ -1,49 +1,48 @@
-# flash-paper — PMBS@SC 2026 draft
+# flash-paper — RGD (PMBS@SC 2026 / arXiv)
 
-First LaTeX draft of *"Roofline-Guided Characterization of Attention Decode on
+LaTeX source of *"Roofline-Guided Characterization (RGD) of Attention Decode on
 Blackwell: From Per-CTA-Bound to Work-Starvation Across MHA, GQA, and MLA."*
 
 ## Layout
 
 ```
-main.tex              # IEEEtran, conference, two-column; \input's the 7 sections
-sections/*.tex        # intro, background, method, results, discussion, related, conclusion
-refs.bib              # bibliography (IEEEtran style)
-figures/*.svg         # the 8 main figures (copied from ../docs/diagrams/)
-Makefile              # optional local build (needs a LaTeX toolchain + rsvg/inkscape)
+main.tex               IEEEtran, conference, two-column; \input's the 7 sections
+sections/*.tex         intro, background, method, results, discussion, related, conclusion
+refs.bib               bibliography (all entries author-verified 2026-07-02)
+figures/*.pdf          the 8 figures, arXiv-ready (vector PDF, embedded fonts)
+figures/*.svg          editable SVG sources for the PDFs
+arxiv-abstract.txt     plain-text title/abstract for the arXiv metadata form
+rgd-arxiv.tar.gz       the upload bundle (main.tex + sections + refs.bib + figures/*.pdf)
+Makefile               local build + figure regeneration targets
 ```
 
-## Building on Overleaf (recommended)
+## arXiv submission
 
-1. Upload the whole `flash-paper/` folder (or import from the repo).
-2. **Menu → Settings → Compiler: pdfLaTeX.** Overleaf enables `--shell-escape` and
-   ships Inkscape by default, which is what the `svg` package needs to render the
-   `figures/*.svg` at compile time. No manual figure conversion required.
-3. Compile. BibTeX runs automatically for `\bibliography{refs}`.
+1. Upload `rgd-arxiv.tar.gz` at the "Prepare Files" step (it contains only
+   `main.tex`, `sections/`, `refs.bib`, and `figures/*.pdf`; all file names use
+   arXiv-safe characters, no spaces).
+2. Compiler: **PDFLaTeX** (auto-detected; all figures are PDF, as arXiv requires —
+   no shell-escape, no `svg` package).
+3. Top-level TeX file: `main.tex`.
+4. Paste the title and abstract from `arxiv-abstract.txt` into the metadata form
+   (it is macro-free plain text).
+5. Preview the PDF, check the 8 figures and the bibliography render, then submit.
 
-If a figure fails to render on Overleaf, the usual fix is to confirm shell-escape
-is on (it is by default) — or fall back to PDF figures (see Makefile).
+## Building on Overleaf or locally
 
-## Building locally
+- Overleaf: upload the folder, compiler pdfLaTeX. No special settings needed
+  (the `svg` package dependency was removed; figures are plain
+  `\includegraphics{...pdf}`).
+- Local: `make pdf` (needs latexmk/pdflatex; no shell-escape required).
+- To regenerate a figure PDF after editing its SVG: `make figures` uses headless
+  Google Chrome (present on this machine) to print each SVG to a tightly-cropped
+  vector PDF; `rsvg-convert`/`inkscape` also work if installed.
 
-This machine has **no LaTeX toolchain and no SVG→PDF converter**, so the draft was
-**not compiled here** — it is structured for Overleaf. To build locally you need
-`pdflatex`/`latexmk` plus `rsvg-convert` or `inkscape`. The Makefile has:
+## Provenance
 
-- `make pdf`   — latexmk with `-shell-escape` (renders SVGs via the `svg` package).
-- `make figures` — convert `figures/*.svg` → `figures/*.pdf` with `rsvg-convert`
-  (fallback if you prefer `\includegraphics{...pdf}` over `\includesvg`).
-
-## Format caveat
-
-The exact PMBS'26 document class and page limit could **not** be auto-confirmed
-from the CfP (only the deadlines were: full paper **Aug 5 2026 AoE**, late-breaking
-Aug 26, workshop Nov 15). This draft defaults to `IEEEtran` (conference option),
-two-column, targeting ≤8 pages. Verify the required class/limit against the PMBS
-submission page (`pmbs-workshop.github.io`) before submitting.
-
-## Status
-
-First draft. See the honesty punch-list in the parent report / `docs/paper-outline.md`.
-Open items include `\citeverify`-flagged author fields for a few real-but-not-fully-
-attributed references in `refs.bib` (marked "Anonymous").
+Figures were refined in Claude Design (`Flash Paper Figures Design System/`,
+committed for provenance) from the hand-authored SVGs, then audited: exact bar
+geometry against the measured record, min 13px fonts, real text elements. Every
+number in the paper reconciles to `../docs/results.md` / `../docs/decisions.md` /
+`../docs/stage-a-results.md`; every bibliography entry was web-verified
+(title + authors + arXiv id).

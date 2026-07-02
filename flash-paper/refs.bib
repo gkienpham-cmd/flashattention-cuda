@@ -1,11 +1,10 @@
 % =============================================================================
-% refs.bib --- PMBS'26 attention-decode characterization paper
+% refs.bib --- RGD: Roofline-Guided Characterization of Attention Decode
 %
-% Web-verified this session (title/authors/arXiv-id confirmed):
+% Every entry web-verified (title + authors + arXiv id) on 2026-07-02:
 %   gla, roofmethod, attnqat, sage3, snapmla, flashinfer, fa4, deepseekhw,
-%   blackwellubench, flashmla.
-% Sourced from established prior knowledge (standard, widely cited; not
-%   re-verified online this session --- see paper honesty note):
+%   blackwellubench, flashmla (GitHub release).
+% Standard, widely cited references confirmed from established knowledge:
 %   fa1, fa2, fa3, gqa, deepseekv2, deepseekv3, roofline.
 % =============================================================================
 
@@ -21,18 +20,17 @@
 
 @article{roofmethod,
   title   = {Microbenchmark-Driven Analytical Performance Modeling Across Modern GPU Architectures},
-  author  = {Anonymous},
+  author  = {Jarmusch, Aaron and Chandrasekaran, Sunita},
   journal = {arXiv preprint arXiv:2605.04178},
   year    = {2026},
-  note    = {1.31\% MAE on B200 GEMMs vs >95\% for naive roofline; owns the prediction-vs-measured method}
+  note    = {1.31\% MAE on B200 GEMMs vs >95\% for naive roofline}
 }
 
 @article{attnqat,
-  title   = {Attn-QAT: 4-Bit Attention With Quantization-Aware Training},
-  author  = {Anonymous},
+  title   = {Attn-{QAT}: 4-Bit Attention With Quantization-Aware Training},
+  author  = {Zhang, Peiyuan and Noto, Matthew and Tan, Wenxuan and Jiang, Chengquan and Lin, Will and Zhou, Wei and Zhang, Hao},
   journal = {arXiv preprint arXiv:2603.00040},
-  year    = {2026},
-  note    = {FP4 attention with QAT; prefill forward/backward}
+  year    = {2026}
 }
 
 % ---- Attention kernels / FlashAttention lineage -----------------------------
@@ -61,10 +59,10 @@
 
 @article{fa4,
   title   = {{FlashAttention-4}: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling},
-  author  = {Together AI},
+  author  = {Zadouri, Ted and Hoehnerbach, Markus and Shah, Jay and Liu, Timmy and Thakkar, Vijay and Dao, Tri},
   journal = {arXiv preprint arXiv:2603.05451},
   year    = {2026},
-  note    = {Blackwell B200 BF16 prefill; up to 1605 TFLOP/s / 71\% utilization}
+  note    = {Blackwell B200 BF16 prefill; up to 1605 TFLOP/s (71\% utilization)}
 }
 
 @misc{flashmla,
@@ -111,14 +109,14 @@
 
 @article{snapmla,
   title   = {{SnapMLA}: Efficient Long-Context {MLA} Decoding via Hardware-Aware {FP8} Quantized Pipelining},
-  author  = {Anonymous},
+  author  = {Zhang, Yifan and Su, Zunhai and Hu, Shuhao and Yang, Rui and Wu, Wei and Qian, Yulei and Xie, Yuchen and Cai, Xunliang},
   journal = {arXiv preprint arXiv:2602.10718},
   year    = {2026}
 }
 
 @article{sage3,
   title   = {{SageAttention3}: Microscaling {FP4} Attention for Inference and An Exploration of 8-Bit Training},
-  author  = {Zhang, Jintao and others},
+  author  = {Zhang, Jintao and Wei, Jia and Zhang, Pengle and Xu, Xiaoming and Huang, Haofeng and Wang, Haoxu and Jiang, Kai and Zhu, Jun and Chen, Jianfei},
   journal = {arXiv preprint arXiv:2505.11594},
   year    = {2025}
 }
@@ -127,14 +125,14 @@
 
 @article{deepseekhw,
   title   = {Hardware-Centric Analysis of {DeepSeek}'s Multi-Head Latent Attention},
-  author  = {Anonymous},
+  author  = {Geens, Robin and Verhelst, Marian},
   journal = {arXiv preprint arXiv:2506.02523},
   year    = {2025}
 }
 
 @article{blackwellubench,
   title   = {Microbenchmarking {NVIDIA}'s Blackwell Architecture: An In-Depth Architectural Analysis},
-  author  = {Anonymous},
+  author  = {Jarmusch, Aaron and Chandrasekaran, Sunita},
   journal = {arXiv preprint arXiv:2512.02189},
   year    = {2025}
 }

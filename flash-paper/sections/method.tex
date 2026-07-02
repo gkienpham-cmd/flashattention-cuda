@@ -20,7 +20,7 @@ Every kernel step is accompanied by two predictions, both recorded
 
 \begin{figure}[t]
   \centering
-  \includesvg[width=\columnwidth]{v12-two-layer-prediction-model}
+  \includegraphics[width=\columnwidth]{v12-two-layer-prediction-model.pdf}
   \caption{The two-layer prediction model. Layer 1 (pure roofline) predicts the
   regime from FLOPs/bytes and peak throughputs; Layer 2 adds per-CTA structure
   (occupancy, GEMV-vs-GEMM packing, pipeline depth). Both are pre-registered; the
@@ -41,10 +41,10 @@ Table~\ref{tab:scorecard} is the resulting prediction-vs-measured scorecard.
 
 \begin{figure*}[t]
   \centering
-  \includesvg[width=0.86\textwidth]{v1-v12-arc-summary}
+  \includegraphics[width=0.86\textwidth]{v1-v12-arc-summary.pdf}
   \caption{The v1--v12 arc as four phases, each step changing one variable:
   prefill schedule (v1--v5), decode schedule (v6--v8.7), precision (v9--v10),
-  and shape then engine (v11--v12). Dot colour marks the pure-roofline verdict
+  and shape then engine (v11--v12). Dot color marks the pure-roofline verdict
   (green landed, amber partial, red missed and corrected by the per-CTA layer);
   the per-step verdicts are Table~\ref{tab:scorecard}.}
   \label{fig:arc}
