@@ -1,0 +1,40 @@
+\section{Related Work}
+\label{sec:related}
+
+Figure~\ref{fig:landscape} places this work in the landscape; I discuss the
+three closest points and then briefly survey the rest.
+
+\paragraph{The closest prior}
+\emph{Grouped-Latent Attention (GLA)}~\cite{gla} is the nearest work: an open,
+roofline-documented study of MLA-style latent-attention decode, showing on H100
+that latent attention sits at the roofline knee and can run up to $2\times$ faster
+than standard attention. It is the template for my decode roofline; my delta is
+exactly \texttt{sm\_103} (Blackwell Ultra) plus KV-quantization (FP8/NVFP4) and
+the per-CTA-corrected two-layer model.
+\emph{Attn-QAT}~\cite{attnqat} pushes attention to 4-bit with quantization-aware
+training on Blackwell, but for the prefill/training forward-and-backward path; my
+delta is decode, MLA, and the roofline characterization.
+\emph{Microbenchmark-driven analytical modeling}~\cite{roofmethod} establishes why
+naive roofline fails on modern GPUs (1.31\% MAE on B200 GEMMs vs $>$95\% for naive
+roofline) and \emph{owns} the prediction-vs-measured method; I cite it as prior
+art and contribute the \emph{application} to attention decode.
+
+\paragraph{Attention kernels and MLA}
+The FlashAttention lineage~\cite{fa1,fa2,fa3} established the fused,
+memory-efficient prefill kernel, and FlashAttention-4~\cite{fa4} co-designs the
+algorithm and pipeline for Blackwell (BF16 prefill, up to 1605\tflops\ / 71\%
+utilization on B200), but it targets B200 prefill and is not characterized on
+\texttt{sm\_103} decode. MLA originates with DeepSeek-V2/V3~\cite{deepseekv2,%
+deepseekv3}; FlashMLA~\cite{flashmla} is the production Hopper MLA decode kernel
+(memory-bound 3000\gbs, compute-bound 580\tflops\ on H800), and
+FlashInfer~\cite{flashinfer} is a customizable attention engine deployed in vLLM
+and SGLang. These ship Blackwell decode but publish no open roofline.
+
+\paragraph{Low-precision attention and MLA}
+SnapMLA~\cite{snapmla} builds an FP8 MLA decode pipeline with RoPE-aware
+per-token KV quantization on Hopper; SageAttention3~\cite{sage3} accelerates
+attention with microscaling FP4 tensor cores on Blackwell consumer parts
+(prefill). Hardware-centric analyses of DeepSeek's MLA~\cite{deepseekhw} and of
+the Blackwell microarchitecture~\cite{blackwellubench} characterize the platform
+but not the prediction-vs-measured decode roofline across attention types and
+precisions that I target.

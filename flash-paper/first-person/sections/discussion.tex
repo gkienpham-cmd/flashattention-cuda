@@ -43,7 +43,7 @@ throughput.
 \label{sec:stagea}
 Because MLA decode meets the block-scaled NVFP4 tensor-core gate ($M{\ge}128$) by
 construction, it is tempting to expect that native FP4 \emph{compute}
-(15\,PF, $3\times$ FP8) would accelerate it. We pre-registered the prediction
+(15\,PF, $3\times$ FP8) would accelerate it. I pre-registered the prediction
 ``no'' and tested it directly on B300 (\texttt{sm\_103a}, CUDA 12.9, CUTLASS
 v4.5.2; a separate measurement campaign on a different rented box than v12's,
 hence the different CUTLASS version): a sweep of the $M{=}128$ MLA-decode QK-GEMM over
@@ -79,13 +79,13 @@ rests on the \emph{kernel-quality-independent} peak-fraction and roofline
 ($\ai \ll$ ridge caps FP4 far below its compute peak regardless of tuning), not
 on the ratio. The consequence is that accuracy follow-ups for a fused FP4-compute
 kernel are \emph{not} triggered, and FP4/NVFP4 remains a capacity$+$accuracy
-lever. (We use ``Stage A'' for this GEMM-compute test; it is distinct from the
-v10 asymmetric-precision \emph{accuracy} ablation, which we do not abbreviate the
+lever. (I use ``Stage A'' for this GEMM-compute test; it is distinct from the
+v10 asymmetric-precision \emph{accuracy} ablation, which I do not abbreviate the
 same way.)
 
 \subsection{Threats to validity}
 \label{sec:threats}
-We disclose the following.
+I disclose the following.
 \emph{Counter-free proxy:} the \%HBM proxy is \texttt{ncu}-validated only on a
 root T4 (13.8\% vs 12.85\%); on B300 \texttt{ncu} was blocked
 (unprivileged container) and the proxy carries as a throughput estimate, not a
@@ -94,14 +94,14 @@ counter measurement.
 locked-clock root-T4 runs and idle-pinned Blackwell runs, but cross-kernel
 $\mu$s/tok on Blackwell is not fully clock-controlled.
 \emph{Single-seed accuracy:} FP8/NVFP4 RMSE figures are single-seed on
-gpt2-small and on synthetic KV; they are our substrate numbers, not published
+gpt2-small and on synthetic KV; they are my substrate numbers, not published
 constants, and the $\sim$3.5$\times$ FP4-vs-FP8 latent gap should be read as such.
 \emph{v5 was never benchmarked:} its $8\times$ floor drop is a prediction only;
-we never present it as measured.
+I never present it as measured.
 \emph{nsys provenance:} the v10 B300 schedule figures come from an off-notebook
 \texttt{nsys} 2025.3.2 run (the committed cell ran 2025.1.3, which records an
 empty \texttt{sm\_103} trace); the v11 schedule was re-captured with 2025.3.2 and
 is non-empty in-repo.
 \emph{No SOTA comparators run:} FlashMLA-class kernels are orders of magnitude
-faster by construction; we make no wall-clock claim against them. The
+faster by construction; I make no wall-clock claim against them. The
 contribution is the open methodology and characterization.

@@ -36,7 +36,7 @@ counter-prediction (a negative or boundary result) are equally informative.
 The twelve kernels form a chain in which each step changes exactly one variable
 (schedule, shape, or precision) relative to the previous, so that a measured
 delta is attributable (Figure~\ref{fig:arc}). Predictions are committed to the
-repository before coding; we never retrofit a prediction to a measurement.
+repository before coding; I never retrofit a prediction to a measurement.
 Table~\ref{tab:scorecard} is the resulting prediction-vs-measured scorecard.
 
 \begin{figure*}[t]
@@ -53,13 +53,13 @@ Table~\ref{tab:scorecard} is the resulting prediction-vs-measured scorecard.
 \subsection{Measurement methodology}
 \label{sec:measure}
 Vendor performance counters (\texttt{ncu}) are blocked on every containerized
-rental we used (\texttt{ERR\_NVGPUCTRPERM}), so decode throughput is read with a
+rental I used (\texttt{ERR\_NVGPUCTRPERM}), so decode throughput is read with a
 \emph{counter-free proxy}: effective bandwidth $=$ KV bytes moved $/$ measured
 time, reported as \%HBM against peak, using CUDA-event timing. On a
-\emph{privileged} (root) T4 we validated this proxy directly against \texttt{ncu}:
+\emph{privileged} (root) T4 I validated this proxy directly against \texttt{ncu}:
 the proxy read 13.8\% HBM where \texttt{ncu} DRAM throughput was 12.85\%, within
 about one percentage point (Section~\ref{sec:results-decode}, v9~Task~1). Every
-decode reading in this paper uses the validated proxy. We additionally (i) lock
+decode reading in this paper uses the validated proxy. I additionally (i) lock
 clocks on the root T4 and idle-pin them on Blackwell, (ii) flush the L2 with a
 zeroed buffer $\ge 2\times$ L2 outside the timed window so that data genuinely
 comes from HBM, and (iii) push the working set past L2 (up to
@@ -115,7 +115,7 @@ limiter every time. Pure roofline (L1) predicted the wrong operative regime at
 every \emph{single-stream} decode step (v6, v7, v9, v10, v11) and at v8 got the
 speedup \emph{magnitude} right ($G\times$) while still misplacing the absolute
 limiter; it was vindicated only at v12, where large-batch, long-context work
-finally drove the production kernel toward the HBM roof it had predicted. We state
+finally drove the production kernel toward the HBM roof it had predicted. I state
 this as the defensible tally (L2 correct at all seven decode steps, L1 wrong at
 the operative limiter for the single-stream steps) rather than any cleaner-looking
 ratio, because the per-step verdicts in the table are what the record supports.

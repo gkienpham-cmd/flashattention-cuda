@@ -1,5 +1,5 @@
 %==============================================================================
-% Roofline-Guided Characterization of Attention Decode on Blackwell
+% Roofline-Guided Characterization of Attention Decode on Blackwell (FIRST-PERSON COPY)
 % PMBS @ SC26 --- first draft (LaTeX, IEEE two-column)
 %
 % Compile on Overleaf (recommended): pdfLaTeX + BibTeX, with shell-escape ON so
@@ -28,7 +28,8 @@
 
 % Figures are PDF (converted from the SVG sources in figures/) for arXiv
 % compatibility: arXiv PDFLaTeX accepts PDF/PNG/JPEG only, no shell-escape.
-\graphicspath{{figures/}}
+% First-person copy: shares the figures and bibliography of the parent folder.
+\graphicspath{{../figures/}}
 
 % --- convenience macros -------------------------------------------------------
 \newcommand{\ai}{\ensuremath{\mathit{AI}}}
@@ -52,12 +53,12 @@ From Per-CTA-Bound to Work-Starvation Across MHA, GQA, and MLA}
 Attention decode is the latency-critical phase of large language model (LLM)
 serving, yet no published work provides a \emph{prediction-vs-measured} roofline
 characterization on NVIDIA's latest datacenter GPU (B300 / \texttt{sm\_103})
-across attention types and precisions. We present \emph{Roofline-Guided Decode}
+across attention types and precisions. I present \emph{Roofline-Guided Decode}
 (RGD): twelve attention kernels of increasing sophistication (naive, tiled,
 online-softmax, fused, tensor-core WMMA, split-KV, paged, GQA-packed, FP8,
 NVFP4, MLA, and \texttt{tcgen05}), each paired with a pre-registered two-layer roofline
 prediction (pure roofline plus a per-CTA-corrected layer) and evaluated against
-measured results on Tesla T4, A100, B200, and B300. Our central finding is that decode's apparent per-CTA
+measured results on Tesla T4, A100, B200, and B300. My central finding is that decode's apparent per-CTA
 throughput ceiling is \emph{work-starvation}: the right engine
 (\texttt{tcgen05} tensor cores) converts work into throughput
 ($0.75 \to 1785\tflops$ on B300), but only in the high-throughput serving regime
@@ -65,10 +66,10 @@ throughput ceiling is \emph{work-starvation}: the right engine
 even NVIDIA's production kernel runs at 1--2\% of the FP8 peak. Across the seven
 decode steps the per-CTA-corrected layer matched the measured limiter every time,
 while pure roofline predicted the wrong regime at every single-stream step. As a
-pre-registered boundary test, we confirm on B300 that native NVFP4 \emph{compute}
+pre-registered boundary test, I confirm on B300 that native NVFP4 \emph{compute}
 does not accelerate MLA decode: both FP4 and FP8 GEMMs remain HBM-bound at the
 $M{=}128$ decode shape, reaching at most 5.8\% and 21.7\% of their tensor-core
-peaks. We
+peaks. I
 \emph{complement}, not beat, production kernels: the contribution is the open,
 prediction-vs-measured characterization, the two-layer model, and the boundary
 results.
@@ -93,6 +94,6 @@ for every measurement are open source at
 \url{https://github.com/gkienpham-cmd/flashattention-cuda}.
 
 \bibliographystyle{IEEEtran}
-\bibliography{refs}
+\bibliography{../refs}
 
 \end{document}

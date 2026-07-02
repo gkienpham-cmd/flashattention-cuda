@@ -42,3 +42,4 @@ bench/raw/
 
 # Screenshots dropped at the repo root
 /Screenshot*.png
+!flash-paper/first-person/rgd-paper-first-person.pdf

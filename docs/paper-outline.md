@@ -3,14 +3,15 @@
 > Target: arXiv by Jul 28, PMBS full-paper deadline Aug 5 (AoE), late-breaking Aug 26.
 > Word budget: ~6000 words + figures. 8 pages, two-column IEEE format.
 
-> **STATUS (2026-07-02): first LaTeX draft written — `flash-paper/` (IEEEtran, two-column).**
-> All 7 sections §1–§7 **DRAFTED**, all 8 figures wired (`\includesvg`, Overleaf-native),
-> `refs.bib` built with web-verified citations. Structure/refs/cite-keys/braces verified;
-> final compile is on Overleaf (no local LaTeX toolchain). Draft body ≈5.2k words.
-> Open punch-list before arXiv: complete 5 "Anonymous" author fields in `refs.bib`
-> (roofmethod/attnqat/snapmla/deepseekhw/blackwellubench — real papers, IDs verified,
-> authors not yet filled); confirm exact PMBS class/page-limit on the submission page;
-> add a full 12-step appendix table if space allows; author-pass for prose/length.
+> **STATUS (2026-07-02): SUBMISSION-READY — `flash-paper/` (IEEEtran, two-column).**
+> All 7 sections drafted, figures redesigned (Claude Design) and committed as vector PDFs,
+> all 17 `refs.bib` entries author-verified, compiled locally with tectonic
+> (`flash-paper/rgd-paper.pdf`, 9 pages), arXiv bundle `rgd-arxiv.tar.gz` built.
+> **Final external review passed:** see [`paper-final-check-brief.md`](paper-final-check-brief.md)
+> (Fable-5 check: no hallucinations, citations clean; its 3 consistency items + hedge audit
+> were resolved same day — resolution section appended there). A first-person ("I/my") copy
+> lives in `flash-paper/first-person/`. Remaining before PMBS (not arXiv): possible trim from
+> 9 to 8 pages if the workshop limit includes references.
 
 ---
 
