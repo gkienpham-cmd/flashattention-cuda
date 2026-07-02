@@ -1,0 +1,49 @@
+<!-- @dsCard group="Components" viewport="700x420" name="Figure primitives" subtitle="FigureFrame, TintPanel, Verdict, StatusDot, KernelChip" -->
+<!DOCTYPE html>
+<html><head>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;background:#fff;font-family:var(--font-sans)}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { FigureFrame, TintPanel, Verdict, StatusDot, KernelChip } = window.FlashPaperFiguresDesignSystem_3f7340;
+
+function Demo() {
+  return (
+    <FigureFrame title="Figure title (22px)" subtitle="Gray subtitle — 13px floor everywhere" width={660}>
+      <div style={{ display: 'flex', gap: 14 }}>
+        <TintPanel tone="green" heading="We claim" style={{ flex: 1 }}>
+          <Verdict yes>Per-CTA wall = work-starvation</Verdict>
+          <Verdict yes>Pre-registered predictions</Verdict>
+        </TintPanel>
+        <TintPanel tone="red" heading="We do NOT claim" style={{ flex: 1 }}>
+          <Verdict>A novel roofline method</Verdict>
+          <Verdict partial>Roofline (partial)</Verdict>
+        </TintPanel>
+        <TintPanel tone="neutral" heading="Not triggered" dashed style={{ flex: 1 }}>
+          <div style={{ marginTop: 6, color: 'var(--gray-mid)' }}>Stage B / Stage C</div>
+        </TintPanel>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
+        <KernelChip phase="purple" version="v1 naive" takeaway="HBM-bound; L2 masks it" status="partial" />
+        <KernelChip phase="blue" version="v6 split-KV" takeaway="5.7–8.2×; per-CTA" status="missed" />
+        <KernelChip phase="amber" version="v10 NVFP4" takeaway="3.56× capacity; no latency" status="partial" />
+        <KernelChip phase="green" version="v12 tcgen05" takeaway="2.4→1785; work-starvation" status="landed" />
+      </div>
+      <div style={{ display: 'flex', gap: 24, marginTop: 14 }}>
+        <StatusDot status="landed" label="roofline landed" />
+        <StatusDot status="partial" label="partial" />
+        <StatusDot status="missed" label="missed" />
+        <StatusDot status="unmeasured" label="not measured" />
+      </div>
+    </FigureFrame>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script>
+</body></html>

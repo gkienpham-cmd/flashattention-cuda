@@ -1,0 +1,22 @@
+<!-- @dsCard group="Spacing" viewport="700x170" name="Canvas sizes & strokes" subtitle="Column ~600px, full-width ~760px; 1–1.5px strokes; 4/8/10px radii" -->
+<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="../styles.css"><style>
+body{margin:0;background:#fff;font-family:var(--font-sans);color:var(--gray-strong);font-size:12.5px}
+.wrap{display:flex;gap:20px;padding:16px 20px;align-items:flex-start}
+.canv{border:1.5px solid var(--gray-soft);border-radius:4px;background:var(--gray-tint);display:flex;align-items:center;justify-content:center;color:var(--gray-mid)}
+.lbl{text-align:center;margin-top:6px;color:var(--ink);font-weight:700;font-size:12.5px}
+.g{display:flex;flex-direction:column;gap:8px}
+.r{display:flex;align-items:center;gap:8px}
+.sq{background:var(--blue-tint);border:1.5px solid var(--blue);width:34px;height:24px;flex:none}
+</style></head>
+<body>
+<div class="wrap">
+  <div><div class="canv" style="width:300px;height:100px">≥13px text</div><div class="lbl">column · 600×~300 (~3.5in)</div></div>
+  <div><div class="canv" style="width:253px;height:100px">≥13px text</div><div class="lbl">full-width · 760×~300–360 (~7.2in)</div></div>
+  <div class="g">
+    <div class="r"><span class="sq" style="border-radius:4px"></span>4px — tags, bars</div>
+    <div class="r"><span class="sq" style="border-radius:8px"></span>8px — chips, banners</div>
+    <div class="r"><span class="sq" style="border-radius:10px"></span>10px — panels</div>
+  </div>
+</div>
+</body></html>

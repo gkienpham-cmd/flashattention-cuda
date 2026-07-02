@@ -1,0 +1,17 @@
+<!-- @dsCard group="Colors" viewport="700x130" name="Panel tints" subtitle="Tint fill + solid border, 10px radius, 1.5px stroke" -->
+<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="../styles.css"><style>
+body{margin:0;background:#fff;font-family:var(--font-sans)}
+.row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px}
+.p{border-radius:var(--radius-panel);border-width:var(--stroke-strong);border-style:solid;padding:12px 14px;font-size:13px;color:var(--gray-strong)}
+.p b{display:block;font-size:14px;margin-bottom:4px}
+</style></head>
+<body>
+<div class="row">
+  <div class="p" style="background:var(--gray-tint);border-color:var(--gray-soft)"><b style="color:var(--gray-strong)">Neutral</b>baseline / blind</div>
+  <div class="p" style="background:var(--blue-tint);border-color:var(--blue)"><b style="color:var(--blue-dark)">Blue</b>our model, takeaway</div>
+  <div class="p" style="background:var(--green-tint);border-color:var(--green)"><b style="color:var(--green-dark)">Green</b>claims, wins</div>
+  <div class="p" style="background:var(--amber-tint);border-color:var(--amber)"><b style="color:var(--amber-dark)">Amber</b>partial, caution</div>
+  <div class="p" style="background:var(--red-tint);border-color:var(--red)"><b style="color:var(--red-dark)">Red</b>non-claims, kills</div>
+</div>
+</body></html>

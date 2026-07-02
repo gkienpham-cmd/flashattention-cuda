@@ -7,9 +7,9 @@ kernel steps spanning MHA $\to$ GQA $\to$ MLA and FP16 $\to$ FP8 $\to$ NVFP4. Th
 central finding is that decode's apparent per-CTA ceiling is
 \emph{work-starvation}: a warp-per-head CUDA-core MLA kernel is flat at
 $0.75\tflops$, but the production \texttt{tcgen05} kernel on the same shape spans
-$2.4 \to 1785\tflops$ as batch $\times$ context grows---so ``per-CTA-bound
-forever'' was a small-work artifact, and the right \emph{engine} converts work
-into throughput, though only in the high-throughput serving regime. The
+$2.4 \to 1785\tflops$ as batch $\times$ context grows. ``Per-CTA-bound
+forever'' was therefore a small-work artifact, and the right \emph{engine} converts
+work into throughput, though only in the high-throughput serving regime. The
 per-CTA-corrected layer of our two-layer model matched the measured limiter at
 every decode step, while pure roofline predicted the wrong regime at every
 single-stream step and was vindicated only at serving scale. A pre-registered
@@ -17,7 +17,7 @@ boundary test settles that native NVFP4 \emph{compute} does not accelerate MLA
 decode (both FP4 and FP8 GEMMs HBM-bound, $\le$5.8\% / 21.7\% of peak), so
 FP4/NVFP4 is a capacity$+$accuracy lever, not a decode-compute one. Throughout we
 \emph{complement}, not beat, the production kernels; the contribution is the open
-characterization, the model, and the boundary results---the empty cell, filled.
+characterization, the model, and the boundary results. The empty cell is filled.
 Figure~\ref{fig:positioning} summarizes the scope.
 
 \begin{figure}[t]

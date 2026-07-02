@@ -8,7 +8,7 @@ Once the compute engine is a free variable, each precision has its own ridge
 8\tbs$: $\approx$312 for FP16 (2.5\,PF), 625 for FP8 (5\,PF), and 1875 for NVFP4
 (15\,PF). This reframes the precision levers. FP8 MLA-latent storage gives
 $\ai \approx 470 < 625$, so even with the tensor-core engine the kernel is
-HBM-leaning---consistent with v12's measured 46.3\% HBM $>$ 35.7\% compute at
+HBM-leaning, consistent with v12's measured 46.3\% HBM $>$ 35.7\% compute at
 scale. NVFP4 pushes \ai\ higher but its 15\,PF peak lifts the ridge to 1875, so
 the FP4 compute peak is \emph{doubly} unreachable for decode: the workload is
 HBM-bound before it is compute-bound. The engine-ridge picture is why a bigger
@@ -20,20 +20,20 @@ FLOP peak does not, by itself, help a memory-lean decode workload.
   \caption{Engine-ridge comparison on B300. Each precision's ridge scales with
   its tensor-core peak (FP16 $\approx$312, FP8 625, NVFP4 1875 FLOP/byte). Decode
   arithmetic intensities land left of every ridge, so NVFP4's 15\,PF peak
-  overshoots into the HBM-bound region---the FP4 peak is unreachable for decode.}
+  overshoots into the HBM-bound region and is unreachable for decode.}
   \label{fig:ridge}
 \end{figure}
 
 \subsection{Implications for serving systems}
 \label{sec:serving}
 The measurements separate two regimes cleanly. \emph{Single-stream,
-moderate-context decode}---the common interactive case---leaves even the
+moderate-context decode}, the common interactive case, leaves even the
 production kernel at 1--2\% of peak; the lever there is not precision or algorithm
 but \emph{work} (batching and context length that fill the tensor-core pipeline).
 \emph{Long-context, large-batch serving} does reach the roofs (46\% HBM at
 $B{=}64$, $K{=}524$K). Consequently the value of FP8/NVFP4 KV is
-\emph{capacity and accuracy}---halving or quartering the cache, letting more
-sequences or longer contexts fit---not decode latency: the FP8 latency win is
+\emph{capacity and accuracy} (halving or quartering the cache, letting more
+sequences or longer contexts fit), not decode latency: the FP8 latency win is
 L2-resident-only and reverses under an L2 flush, and NVFP4 is latency-negative
 past L2 (12--30\% slower than FP16). Practitioners should treat low-precision KV
 as a capacity knob and reach for engine plus batch to convert decode work into
@@ -54,9 +54,9 @@ $N$ ($\ai$ 100--176 $\ll$ the ridges 1875 / 625), reaching at most \textbf{5.8\%
 of the 15\,PF FP4 peak and \textbf{21.7\%} of the 5\,PF FP8 peak. Native FP4
 \emph{compute} is therefore never the operative limit, and the $M{=}128$ packing
 advantage is a red herring \emph{for decode}. The raw FP4/FP8 ratio flips with
-$N$---FP4 leads $1.4$--$2.7\times$ at small $N$ (both tiny, latency-bound), while
-FP8 wins at large $N$ (the realistic long-context regime; e.g. $K{=}576$,
-$N{=}131072$: FP8 1086 vs FP4 739\tflops)---but neither direction is a compute
+$N$: FP4 leads $1.4$--$2.7\times$ at small $N$ (both tiny, latency-bound), while
+FP8 wins at large $N$, the realistic long-context regime (e.g. $K{=}576$,
+$N{=}131072$: FP8 1086 vs FP4 739\tflops). Neither direction is a compute
 win; the gap is a bandwidth / operand-size effect, i.e. the same
 capacity/storage lever as Sections~\ref{sec:results-decode}
 and~\ref{sec:serving}, not tensor-core throughput.
@@ -102,5 +102,5 @@ we never present it as measured.
 empty \texttt{sm\_103} trace); the v11 schedule was re-captured with 2025.3.2 and
 is non-empty in-repo.
 \emph{No SOTA comparators run:} FlashMLA-class kernels are orders of magnitude
-faster by construction; we make no wall-clock claim against them---the
+faster by construction; we make no wall-clock claim against them. The
 contribution is the open methodology and characterization.

@@ -1,0 +1,36 @@
+<svg width="100%" viewBox="0 0 600 300" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Each engine sets its own ridge - NVFP4 overshoots into HBM-bound</title>
+<desc>Roofline ridge (peak / 8 TB/s) per engine on B300: FP16 312, FP8 625, NVFP4 1875 FLOP/byte. MLA-decode arithmetic intensity is 835. FP16 and FP8 ridges fall left of 835 (compute-bound); NVFP4&#39;s 1875 ridge is far right (HBM-bound) - its 15 PF peak is unreachable for decode.</desc>
+<rect x="0" y="0" width="600" height="300" fill="#ffffff"></rect>
+
+<text x="30" y="34" font-size="23" font-weight="700" fill="#2C2C2A">Each engine sets its own ridge</text>
+<text x="30" y="56" font-size="15" fill="#888">MLA decode AI = 835 FLOP/byte (NVFP4 latent, h_q=128); HBM 8 TB/s</text>
+
+
+<line x1="304" y1="78" x2="304" y2="252" stroke="#2C2C2A" stroke-width="2" stroke-dasharray="5,3"></line>
+<text x="304" y="272" font-size="15" font-weight="700" fill="#2C2C2A" text-anchor="middle">AI = 835</text>
+
+
+<line x1="120" y1="252" x2="560" y2="252" stroke="#888" stroke-width="1.2"></line>
+<text x="120" y="270" font-size="13" fill="#aaa">ridge = peak / bandwidth (FLOP/byte)</text>
+
+
+<rect x="120" y="92" width="69" height="26" rx="3" fill="#86EFAC"></rect>
+<text x="118" y="110" font-size="15" fill="#166534" text-anchor="end">FP16</text>
+<text x="197" y="110" font-size="15" font-weight="700" fill="#166534">ridge 312 → compute-bound</text>
+
+
+<rect x="120" y="132" width="137" height="26" rx="3" fill="#86EFAC"></rect>
+<text x="118" y="150" font-size="15" fill="#166534" text-anchor="end">FP8</text>
+<text x="265" y="150" font-size="15" font-weight="700" fill="#166534">ridge 625 → compute (knife-edge)</text>
+
+
+<rect x="120" y="172" width="412" height="26" rx="3" fill="#FCA5A5"></rect>
+<text x="118" y="190" font-size="15" fill="#991B1B" text-anchor="end">NVFP4</text>
+<text x="352" y="190" font-size="15" font-weight="700" fill="#991B1B">ridge 1875</text>
+<text x="352" y="210" font-size="15" fill="#991B1B">→ HBM-bound (peak unreachable)</text>
+
+
+<text x="215" y="232" font-size="13" fill="#166534" text-anchor="middle">ridge &lt; AI: compute-bound</text>
+<text x="450" y="232" font-size="13" fill="#991B1B" text-anchor="middle">ridge &gt; AI: HBM-bound</text>
+</svg>

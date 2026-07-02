@@ -1,0 +1,63 @@
+<svg width="100%" viewBox="0 0 760 300" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Related-work landscape: the empty cell in attention-decode characterization</title>
+<desc>Comparison matrix. Rows: FA4, GLA, SnapMLA, SageAttention3, FlashInfer/FlashMLA, and Ours. Columns: architecture, attention type, precision, decode, open roofline. Only our row combines sm_103 decode across MHA-GQA-MLA and FP16-FP8-NVFP4 with a prediction-vs-measured roofline; GLA is the closest prior.</desc>
+<rect x="0" y="0" width="760" height="300" fill="#ffffff"></rect>
+
+<text x="24" y="32" font-size="22" font-weight="700" fill="#2C2C2A">The empty cell in decode characterization</text>
+
+
+<text x="28" y="70" font-size="16" font-weight="700" fill="#374151">Work</text>
+<text x="185" y="70" font-size="16" font-weight="700" fill="#374151">Arch</text>
+<text x="315" y="70" font-size="16" font-weight="700" fill="#374151">Attention</text>
+<text x="470" y="70" font-size="16" font-weight="700" fill="#374151">Precision</text>
+<text x="620" y="70" font-size="16" font-weight="700" fill="#374151" text-anchor="middle">Decode</text>
+<text x="705" y="70" font-size="16" font-weight="700" fill="#374151" text-anchor="middle">Roofline</text>
+<line x1="24" y1="80" x2="745" y2="80" stroke="#9CA3AF" stroke-width="1.5"></line>
+
+
+
+<text x="28" y="108" font-size="15" fill="#333">FA4</text>
+<text x="185" y="108" font-size="15" fill="#555">B200</text>
+<text x="315" y="108" font-size="15" fill="#555">Standard</text>
+<text x="470" y="108" font-size="15" fill="#555">BF16</text>
+<text x="620" y="108" font-size="16" fill="#DC2626" text-anchor="middle">✗</text>
+<text x="705" y="108" font-size="15" fill="#B45309" text-anchor="middle">partial</text>
+
+<text x="28" y="142" font-size="15" fill="#333">GLA</text>
+<text x="185" y="142" font-size="15" fill="#555">H100</text>
+<text x="315" y="142" font-size="15" fill="#555">MLA</text>
+<text x="470" y="142" font-size="15" fill="#555">BF16</text>
+<text x="620" y="142" font-size="16" fill="#16A34A" text-anchor="middle">✓</text>
+<text x="705" y="142" font-size="16" fill="#16A34A" text-anchor="middle">✓</text>
+<text x="185" y="158" font-size="13" fill="#3B82F6">closest prior</text>
+
+<text x="28" y="182" font-size="15" fill="#333">SnapMLA</text>
+<text x="185" y="182" font-size="15" fill="#555">H100</text>
+<text x="315" y="182" font-size="15" fill="#555">MLA</text>
+<text x="470" y="182" font-size="15" fill="#555">FP8</text>
+<text x="620" y="182" font-size="16" fill="#16A34A" text-anchor="middle">✓</text>
+<text x="705" y="182" font-size="16" fill="#DC2626" text-anchor="middle">✗</text>
+
+<text x="28" y="216" font-size="15" fill="#333">SageAttn3</text>
+<text x="185" y="216" font-size="15" fill="#555">RTX 5090</text>
+<text x="315" y="216" font-size="15" fill="#555">Standard</text>
+<text x="470" y="216" font-size="15" fill="#555">FP4</text>
+<text x="620" y="216" font-size="16" fill="#DC2626" text-anchor="middle">✗</text>
+<text x="705" y="216" font-size="16" fill="#DC2626" text-anchor="middle">✗</text>
+
+<text x="28" y="250" font-size="15" fill="#333">FlashInfer / MLA</text>
+<text x="185" y="250" font-size="15" fill="#555">B300</text>
+<text x="315" y="250" font-size="15" fill="#555">GQA / MLA</text>
+<text x="470" y="250" font-size="15" fill="#555">FP8 / NVFP4</text>
+<text x="620" y="250" font-size="16" fill="#16A34A" text-anchor="middle">✓</text>
+<text x="705" y="250" font-size="16" fill="#DC2626" text-anchor="middle">✗</text>
+
+
+<rect x="24" y="260" width="721" height="34" rx="5" fill="#DCFCE7" stroke="#22C55E" stroke-width="1.5"></rect>
+<text x="28" y="282" font-size="15" font-weight="700" fill="#166534">Ours</text>
+<text x="185" y="282" font-size="15" font-weight="700" fill="#166534">T4–B300</text>
+<text x="315" y="282" font-size="15" font-weight="700" fill="#166534">MHA→MLA</text>
+<text x="470" y="282" font-size="15" font-weight="700" fill="#166534">FP16→NVFP4</text>
+<text x="620" y="282" font-size="16" fill="#16A34A" text-anchor="middle">✓</text>
+<text x="705" y="282" font-size="16" fill="#16A34A" text-anchor="middle">✓</text>
+</svg>

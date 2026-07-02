@@ -1,0 +1,37 @@
+<svg width="100%" viewBox="0 0 600 320" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>The two-layer prediction model</title>
+<desc>Layer 1 (pure roofline) predicts the regime from FLOPs and bytes but is blind to L2, per-CTA scheduling, and pipeline fill. Layer 2 (per-CTA-corrected) adds occupancy, GEMV-vs-GEMM packing, pipeline depth, and a counter-prediction. Layer 2 matched the measured limiter at all seven decode steps.</desc>
+<rect x="0" y="0" width="600" height="320" fill="#ffffff"></rect>
+
+<text x="30" y="34" font-size="23" font-weight="700" fill="#2C2C2A">Two-layer prediction model</text>
+
+
+<rect x="26" y="56" width="266" height="200" rx="8" fill="#F5F5F3" stroke="#9CA3AF" stroke-width="1.4"></rect>
+<text x="42" y="82" font-size="17" font-weight="700" fill="#374151">Layer 1: pure roofline</text>
+<text x="42" y="104" font-size="15" fill="#6B7280">AI = FLOPs / bytes; peak roofs</text>
+<text x="42" y="132" font-size="15" font-weight="700" fill="#374151">Blind to:</text>
+<g font-size="15" fill="#B91C1C">
+<text x="42" y="156">✗ L2 cache (hides HBM traffic)</text>
+<text x="42" y="180">✗ per-CTA schedule / occupancy</text>
+<text x="42" y="204">✗ pipeline fill (work-starvation)</text>
+</g>
+<text x="42" y="236" font-size="15" fill="#6B7280">Wrong regime at every</text>
+<text x="42" y="252" font-size="15" fill="#6B7280">single-stream decode step.</text>
+
+
+<rect x="308" y="56" width="266" height="200" rx="8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.4"></rect>
+<text x="324" y="82" font-size="17" font-weight="700" fill="#1E40AF">Layer 2: per-CTA-corrected</text>
+<text x="324" y="104" font-size="15" fill="#1E3A5F">same AI + the schedule</text>
+<text x="324" y="132" font-size="15" font-weight="700" fill="#1E40AF">Adds:</text>
+<g font-size="15" fill="#166534">
+<text x="324" y="156">✓ smem/TMEM → occupancy</text>
+<text x="324" y="180">✓ GEMV vs GEMM (M=1 / 128)</text>
+<text x="324" y="204">✓ pipeline depth; counter-pred.</text>
+</g>
+<text x="324" y="236" font-size="15" font-weight="700" fill="#1E40AF">Matched the limiter at</text>
+<text x="324" y="252" font-size="15" font-weight="700" fill="#1E40AF">all 7 decode steps.</text>
+
+
+<text x="300" y="292" font-size="16" fill="#2C2C2A" text-anchor="middle">Both predictions are pre-registered before coding —</text>
+<text x="300" y="312" font-size="16" fill="#2C2C2A" text-anchor="middle">the gap between the layers is the finding.</text>
+</svg>

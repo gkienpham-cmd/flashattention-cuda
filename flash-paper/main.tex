@@ -55,9 +55,9 @@ Attention decode is the latency-critical phase of large language model (LLM)
 serving, yet no published work provides a \emph{prediction-vs-measured} roofline
 characterization on NVIDIA's latest datacenter GPU (B300 / \texttt{sm\_103})
 across attention types and precisions. We present \emph{Roofline-Guided Decode}
-(RGD): twelve attention kernels of increasing sophistication---naive, tiled,
+(RGD): twelve attention kernels of increasing sophistication (naive, tiled,
 fused, split-KV, GQA-packed, score-stationary, FP8, NVFP4, MLA, and tensor-core
-(\texttt{tcgen05})---each paired with a pre-registered two-layer roofline
+\texttt{tcgen05}), each paired with a pre-registered two-layer roofline
 prediction (pure roofline plus a per-CTA-corrected layer) and evaluated against
 measured results on Tesla T4, A100, B200, and B300. Our central finding is that decode's apparent per-CTA
 throughput ceiling is \emph{work-starvation}: the right engine
@@ -68,8 +68,9 @@ even NVIDIA's production kernel runs at 1--2\% of the FP8 peak. Across the seven
 decode steps the per-CTA-corrected layer matched the measured limiter every time,
 while pure roofline predicted the wrong regime at every single-stream step. As a
 pre-registered boundary test, we confirm on B300 that native NVFP4 \emph{compute}
-does not accelerate MLA decode---both FP4 and FP8 GEMMs remain HBM-bound at the
-$M{=}128$ decode shape (at most 5.8\% / 21.7\% of their tensor-core peaks). We
+does not accelerate MLA decode: both FP4 and FP8 GEMMs remain HBM-bound at the
+$M{=}128$ decode shape, reaching at most 5.8\% and 21.7\% of their tensor-core
+peaks. We
 \emph{complement}, not beat, production kernels: the contribution is the open,
 prediction-vs-measured characterization, the two-layer model, and the boundary
 results.

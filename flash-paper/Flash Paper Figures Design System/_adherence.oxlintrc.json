@@ -1,0 +1,238 @@
+{
+  "plugins": [
+    "react",
+    "import"
+  ],
+  "rules": {
+    "react/forbid-elements": [
+      "warn",
+      {
+        "forbid": []
+      }
+    ],
+    "no-restricted-imports": [
+      "warn",
+      {
+        "patterns": [
+          {
+            "group": [
+              "components/figure/**"
+            ],
+            "message": "Import design-system components from 'index.js', not component internals."
+          }
+        ]
+      }
+    ],
+    "no-restricted-syntax": [
+      "warn",
+      {
+        "selector": "Literal[value=/#[0-9a-fA-F]{3,8}\\b/]",
+        "message": "Raw hex color — use a design-system color token via var()."
+      },
+      {
+        "selector": "Literal[value=/\\b\\d+px\\b/]",
+        "message": "Raw px value — use a design-system spacing token via var()."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='FigureFrame'] > JSXAttribute > JSXIdentifier[name!=/^(?:title|subtitle|width|children|style|key|ref|className|style|children)$/]",
+        "message": "<FigureFrame> doesn't accept that prop. Declared props: title, subtitle, width, children, style."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='KernelChip'] > JSXAttribute > JSXIdentifier[name!=/^(?:version|takeaway|status|phase|width|style|key|ref|className|style|children)$/]",
+        "message": "<KernelChip> doesn't accept that prop. Declared props: version, takeaway, status, phase, width, style."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='KernelChip'] > JSXAttribute[name.name='status'] > Literal[value!=/^(?:landed|partial|missed|unmeasured)$/]",
+        "message": "<KernelChip> status must be one of 'landed' | 'partial' | 'missed' | 'unmeasured'."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='KernelChip'] > JSXAttribute[name.name='phase'] > Literal[value!=/^(?:purple|blue|amber|green)$/]",
+        "message": "<KernelChip> phase must be one of 'purple' | 'blue' | 'amber' | 'green'."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='StatusDot'] > JSXAttribute > JSXIdentifier[name!=/^(?:status|label|style|key|ref|className|style|children)$/]",
+        "message": "<StatusDot> doesn't accept that prop. Declared props: status, label, style."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='StatusDot'] > JSXAttribute[name.name='status'] > Literal[value!=/^(?:landed|partial|missed|unmeasured)$/]",
+        "message": "<StatusDot> status must be one of 'landed' | 'partial' | 'missed' | 'unmeasured'."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='TintPanel'] > JSXAttribute > JSXIdentifier[name!=/^(?:tone|heading|subheading|dashed|children|style|key|ref|className|style|children)$/]",
+        "message": "<TintPanel> doesn't accept that prop. Declared props: tone, heading, subheading, dashed, children, style."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='TintPanel'] > JSXAttribute[name.name='tone'] > Literal[value!=/^(?:neutral|blue|green|amber|red|purple)$/]",
+        "message": "<TintPanel> tone must be one of 'neutral' | 'blue' | 'green' | 'amber' | 'red' | 'purple'."
+      },
+      {
+        "selector": "JSXOpeningElement[name.name='Verdict'] > JSXAttribute > JSXIdentifier[name!=/^(?:yes|partial|children|style|key|ref|className|style|children)$/]",
+        "message": "<Verdict> doesn't accept that prop. Declared props: yes, partial, children, style."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/index.js"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    }
+  ],
+  "x-omelette": {
+    "components": {
+      "FigureFrame": {
+        "replaces": []
+      },
+      "KernelChip": {
+        "replaces": []
+      },
+      "StatusDot": {
+        "replaces": []
+      },
+      "TintPanel": {
+        "replaces": []
+      },
+      "Verdict": {
+        "replaces": []
+      }
+    },
+    "tokens": [
+      "--amber",
+      "--amber-border",
+      "--amber-dark",
+      "--amber-tint",
+      "--blue",
+      "--blue-border",
+      "--blue-dark",
+      "--blue-tint",
+      "--canvas-column-w",
+      "--canvas-full-w",
+      "--dash-reference",
+      "--fig-body",
+      "--fig-body-size",
+      "--fig-body-weight",
+      "--fig-caption",
+      "--fig-heading-size",
+      "--fig-heading-weight",
+      "--fig-label-size",
+      "--fig-label-weight",
+      "--fig-min-size",
+      "--fig-subtitle-size",
+      "--fig-title",
+      "--fig-title-size",
+      "--fig-title-weight",
+      "--font-mono",
+      "--font-sans",
+      "--gray-line",
+      "--gray-mid",
+      "--gray-soft",
+      "--gray-strong",
+      "--gray-tint",
+      "--green",
+      "--green-border",
+      "--green-dark",
+      "--green-tint",
+      "--ink",
+      "--paper",
+      "--purple",
+      "--purple-border",
+      "--purple-dark",
+      "--purple-tint",
+      "--radius-chip",
+      "--radius-panel",
+      "--radius-tag",
+      "--red",
+      "--red-border",
+      "--red-dark",
+      "--red-tint",
+      "--space-1",
+      "--space-2",
+      "--space-3",
+      "--space-4",
+      "--space-5",
+      "--space-6",
+      "--status-landed",
+      "--status-missed",
+      "--status-partial",
+      "--status-unmeasured",
+      "--stroke-emphasis",
+      "--stroke-hairline",
+      "--stroke-strong",
+      "--surface-figure",
+      "--verdict-no",
+      "--verdict-partial",
+      "--verdict-yes"
+    ],
+    "tokenKinds": {
+      "--blue": "color",
+      "--blue-dark": "color",
+      "--blue-tint": "color",
+      "--blue-border": "color",
+      "--green": "color",
+      "--green-dark": "color",
+      "--green-tint": "color",
+      "--green-border": "color",
+      "--amber": "color",
+      "--amber-dark": "color",
+      "--amber-tint": "color",
+      "--amber-border": "color",
+      "--red": "color",
+      "--red-dark": "color",
+      "--red-tint": "color",
+      "--red-border": "color",
+      "--purple": "color",
+      "--purple-dark": "color",
+      "--purple-tint": "color",
+      "--purple-border": "color",
+      "--ink": "color",
+      "--gray-strong": "color",
+      "--gray-mid": "color",
+      "--gray-soft": "color",
+      "--gray-line": "color",
+      "--gray-tint": "color",
+      "--paper": "color",
+      "--fig-title": "color",
+      "--fig-body": "color",
+      "--fig-caption": "color",
+      "--surface-figure": "color",
+      "--verdict-yes": "color",
+      "--verdict-no": "color",
+      "--verdict-partial": "color",
+      "--status-landed": "color",
+      "--status-partial": "color",
+      "--status-missed": "color",
+      "--status-unmeasured": "color",
+      "--font-sans": "font",
+      "--font-mono": "font",
+      "--fig-title-size": "spacing",
+      "--fig-title-weight": "font",
+      "--fig-heading-size": "spacing",
+      "--fig-heading-weight": "font",
+      "--fig-label-size": "spacing",
+      "--fig-label-weight": "font",
+      "--fig-body-size": "spacing",
+      "--fig-body-weight": "font",
+      "--fig-subtitle-size": "spacing",
+      "--fig-min-size": "spacing",
+      "--stroke-hairline": "color",
+      "--stroke-strong": "color",
+      "--stroke-emphasis": "color",
+      "--dash-reference": "other",
+      "--radius-tag": "radius",
+      "--radius-chip": "radius",
+      "--radius-panel": "radius",
+      "--canvas-column-w": "spacing",
+      "--canvas-full-w": "spacing",
+      "--space-1": "spacing",
+      "--space-2": "spacing",
+      "--space-3": "spacing",
+      "--space-4": "spacing",
+      "--space-5": "spacing",
+      "--space-6": "spacing"
+    },
+    "fontFamilies": []
+  }
+}

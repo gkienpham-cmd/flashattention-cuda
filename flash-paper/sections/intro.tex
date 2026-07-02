@@ -6,9 +6,9 @@ Large language model (LLM) serving latency is dominated by attention
 and each new token attends over the entire growing key--value (KV) cache. Because
 a single query row ($N_q{=}1$) reads a large KV cache to produce one output, decode
 is the archetypal memory-bound, low-arithmetic-intensity workload, and it is where
-production systems spend most of their wall-clock time. Highly tuned kernels---
-FlashInfer~\cite{flashinfer}, FlashMLA~\cite{flashmla}, and the FlashAttention
-lineage~\cite{fa1,fa2,fa3,fa4}---are deployed on NVIDIA's Blackwell GPUs, but the
+production systems spend most of their wall-clock time. Highly tuned kernels such
+as FlashInfer~\cite{flashinfer}, FlashMLA~\cite{flashmla}, and the FlashAttention
+lineage~\cite{fa1,fa2,fa3,fa4} are deployed on NVIDIA's Blackwell GPUs, but the
 open literature contains no prediction-vs-measured roofline characterization of
 attention decode on the latest datacenter part (B300 / GB300, \texttt{sm\_103}).
 Production write-ups report headline throughput; they do not publish, per kernel,
@@ -24,7 +24,7 @@ SnapMLA~\cite{snapmla} studies FP8 MLA decode on Hopper without a Blackwell
 roofline; SageAttention3~\cite{sage3} and Attn-QAT~\cite{attnqat} push FP4
 attention but for prefill. Microbenchmark-driven analytical
 modeling~\cite{roofmethod} establishes why naive roofline fails on modern GPUs
-and owns the method---we cite and apply it. The cell for an open,
+and owns the method; we cite and apply it. The cell for an open,
 prediction-vs-measured decode roofline on \texttt{sm\_103}, across attention
 types and precisions, is empty. We fill it with \emph{Roofline-Guided Decode}
 (RGD), the study this paper presents.
@@ -49,24 +49,24 @@ types and precisions, is empty. We fill it with \emph{Roofline-Guided Decode}
   attention decode on B300 / \texttt{sm\_103}, spanning three attention types
   (MHA $\to$ GQA $\to$ MLA) and three precisions (FP16 $\to$ FP8 $\to$ NVFP4),
   built as twelve single-variable kernel steps.
-  \item A two-layer prediction model---pure roofline plus a per-CTA-corrected
-  layer---with predictions \emph{pre-registered before} each kernel is coded or
-  measured. The gap between the layers is itself the finding: across the seven
+  \item A two-layer prediction model (pure roofline plus a per-CTA-corrected
+  layer) whose predictions are \emph{pre-registered before} each kernel is coded
+  or measured. The gap between the layers is itself the finding: across the seven
   decode steps the per-CTA-corrected layer matched the measured limiter every
   time, while pure roofline predicted the wrong regime at every single-stream
   step (Section~\ref{sec:method}).
   \item The central finding: decode's per-CTA ``wall'' is
   \emph{work-starvation}, not a fixed architectural limit. The right engine
-  converts work into throughput---a warp-per-head CUDA-core MLA kernel is flat at
+  converts work into throughput. A warp-per-head CUDA-core MLA kernel is flat at
   $0.75\tflops$, whereas the production \texttt{tcgen05} kernel spans
-  $2.4 \to 1785\tflops$ scaling with batch $\times$ context---but the roofs are
-  reachable only at serving scale, not in common single-stream decode.
+  $2.4 \to 1785\tflops$ scaling with batch $\times$ context. Even so, the roofs
+  are reachable only at serving scale, not in common single-stream decode.
 \end{enumerate}
 
 \paragraph{Honest scope}
 We \emph{complement}, not beat, production kernels: FlashInfer, FlashMLA, and the
 CUTLASS reference kernel already run B300 decode and are faster by construction.
-The prediction-vs-measured methodology is also not novel---prior work owns
+The prediction-vs-measured methodology is also not novel; prior work owns
 it~\cite{roofmethod}. Our contribution is the open application of that methodology
 to this workload $\times$ architecture $\times$ precision space, the
 per-CTA-corrected model, and the boundary results (including a negative one,

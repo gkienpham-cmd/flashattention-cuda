@@ -31,7 +31,7 @@ $\ai^\star = \text{peak FLOP/s} / \text{peak bandwidth}$ separates memory-bound
 modern GPUs, this over-predicts sustained throughput by wide margins: datasheet
 peaks are unreachable, and the model is blind to the L2 cache, per-CTA
 scheduling, occupancy, and tensor-core pipeline fill. Microbenchmark-driven
-analysis~\cite{roofmethod} quantifies this---naive roofline exceeds 95\% error on
+analysis~\cite{roofmethod} quantifies this: naive roofline exceeds 95\% error on
 B200 GEMMs where a microbenchmark-grounded model reaches 1.31\% MAE. Our
 per-CTA-corrected layer (Section~\ref{sec:method}) adds exactly those on-chip
 constraints: shared-memory staging $\to$ occupancy, warp packing (GEMV vs GEMM),
@@ -49,9 +49,9 @@ shared memory per SM, and a measured boost clock of \textbf{2032\,MHz} (below th
 2600\,MHz marketing figure). The \texttt{tcgen05} tensor cores deliver dense
 peaks of 2.5\,PF (FP16), 5\,PF (FP8), and 15\,PF (block-scaled NVFP4). We also
 measured the exponential throughput used by softmax: an EX2 microkernel sustains
-\textbf{5.33\,TExp/s}, only $0.50\times$ the 10.7\,TExp/s vendor peak---a datasheet
-gap we fold into the model but which is immaterial to $M{=}1$ decode (the MUFU
-term is $<3\%$ of decode time).
+\textbf{5.33\,TExp/s}, only $0.50\times$ the 10.7\,TExp/s vendor peak. We fold
+this datasheet gap into the model, though it is immaterial to $M{=}1$ decode
+(the MUFU term is $<3\%$ of decode time).
 
 \begin{table}[t]
   \centering

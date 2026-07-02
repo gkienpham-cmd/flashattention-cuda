@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>flash-paper figures</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+body{margin:0;background:var(--gray-tint);font-family:var(--font-sans);color:var(--ink)}
+header{padding:28px 32px 8px}
+h1{font-size:22px;margin:0}
+p.sub{font-size:13px;color:var(--gray-mid);margin:6px 0 0;max-width:720px}
+main{display:flex;flex-direction:column;gap:28px;padding:24px 32px 48px}
+figure{margin:0;max-width:820px}
+.canvas{background:#fff;border:1px solid var(--gray-line);border-radius:8px;padding:16px;box-sizing:border-box}
+img{display:block;width:100%;height:auto}
+figcaption{display:flex;align-items:baseline;gap:10px;font-size:13px;color:var(--gray-mid);margin:8px 2px 0}
+figcaption b{color:var(--ink);font-size:14px}
+.tag{font-size:12px;border-radius:4px;padding:2px 8px;font-weight:700}
+.tag.re{background:var(--blue-tint);color:var(--blue-dark)}
+.tag.orig{background:var(--amber-tint);color:var(--amber-dark)}
+</style>
+</head>
+<body>
+<header>
+  <h1>flash-paper — figure set</h1>
+  <p class="sub">Eight figures for the PMBS@SC26 draft. Six restyled in the house palette (all text as real &lt;text&gt; elements); Figs 4–5 are the original data-accurate charts — their bar geometry encodes exact measured numbers, so they were not redrawn. Drop any file over <code>figures/&lt;name&gt;.svg</code> in the paper repo; basenames are unchanged.</p>
+</header>
+<main>
+  <figure><div class="canvas"><img src="v12-related-work-landscape.svg" alt=""></div>
+    <figcaption><b>Fig 1</b> v12-related-work-landscape.svg · 760×300 · full width <span class="tag re">restyled</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v1-v12-arc-summary.svg" alt=""></div>
+    <figcaption><b>Fig 2</b> v1-v12-arc-summary.svg · 760×360 · full width <span class="tag re">restyled</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v12-two-layer-prediction-model.svg" alt=""></div>
+    <figcaption><b>Fig 3</b> v12-two-layer-prediction-model.svg · 600×320 · column <span class="tag re">restyled</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v12-throughput-regime.svg" alt=""></div>
+    <figcaption><b>Fig 4</b> v12-throughput-regime.svg · column <span class="tag orig">original — data-accurate</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v12-work-starvation-correction.svg" alt=""></div>
+    <figcaption><b>Fig 5</b> v12-work-starvation-correction.svg · column <span class="tag orig">original — data-accurate</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v12-engine-ridge-comparison.svg" alt=""></div>
+    <figcaption><b>Fig 6</b> v12-engine-ridge-comparison.svg · 600×300 · column · ridge bars exactly 312 / 625 / 1875 on a 0–2000 axis <span class="tag re">restyled</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v12-paper-positioning.svg" alt=""></div>
+    <figcaption><b>Fig 7</b> v12-paper-positioning.svg · 600×252 · column <span class="tag re">restyled</span></figcaption></figure>
+  <figure><div class="canvas"><img src="v12-arm2-research-plan.svg" alt=""></div>
+    <figcaption><b>Fig 8</b> v12-arm2-research-plan.svg · 600×300 · column <span class="tag re">restyled</span></figcaption></figure>
+</main>
+</body></html>

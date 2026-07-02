@@ -1,0 +1,25 @@
+<!-- @dsCard group="Brand" viewport="700x130" name="Verdict marks & status dots" subtitle="Unicode ✓ / ✗ text glyphs; 10px status dots" -->
+<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="../styles.css"><style>
+body{margin:0;background:#fff;font-family:var(--font-sans);color:var(--gray-strong);font-size:13px}
+.wrap{display:flex;gap:36px;padding:20px 22px;align-items:flex-start}
+.g{display:flex;flex-direction:column;gap:10px}
+.i{display:flex;align-items:center;gap:9px}
+.mark{font-weight:700;font-size:15px}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="g">
+    <div class="i"><span class="mark" style="color:var(--verdict-yes)">✓</span>yes / claim / covered</div>
+    <div class="i"><span class="mark" style="color:var(--verdict-no)">✗</span>no / non-claim / missing</div>
+    <div class="i"><span style="color:var(--verdict-partial)">partial</span>— amber word, not a glyph</div>
+  </div>
+  <div class="g">
+    <div class="i"><span class="dot" style="background:var(--status-landed)"></span>roofline landed</div>
+    <div class="i"><span class="dot" style="background:var(--status-partial)"></span>partial</div>
+    <div class="i"><span class="dot" style="background:var(--status-missed)"></span>missed (corrected by per-CTA layer)</div>
+    <div class="i"><span class="dot" style="background:var(--status-unmeasured)"></span>predicted, not measured</div>
+  </div>
+</div>
+</body></html>

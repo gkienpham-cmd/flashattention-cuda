@@ -1,0 +1,13 @@
+/* flash-paper figure typography — sans-serif, sized for ~50% print shrink */
+:root {
+  --font-sans: Helvetica, Arial, "Helvetica Neue", "Liberation Sans", sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Scale (px on a ~600px column canvas; never below 13px) */
+  --fig-title-size: 22px;      --fig-title-weight: 700;
+  --fig-heading-size: 16px;    --fig-heading-weight: 700;  /* panel headings */
+  --fig-label-size: 14px;      --fig-label-weight: 700;    /* chip labels, table headers */
+  --fig-body-size: 13px;       --fig-body-weight: 400;     /* list items, takeaways */
+  --fig-subtitle-size: 13px;                                /* gray, under the title */
+  --fig-min-size: 13px;        /* hard floor — nothing smaller */
+}

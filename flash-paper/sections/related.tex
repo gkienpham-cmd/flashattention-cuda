@@ -23,7 +23,7 @@ art and contribute the \emph{application} to attention decode.
 The FlashAttention lineage~\cite{fa1,fa2,fa3} established the fused,
 memory-efficient prefill kernel, and FlashAttention-4~\cite{fa4} co-designs the
 algorithm and pipeline for Blackwell (BF16 prefill, up to 1605\tflops\ / 71\%
-utilization on B200)---but targets B200 prefill and is not characterized on
+utilization on B200), but it targets B200 prefill and is not characterized on
 \texttt{sm\_103} decode. MLA originates with DeepSeek-V2/V3~\cite{deepseekv2,%
 deepseekv3}; FlashMLA~\cite{flashmla} is the production Hopper MLA decode kernel
 (memory-bound 3000\gbs, compute-bound 580\tflops\ on H800), and

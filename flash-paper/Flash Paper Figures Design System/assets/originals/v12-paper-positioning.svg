@@ -1,0 +1,33 @@
+<svg width="100%" viewBox="0 0 600 300" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Paper positioning: what we claim and what we do not</title>
+<desc>What we claim: first open prediction-vs-measured decode roofline on sm_103; MHA-GQA-MLA x FP16-FP8-NVFP4 coverage; the work-starvation finding; the two-layer model. What we do not claim: faster than production kernels; a novel roofline method; first to run on sm_103; a new SOTA kernel.</desc>
+<rect x="0" y="0" width="600" height="300" fill="#ffffff"></rect>
+
+<text x="30" y="34" font-size="23" font-weight="700" fill="#2C2C2A">Positioning: complement, not beat</text>
+
+
+<rect x="26" y="54" width="266" height="222" rx="8" fill="#F0FDF4" stroke="#22C55E" stroke-width="1.4"></rect>
+<text x="42" y="80" font-size="17" font-weight="700" fill="#166534">We claim</text>
+<g font-size="15" fill="#14532D">
+<text x="42" y="110">✓ First open prediction-vs-</text>
+<text x="58" y="130">measured decode roofline on sm_103</text>
+<text x="42" y="158">✓ MHA → GQA → MLA ×</text>
+<text x="58" y="178">FP16 → FP8 → NVFP4</text>
+<text x="42" y="206">✓ Per-CTA wall = work-starvation</text>
+<text x="42" y="234">✓ Two-layer model, predictions</text>
+<text x="58" y="254">pre-registered before coding</text>
+</g>
+
+
+<rect x="308" y="54" width="266" height="222" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.4"></rect>
+<text x="324" y="80" font-size="17" font-weight="700" fill="#991B1B">We do NOT claim</text>
+<g font-size="15" fill="#7F1D1D">
+<text x="324" y="110">✗ Faster than FlashInfer /</text>
+<text x="340" y="130">FlashMLA / cuDNN</text>
+<text x="324" y="158">✗ A novel roofline method</text>
+<text x="324" y="186">✗ First to run on sm_103</text>
+<text x="340" y="206">(FA4 already deployed)</text>
+<text x="324" y="234">✗ A new SOTA kernel — v12</text>
+<text x="340" y="254">measured NVIDIA&#39;s own kernel</text>
+</g>
+</svg>

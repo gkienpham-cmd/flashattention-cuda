@@ -8,13 +8,13 @@ Every kernel step is accompanied by two predictions, both recorded
 
 \begin{itemize}
   \item \textbf{Layer 1 (pure roofline).} \ai\ from operand traffic and FLOPs;
-  the limiter from datasheet peak throughputs. This captures the \emph{what}---how
-  much work and how much data---but is blind to the \emph{how}.
+  the limiter from datasheet peak throughputs. This captures the \emph{what}
+  (how much work and how much data) but is blind to the \emph{how}.
   \item \textbf{Layer 2 (per-CTA-corrected).} The same \ai, plus the on-chip
   constraints the roofline cannot see: (a) shared-memory / tensor-memory staging
   $\to$ how many CTAs fit per SM (occupancy); (b) warp-level packing
   ($M{=}1$ GEMV vs $M{=}128$ GEMM); (c) tensor-core pipeline depth vs the number
-  of available MMA tiles; and (d) a \emph{counter-prediction}---the observation
+  of available MMA tiles; and (d) a \emph{counter-prediction}, the observation
   that, if made, would falsify the thesis.
 \end{itemize}
 
@@ -57,8 +57,8 @@ rental we used (\texttt{ERR\_NVGPUCTRPERM}), so decode throughput is read with a
 \emph{counter-free proxy}: effective bandwidth $=$ KV bytes moved $/$ measured
 time, reported as \%HBM against peak, using CUDA-event timing. On a
 \emph{privileged} (root) T4 we validated this proxy directly against \texttt{ncu}:
-the proxy read 13.8\% HBM where \texttt{ncu} DRAM throughput was 12.85\%---within
-$\approx 1$ percentage point (Section~\ref{sec:results-decode}, v9~Task~1). Every
+the proxy read 13.8\% HBM where \texttt{ncu} DRAM throughput was 12.85\%, within
+about one percentage point (Section~\ref{sec:results-decode}, v9~Task~1). Every
 decode reading in this paper uses the validated proxy. We additionally (i) lock
 clocks on the root T4 and idle-pin them on Blackwell, (ii) flush the L2 with a
 zeroed buffer $\ge 2\times$ L2 outside the timed window so that data genuinely
@@ -71,12 +71,12 @@ tier) for JIT build, correctness, and benchmarking, except the clock-locked,
 L2-flushed, \texttt{ncu}-validated regime run (v9~Task~1), which used a root
 (privileged) T4 rented from vast.ai; the A100, B200, and B300 were rented from
 vast.ai. The privileged root T4 is the one host on which \texttt{ncu} counters
-were available---every other measurement uses the counter-free proxy above.
+were available; every other measurement uses the counter-free proxy above.
 
 \begin{table*}[t]
   \centering
   \caption{Pre-registered prediction-vs-measured scorecard. ``L1'' is pure
-  roofline; ``L2'' is per-CTA-corrected. A dash in L1/L2 marks steps where only a
+  roofline; ``L2'' is per-CTA-corrected. An n/a in L1/L2 marks steps where only a
   schedule change was predicted. The decode arc (v6--v12) is the contribution;
   the per-CTA-corrected layer matches the measured limiter at every step, while
   pure roofline predicts the wrong regime at every single-stream decode step.}
@@ -86,16 +86,16 @@ were available---every other measurement uses the counter-free proxy above.
     \toprule
     Step & Kernel (single variable) & L1 predicted & Measured limiter & L1 & L2 \\
     \midrule
-    v1  & naive FP32 (baseline)                 & HBM, \ai$\approx$0.25 & HBM, masked by L2 at mid-$N$ & partial & --- \\
-    v2  & shared-memory tiling                  & HBM, $\sim$30$\times$ traffic cut & compute/schedule; DRAM traffic flat & miss & --- \\
-    v3  & online softmax (S off HBM)            & MMA-bound                & occupancy/latency; 151$\times$ off floor & miss & --- \\
-    v4  & fused single-pass (warp/row)          & MMA-bound                & FMA under-utilization (GEMV), 18$\times$ off & miss & --- \\
-    v5  & tensor-core WMMA                       & MMA, $8\times$ lower floor & \emph{not measured} (prediction only) & --- & --- \\
+    v1  & naive FP32 (baseline)                 & HBM, \ai$\approx$0.25 & HBM, masked by L2 at mid-$N$ & partial & n/a \\
+    v2  & shared-memory tiling                  & HBM, $\sim$30$\times$ traffic cut & compute/schedule; DRAM traffic flat & miss & n/a \\
+    v3  & online softmax (S off HBM)            & MMA-bound                & occupancy/latency; 151$\times$ off floor & miss & n/a \\
+    v4  & fused single-pass (warp/row)          & MMA-bound                & FMA under-utilization (GEMV), 18$\times$ off & miss & n/a \\
+    v5  & tensor-core WMMA                       & MMA, $8\times$ lower floor & \emph{not measured} (prediction only) & n/a & n/a \\
     \midrule
     v6  & split-KV decode                       & HBM, split-KV fills SMs  & per-CTA (occupancy), $\sim$12\% HBM & miss & hit \\
     v7  & paged KV + batch sweep                & occupancy$\to$bandwidth crossover & per-CTA at \emph{all} batch (flat \%HBM) & refuted & hit \\
     v8  & GQA $M$-packing (CUDA cores)          & HBM, speedup $\sim G\times$ & per-CTA; speedup $=G\times$, \%HBM $\le$11 & split & hit \\
-    v8.7& score-stationary inner loop           & remove serial recurrence & per-CTA load latency; recurrence removed & --- & hit \\
+    v8.7& score-stationary inner loop           & remove serial recurrence & per-CTA load latency; recurrence removed & n/a & hit \\
     v9  & FP8 E4M3 KV (bytes)                    & capacity-only, halve floor & L2$\to$SM load-latency win ($\sim$1.3$\times$) & miss & hit \\
     v10 & NVFP4 KV (bytes)                       & HBM, $3.55\times$ lower floor & per-CTA; capacity $3.56\times$, no latency win & miss & hit \\
     v11 & MLA latent (shape, CUDA cores)        & compute-flip (\ai\ 235) & per-CTA, $0.75\tflops$, $4\times$ off cuBLAS & miss & hit \\
@@ -113,8 +113,8 @@ every \emph{single-stream} decode step (v6, v7, v9, v10, v11) and at v8 got the
 speedup \emph{magnitude} right ($G\times$) while still misplacing the absolute
 limiter; it was vindicated only at v12, where large-batch, long-context work
 finally drove the production kernel toward the HBM roof it had predicted. We state
-this as the defensible tally---L2 correct at all seven decode steps, L1 wrong at
-the operative limiter for the single-stream steps---rather than any cleaner-looking
+this as the defensible tally (L2 correct at all seven decode steps, L1 wrong at
+the operative limiter for the single-stream steps) rather than any cleaner-looking
 ratio, because the per-step verdicts in the table are what the record supports.
 The prefill steps (v2--v4) contribute three further pure-roofline misses that are
 first-class findings in their own right (Section~\ref{sec:results-prefill}).

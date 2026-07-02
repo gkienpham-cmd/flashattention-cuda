@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Accent palette" subtitle="Five flat accents — solid, dark text tone, tint fill" -->
+<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="../styles.css"><style>
+body{margin:0;background:#fff;font-family:var(--font-sans);color:var(--ink)}
+.row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:14px}
+.sw{border:1px solid var(--gray-line);border-radius:8px;overflow:hidden}
+.chip{height:44px}
+.meta{display:flex;flex-direction:column;gap:2px;padding:8px 10px;font-size:12px}
+.meta b{font-size:13px}
+.pair{display:flex;gap:6px;align-items:center}
+.dot{width:14px;height:14px;border-radius:4px;border:1px solid var(--gray-line)}
+</style></head>
+<body>
+<div class="row">
+  <div class="sw"><div class="chip" style="background:var(--blue)"></div><div class="meta"><b>Blue #3B82F6</b><span class="pair"><span class="dot" style="background:var(--blue-dark)"></span>dark #1D4ED8</span><span class="pair"><span class="dot" style="background:var(--blue-tint)"></span>tint #EFF6FF</span></div></div>
+  <div class="sw"><div class="chip" style="background:var(--green)"></div><div class="meta"><b>Green #22C55E</b><span class="pair"><span class="dot" style="background:var(--green-dark)"></span>dark #15803D</span><span class="pair"><span class="dot" style="background:var(--green-tint)"></span>tint #F0FDF4</span></div></div>
+  <div class="sw"><div class="chip" style="background:var(--amber)"></div><div class="meta"><b>Amber #F59E0B</b><span class="pair"><span class="dot" style="background:var(--amber-dark)"></span>dark #B45309</span><span class="pair"><span class="dot" style="background:var(--amber-tint)"></span>tint #FEF3E4</span></div></div>
+  <div class="sw"><div class="chip" style="background:var(--red)"></div><div class="meta"><b>Red #EF4444</b><span class="pair"><span class="dot" style="background:var(--red-dark)"></span>dark #B91C1C</span><span class="pair"><span class="dot" style="background:var(--red-tint)"></span>tint #FEF2F2</span></div></div>
+  <div class="sw"><div class="chip" style="background:var(--purple)"></div><div class="meta"><b>Purple #8B5CF6</b><span class="pair"><span class="dot" style="background:var(--purple-dark)"></span>dark #6D28D9</span><span class="pair"><span class="dot" style="background:var(--purple-tint)"></span>tint #F5F3FF</span></div></div>
+</div>
+</body></html>

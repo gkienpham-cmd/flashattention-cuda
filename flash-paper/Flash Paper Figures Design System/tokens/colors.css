@@ -1,0 +1,31 @@
+/* flash-paper figure palette — flat, print-friendly (IEEE two-column @ PMBS SC26) */
+:root {
+  /* Accents (solid / dark-text / tint-fill / soft-border) */
+  --blue: #3B82F6;   --blue-dark: #1D4ED8;   --blue-tint: #EFF6FF;   --blue-border: #93C5FD;
+  --green: #22C55E;  --green-dark: #15803D;  --green-tint: #F0FDF4;  --green-border: #86EFAC;
+  --amber: #F59E0B;  --amber-dark: #B45309;  --amber-tint: #FEF3E4;  --amber-border: #FCD34D;
+  --red: #EF4444;    --red-dark: #B91C1C;    --red-tint: #FEF2F2;    --red-border: #FCA5A5;
+  --purple: #8B5CF6; --purple-dark: #6D28D9; --purple-tint: #F5F3FF; --purple-border: #C4B5FD;
+
+  /* Neutrals */
+  --ink: #2C2C2A;        /* near-black text */
+  --gray-strong: #374151; /* body text, strong rules */
+  --gray-mid: #6B7280;    /* captions, subtitles */
+  --gray-soft: #9CA3AF;   /* muted strokes, unmeasured status */
+  --gray-line: #E5E7EB;   /* hairline rules */
+  --gray-tint: #F9FAFB;   /* neutral panel fill */
+  --paper: #FFFFFF;       /* always-white background */
+
+  /* Semantic aliases */
+  --fig-title: var(--ink);
+  --fig-body: var(--gray-strong);
+  --fig-caption: var(--gray-mid);
+  --surface-figure: var(--paper);
+  --verdict-yes: var(--green);
+  --verdict-no: var(--red);
+  --verdict-partial: var(--amber-dark);
+  --status-landed: var(--green);
+  --status-partial: var(--amber);
+  --status-missed: var(--red);
+  --status-unmeasured: var(--gray-soft);
+}

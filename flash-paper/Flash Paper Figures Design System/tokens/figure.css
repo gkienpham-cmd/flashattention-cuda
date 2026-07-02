@@ -1,0 +1,21 @@
+/* flash-paper figure geometry — strokes, radii, canvas sizes */
+:root {
+  /* Strokes: clean 1–1.5px; 2px only for highlight rows/panels */
+  --stroke-hairline: 1px;
+  --stroke-strong: 1.5px;
+  --stroke-emphasis: 2px;
+  --dash-reference: 5 4;      /* @kind other */ /* dashed reference lines */
+
+  /* Corner radii */
+  --radius-tag: 4px;          /* small inline tags */
+  --radius-chip: 8px;         /* kernel chips, banners */
+  --radius-panel: 10px;       /* concept panels */
+
+  /* Canvas sizes (SVG viewBox) */
+  --canvas-column-w: 600px;   /* single column (~3.5in) figures */
+  --canvas-full-w: 760px;     /* full-width (~7.2in) figures */
+
+  /* Spacing steps */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px;
+  --space-4: 16px; --space-5: 20px; --space-6: 24px;
+}

@@ -1,0 +1,61 @@
+<svg width="100%" viewBox="0 0 600 340" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>The per-CTA wall was work-starvation - v12 correction</title>
+<desc>Left: CUDA-core decode (v6-v11) is flat at 0.75 TFLOP/s regardless of the lever tried. Right: the same MLA shape on tcgen05 tensor cores (v12) scales 2.4 to 1785 TFLOP/s with total work. The engine is the lever.</desc>
+<rect x="0" y="0" width="600" height="340" fill="#ffffff"></rect>
+
+<text x="30" y="34" font-size="23" font-weight="700" fill="#2C2C2A">The per-CTA wall was work-starvation</text>
+
+
+<rect x="26" y="58" width="250" height="256" rx="8" fill="#FEF3E4" stroke="#F59E0B" stroke-width="1.4"></rect>
+<text x="42" y="84" font-size="16" font-weight="700" fill="#B45309">CUDA-core (v6–v11)</text>
+<text x="42" y="104" font-size="15" fill="#92400E">every lever → flat 0.75 TF</text>
+
+
+<g fill="#F59E0B">
+<rect x="96" y="122" width="150" height="18" rx="2"></rect>
+<rect x="96" y="148" width="150" height="18" rx="2"></rect>
+<rect x="96" y="174" width="150" height="18" rx="2"></rect>
+<rect x="96" y="200" width="150" height="18" rx="2"></rect>
+<rect x="96" y="226" width="150" height="18" rx="2"></rect>
+<rect x="96" y="252" width="150" height="18" rx="2"></rect>
+</g>
+<g font-size="15" fill="#555" text-anchor="end">
+<text x="88" y="135">v6 split-KV</text>
+<text x="88" y="161">v7 paged</text>
+<text x="88" y="187">v8 GQA</text>
+<text x="88" y="213">v8.7 score-st.</text>
+<text x="88" y="239">v9 FP8</text>
+<text x="88" y="265">v11 MLA</text>
+</g>
+<text x="42" y="298" font-size="14" fill="#92400E">dead ends: TC, double-buffer,</text>
+<text x="42" y="314" font-size="14" fill="#92400E">ILP, occupancy, bytes.</text>
+
+
+<text x="300" y="180" font-size="15" font-weight="700" fill="#3B82F6" text-anchor="middle">swap</text>
+<text x="300" y="198" font-size="15" font-weight="700" fill="#3B82F6" text-anchor="middle">engine</text>
+<path d="M283 214 L317 214" stroke="#3B82F6" stroke-width="2.4" marker-end="url(#ar)"></path>
+<defs><marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6 z" fill="#3B82F6"></path></marker></defs>
+
+
+<rect x="324" y="58" width="250" height="256" rx="8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.4"></rect>
+<text x="340" y="84" font-size="16" font-weight="700" fill="#1E40AF">tcgen05 (v12)</text>
+<text x="340" y="104" font-size="15" fill="#1E3A5F">2.4 → 1785 TF with work</text>
+
+
+<g fill="#3B82F6">
+<rect x="352" y="126" width="6" height="18" rx="2"></rect>
+<rect x="352" y="156" width="33" height="18" rx="2"></rect>
+<rect x="352" y="186" width="106" height="18" rx="2"></rect>
+<rect x="352" y="216" width="193" height="18" rx="2"></rect>
+<rect x="352" y="246" width="200" height="18" rx="2"></rect>
+</g>
+<g font-size="14" fill="#555">
+<text x="364" y="140">B1 K8K: 51</text>
+<text x="391" y="170">B1 K131K: 295</text>
+<text x="360" y="204" fill="#fff">B64 K8K: 945</text>
+<text x="360" y="230" fill="#fff">B64 K131K: 1717</text>
+<text x="360" y="260" fill="#fff">B64 K524K: 1785</text>
+</g>
+<text x="340" y="300" font-size="14" fill="#1E3A5F">36% FP8 peak / 46% HBM</text>
+<text x="340" y="316" font-size="14" fill="#1E3A5F">at serving scale.</text>
+</svg>

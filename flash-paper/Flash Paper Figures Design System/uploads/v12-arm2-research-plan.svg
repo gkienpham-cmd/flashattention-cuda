@@ -1,0 +1,30 @@
+<svg width="100%" viewBox="0 0 600 300" role="img" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Does native FP4 compute help MLA decode - boundary test, negative</title>
+<desc>Stage A (done, B300): FP4 vs FP8 GEMM at the M=128 MLA-decode shape. Both HBM-bound (AI 100-176); FP4 reaches at most 5.8% of the 15 PF peak, FP8 21.7% of 5 PF. Verdict KILL: native FP4 compute never the limiter. Stages B (accuracy) and C (fused kernel) not triggered. FP4/NVFP4 stays a capacity+accuracy lever.</desc>
+<rect x="0" y="0" width="600" height="300" fill="#ffffff"></rect>
+
+<text x="30" y="34" font-size="22" font-weight="700" fill="#2C2C2A">Does native FP4 compute help decode?</text>
+
+
+<rect x="26" y="54" width="330" height="176" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.6"></rect>
+<text x="44" y="80" font-size="17" font-weight="700" fill="#991B1B">Stage A (measured, B300)</text>
+<text x="44" y="104" font-size="15" fill="#7F1D1D">FP4 vs FP8 GEMM at M=128 (MLA decode)</text>
+<text x="44" y="130" font-size="15" fill="#7F1D1D">Both HBM-bound: AI 100–176</text>
+<text x="44" y="154" font-size="15" fill="#7F1D1D">FP4 ≤ 5.8% of 15 PF peak</text>
+<text x="44" y="176" font-size="15" fill="#7F1D1D">FP8 ≤ 21.7% of 5 PF peak</text>
+<text x="44" y="208" font-size="16" font-weight="700" fill="#991B1B">KILL: FP4 compute never the limiter</text>
+
+
+<path d="M356 142 L400 142" stroke="#9CA3AF" stroke-width="2.4" marker-end="url(#g)"></path>
+<defs><marker id="g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6 z" fill="#9CA3AF"></path></marker></defs>
+
+
+<rect x="404" y="86" width="170" height="112" rx="8" fill="#F3F4F6" stroke="#9CA3AF" stroke-width="1.4" stroke-dasharray="5,3"></rect>
+<text x="489" y="120" font-size="15" font-weight="700" fill="#6B7280" text-anchor="middle">Stage B (accuracy)</text>
+<text x="489" y="144" font-size="15" font-weight="700" fill="#6B7280" text-anchor="middle">Stage C (kernel)</text>
+<text x="489" y="172" font-size="15" fill="#6B7280" text-anchor="middle">not triggered</text>
+
+
+<rect x="26" y="248" width="548" height="40" rx="8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.2"></rect>
+<text x="300" y="273" font-size="16" font-weight="700" fill="#1E40AF" text-anchor="middle">FP4/NVFP4 is a capacity + accuracy lever, not a decode-compute lever.</text>
+</svg>
